@@ -1,0 +1,101 @@
+stages:
+  - build
+  - build-mobile
+  - deploy
+
+variables:
+  APP_NAME: keygrain
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${APP_NAME}/${CI_COMMIT_REF_SLUG}"
+
+build-package:
+  stage: build
+  image: golang:1.22-alpine
+  script:
+    - apk add --no-cache tar curl
+    - mkdir -p build/app
+    - cd server
+    - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../build/app/keygrain-server .
+    - cp -r static ../build/app/
+    - cp Dockerfile ../build/app/
+    - cp docker-compose.yml ../build/app/
+    - cp go.mod ../build/app/
+    - cp main.go ../build/app/
+    - cp -r deploy ../build/app/
+    - cd ../build && tar -czf ../${APP_NAME}.tar.gz app
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+           --upload-file ../${APP_NAME}.tar.gz \
+           "${PACKAGE_REGISTRY_URL}/${APP_NAME}.tar.gz"
+  artifacts:
+    paths:
+      - ${APP_NAME}.tar.gz
+    expire_in: 1 week
+  only:
+    - master
+
+build-mobile:
+  stage: build-mobile
+  image: eclipse-temurin:17-jdk
+  variables:
+    ANDROID_HOME: "/opt/android-sdk"
+    GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx2048m"
+  script:
+    - apt-get update && apt-get install -y wget unzip
+    - mkdir -p $ANDROID_HOME/cmdline-tools
+    - wget -q -O /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+    - unzip -q /tmp/cmdline-tools.zip -d $ANDROID_HOME/cmdline-tools
+    - mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+    - rm /tmp/cmdline-tools.zip
+    - yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+    - $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "build-tools;34.0.0" "platforms;android-34"
+    - mkdir -p ~/.android
+    - keytool -genkey -v -keystore ~/.android/release.keystore -storepass keygrain -alias keygrain -keypass keygrain -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Keygrain,O=Badrani,C=DE" 2>/dev/null || true
+    - cd kotlin
+    - chmod +x gradlew
+    - 'sed -i "s/versionName = \"1.0.0\"/versionName = \"1.0.0-${CI_COMMIT_SHORT_SHA}\"/" app/build.gradle.kts'
+    - ./gradlew assembleRelease --no-daemon --max-workers=1
+    - cp app/build/outputs/apk/release/app-release.apk keygrain.apk || cp app/build/outputs/apk/release/app-release-unsigned.apk keygrain.apk
+  artifacts:
+    paths:
+      - kotlin/keygrain.apk
+    expire_in: 2 weeks
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - kotlin/**/*
+
+deploy:
+  stage: deploy
+  image: debian:bullseye
+  needs:
+    - build-package
+    - job: build-mobile
+      optional: true
+      artifacts: true
+  before_script:
+    - apt-get update && apt-get install -y openssh-client curl bash
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+  script:
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+           --output ${APP_NAME}.tar.gz \
+           "${PACKAGE_REGISTRY_URL}/${APP_NAME}.tar.gz"
+    - scp ${APP_NAME}.tar.gz ${SERVER_USER}@${SERVER_IP}:/tmp/${APP_NAME}.tar.gz
+    - scp server/deploy/setup-server.sh ${SERVER_USER}@${SERVER_IP}:/tmp/keygrain-setup.sh
+    - scp server/deploy/deploy.sh ${SERVER_USER}@${SERVER_IP}:/tmp/keygrain-deploy.sh
+    - ssh ${SERVER_USER}@${SERVER_IP} "chmod +x /tmp/keygrain-setup.sh /tmp/keygrain-deploy.sh && /tmp/keygrain-setup.sh && /tmp/keygrain-deploy.sh"
+    - |
+      if [ -f kotlin/keygrain.apk ]; then
+        scp kotlin/keygrain.apk ${SERVER_USER}@${SERVER_IP}:/opt/keygrain/static/app/keygrain.apk
+        echo "APK deployed"
+      fi
+    - ssh ${SERVER_USER}@${SERVER_IP} "docker ps | grep keygrain"
+  environment:
+    name: production
+    url: https://keygrain.secbytech.com
+  only:
+    - master

@@ -1,0 +1,18 @@
+services:
+  keygrain:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: keygrain
+    restart: always
+    ports:
+      - "127.0.0.1:9860:9860"
+    environment:
+      - PORT=9860
+    volumes:
+      - keygrain_data:/app/data
+      - ./static:/app/static
+
+volumes:
+  keygrain_data:
+    driver: local

@@ -1,0 +1,32 @@
+{
+  "name": "architect",
+  "description": "Project Architect — manages planning, delegation, quality enforcement, and delivery. Never writes production code directly.",
+  "prompt": "file://./architect.md",
+  "tools": [
+    "fs_read",
+    "fs_write",
+    "execute_bash",
+    "use_aws",
+    "introspect",
+    "knowledge",
+    "todo_list",
+    "use_subagent",
+    "grep",
+    "glob",
+    "code",
+    "web_fetch",
+    "web_search"
+  ],
+  "allowedTools": ["*"],
+  "resources": [
+    "file:///home/ibadrani/.kiro/steering/pair-working/communication-protocol.md",
+    "file:///home/ibadrani/.kiro/steering/pair-working/orchestrator.md",
+    "file:///home/ibadrani/.kiro/steering/distributed/distributed-protocol.md",
+    "file:///home/ibadrani/.kiro/steering/distributed/distributed-orchestrator.md"
+  ],
+  "hooks": {},
+  "toolsSettings": {},
+  "includeMcpJson": true,
+  "model": null,
+  "welcomeMessage": "Architect online. Reading project state..."
+}
