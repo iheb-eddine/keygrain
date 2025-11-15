@@ -1,0 +1,19 @@
+[project]
+name = "keygrain"
+version = "0.1.0"
+description = "Deterministic password derivation from master secret + email"
+requires-python = ">=3.10"
+license = "MIT"
+
+[project.scripts]
+keygrain = "keygrain.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["keygrain"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
