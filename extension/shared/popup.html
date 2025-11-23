@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>🔑 Keygrain</h1>
+  <form id="form">
+    <label for="secret">Secret</label>
+    <input type="password" id="secret" autocomplete="off" required>
+    <div id="fingerprint" aria-label="Secret fingerprint"></div>
+    <label for="email">Email</label>
+    <input type="email" id="email" autocomplete="off" required>
+    <details id="options-panel">
+      <summary>⚙️ Options</summary>
+      <div class="details-content"><div>
+        <label for="length">Length</label>
+        <input type="number" id="length" min="8" value="20">
+        <label for="symbols">Symbols</label>
+        <input type="text" id="symbols" value="!@#$%&*-_=+?">
+        <label for="salt">Salt</label>
+        <input type="text" id="salt" autocomplete="off">
+      </div></div>
+    </details>
+    <button type="submit" id="generate">Generate</button>
+  </form>
+  <div class="output-row">
+    <input type="text" id="output" readonly aria-label="Generated password">
+    <button type="button" id="copy" aria-label="Copy to clipboard">📋</button>
+    <button type="button" id="fill" aria-label="Fill password field">▶</button>
+  </div>
+  <div id="status" aria-live="polite"></div>
+  <script src="keygrain.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

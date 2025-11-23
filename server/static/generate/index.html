@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keygrain — Generate Password</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
+        h1 { font-size: 2rem; }
+        label { display: block; margin-top: 1rem; color: #555; font-size: 0.9rem; }
+        input { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 3px; font-size: 1rem; box-sizing: border-box; }
+        input:focus { outline: none; border-color: #666; }
+        button { padding: 10px 20px; font-size: 1rem; border: none; border-radius: 3px; cursor: pointer; }
+        #generate { margin-top: 1.5rem; background: #333; color: #fff; }
+        #generate:hover { background: #555; }
+        .output-row { display: flex; gap: 8px; margin-top: 1.5rem; align-items: center; }
+        .output-row input { flex: 1; font-family: monospace; background: #f4f4f4; }
+        #copy { background: #f4f4f4; border: 1px solid #ccc; font-size: 1.2rem; padding: 8px 12px; }
+        #copy:hover { background: #e0e0e0; }
+        #status { margin-top: 0.5rem; color: #555; font-size: 0.85rem; min-height: 1.2em; }
+        #fingerprint { display: flex; gap: 6px; margin-top: 6px; min-height: 12px; }
+        .fp-dot { width: 12px; height: 12px; border-radius: 50%; }
+        details summary { cursor: pointer; font-size: 0.9rem; margin-top: 1rem; color: #555; list-style: none; }
+        details summary::-webkit-details-marker { display: none; }
+        details .details-content { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 200ms ease; overflow: hidden; }
+        details[open] .details-content { grid-template-rows: 1fr; }
+        details .details-content > div { overflow: hidden; }
+        @media (prefers-reduced-motion: reduce) { details .details-content { transition: none; } }
+    </style>
+</head>
+<body>
+    <h1>Keygrain — Generate Password</h1>
+    <form id="form">
+        <label for="secret">Secret</label>
+        <input type="password" id="secret" autocomplete="off" required>
+        <div id="fingerprint" aria-label="Secret fingerprint"></div>
+        <label for="email">Email</label>
+        <input type="email" id="email" autocomplete="off" required>
+        <details id="options-panel">
+            <summary>⚙️ Options</summary>
+            <div class="details-content"><div>
+                <label for="length">Length</label>
+                <input type="number" id="length" min="8" value="20">
+                <label for="symbols">Symbols</label>
+                <input type="text" id="symbols" value="!@#$%&*-_=+?">
+                <label for="salt">Salt</label>
+                <input type="text" id="salt" autocomplete="off">
+            </div></div>
+        </details>
+        <button type="submit" id="generate">Generate</button>
+    </form>
+    <div class="output-row">
+        <input type="text" id="output" readonly aria-label="Generated password">
+        <button type="button" id="copy" title="Copy to clipboard">&#x1F4CB;</button>
+    </div>
+    <div id="status" aria-live="polite"></div>
+    <script>
+    const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const LOWER = "abcdefghjkmnpqrstuvwxyz";
+    const DIGITS = "23456789";
+
+    const MESSAGES = {
+      LENGTH_MIN: "Password length must be at least 8 characters.",
+      SYMBOLS_REQUIRED: "At least one symbol character is required.",
+      COPIED: "Copied! Clipboard clears in 30 seconds.",
+      CLIPBOARD_CLEARED: "Clipboard cleared.",
+    };
+
+    async function hmacSHA256(key, message) {
+        const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+        const sig = await crypto.subtle.sign("HMAC", k, message);
+        return new Uint8Array(sig);
+    }
+
+    async function buildStream(secret, email, length, salt) {
+        const enc = new TextEncoder();
+        const message = enc.encode(email + ":" + length + ":" + salt);
+        const key = await hmacSHA256(enc.encode(secret), message);
+        let stream = new Uint8Array(key);
+        let counter = 1;
+        while (stream.length < length * 2) {
+            const ext = await hmacSHA256(key, new Uint8Array([counter]));
+            const combined = new Uint8Array(stream.length + ext.length);
+            combined.set(stream);
+            combined.set(ext, stream.length);
+            stream = combined;
+            counter++;
+        }
+        return stream;
+    }
+
+    async function derivePassword(secret, email, length, symbols, salt) {
+        email = email.toLowerCase();
+        const fullCharset = UPPER + LOWER + DIGITS + symbols;
+        const stream = await buildStream(secret, email, length, salt);
+        let pos = 0;
+        const nextByte = () => stream[pos++];
+
+        const chars = [
+            UPPER[nextByte() % UPPER.length],
+            LOWER[nextByte() % LOWER.length],
+            DIGITS[nextByte() % DIGITS.length],
+            symbols[nextByte() % symbols.length],
+        ];
+        for (let i = 0; i < length - 4; i++) {
+            chars.push(fullCharset[nextByte() % fullCharset.length]);
+        }
+        for (let i = length - 1; i > 0; i--) {
+            const j = nextByte() % (i + 1);
+            [chars[i], chars[j]] = [chars[j], chars[i]];
+        }
+        return chars.join("");
+    }
+
+    let clearTimer = null;
+    const form = document.getElementById("form");
+    const output = document.getElementById("output");
+    const status = document.getElementById("status");
+    const copyBtn = document.getElementById("copy");
+    const secretInput = document.getElementById("secret");
+    const fpContainer = document.getElementById("fingerprint");
+    const optionsPanel = document.getElementById("options-panel");
+
+    optionsPanel.addEventListener("toggle", () => {
+      optionsPanel.querySelector("summary").textContent = optionsPanel.open ? "⚙️ Hide options" : "⚙️ Options";
+    });
+
+    const WONG_PALETTE = ["#000000","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00","#CC79A7"];
+
+    async function secretFingerprint(secret) {
+      const enc = new TextEncoder();
+      const hash = await hmacSHA256(enc.encode(secret), enc.encode("keygrain-fingerprint"));
+      return Array.from(hash.slice(0, 4), b => b % 8);
+    }
+
+    let fpTimer = null;
+    secretInput.addEventListener("input", () => {
+      if (fpTimer) clearTimeout(fpTimer);
+      if (!secretInput.value) { fpContainer.innerHTML = ""; return; }
+      fpTimer = setTimeout(async () => {
+        const indices = await secretFingerprint(secretInput.value);
+        fpContainer.innerHTML = indices.map(i => `<span class="fp-dot" style="background:${WONG_PALETTE[i]}"></span>`).join("");
+      }, 500);
+    });
+
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const secret = document.getElementById("secret").value;
+        const email = document.getElementById("email").value;
+        const length = parseInt(document.getElementById("length").value, 10);
+        const symbols = document.getElementById("symbols").value;
+        const salt = document.getElementById("salt").value;
+        if (length < 8) { status.textContent = MESSAGES.LENGTH_MIN; return; }
+        if (!symbols) { status.textContent = MESSAGES.SYMBOLS_REQUIRED; return; }
+        output.value = await derivePassword(secret, email, length, symbols, salt);
+        status.textContent = "";
+    });
+
+    copyBtn.addEventListener("click", async () => {
+        if (!output.value) return;
+        await navigator.clipboard.writeText(output.value);
+        status.textContent = MESSAGES.COPIED;
+        setTimeout(() => { if (status.textContent === MESSAGES.COPIED) status.textContent = ""; }, 2000);
+        if (clearTimer) clearTimeout(clearTimer);
+        clearTimer = setTimeout(async () => {
+            await navigator.clipboard.writeText("");
+            status.textContent = MESSAGES.CLIPBOARD_CLEARED;
+            setTimeout(() => { if (status.textContent === MESSAGES.CLIPBOARD_CLEARED) status.textContent = ""; }, 2000);
+        }, 30000);
+    });
+    </script>
+</body>
+</html>

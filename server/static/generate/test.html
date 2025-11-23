@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keygrain — Test Vectors</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
+        h1 { font-size: 2rem; }
+        #summary { font-size: 1.2rem; margin-bottom: 1rem; }
+        .pass { color: #2a2; }
+        .fail { color: #c22; }
+        .vector { margin: 0.5rem 0; padding: 8px; background: #f4f4f4; border-radius: 3px; font-size: 0.85rem; }
+        .vector code { font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>Keygrain — Test Vectors</h1>
+    <div id="summary">Running...</div>
+    <div id="results"></div>
+    <script>
+    const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const LOWER = "abcdefghjkmnpqrstuvwxyz";
+    const DIGITS = "23456789";
+
+    async function hmacSHA256(key, message) {
+        const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+        const sig = await crypto.subtle.sign("HMAC", k, message);
+        return new Uint8Array(sig);
+    }
+
+    async function buildStream(secret, email, length, salt) {
+        const enc = new TextEncoder();
+        const message = enc.encode(email + ":" + length + ":" + salt);
+        const key = await hmacSHA256(enc.encode(secret), message);
+        let stream = new Uint8Array(key);
+        let counter = 1;
+        while (stream.length < length * 2) {
+            const ext = await hmacSHA256(key, new Uint8Array([counter]));
+            const combined = new Uint8Array(stream.length + ext.length);
+            combined.set(stream);
+            combined.set(ext, stream.length);
+            stream = combined;
+            counter++;
+        }
+        return stream;
+    }
+
+    async function derivePassword(secret, email, length, symbols, salt) {
+        email = email.toLowerCase();
+        const fullCharset = UPPER + LOWER + DIGITS + symbols;
+        const stream = await buildStream(secret, email, length, salt);
+        let pos = 0;
+        const nextByte = () => stream[pos++];
+
+        const chars = [
+            UPPER[nextByte() % UPPER.length],
+            LOWER[nextByte() % LOWER.length],
+            DIGITS[nextByte() % DIGITS.length],
+            symbols[nextByte() % symbols.length],
+        ];
+        for (let i = 0; i < length - 4; i++) {
+            chars.push(fullCharset[nextByte() % fullCharset.length]);
+        }
+        for (let i = length - 1; i > 0; i--) {
+            const j = nextByte() % (i + 1);
+            [chars[i], chars[j]] = [chars[j], chars[i]];
+        }
+        return chars.join("");
+    }
+
+    const VECTORS = [
+        { secret: "my-master-secret", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", expected: "jU8D8b@epA_=X$4CN7&4" },
+        { secret: "my-master-secret", email: "test@outlook.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", expected: "FQ9a3aV2bY2Wdf75$Y4X" },
+        { secret: "my-master-secret", email: "TEST@Gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", expected: "jU8D8b@epA_=X$4CN7&4" },
+        { secret: "my-master-secret", email: "user@custom.org", length: 16, symbols: "!@#$%&*-_=+?", salt: "", expected: "uktU-g7kXY&zPQ7k" },
+        { secret: "my-master-secret", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_", salt: "", expected: "rX8K@m%esG_AX*4FR*&4" },
+        { secret: "my-master-secret", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "2024", expected: "NUWrnAkPf8Xb@R7WV66$" },
+        { secret: "different-secret", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", expected: "c$RV9KGJppwJeUp_c3Y8" },
+        { secret: "my-master-secret", email: "test@gmail.com", length: 32, symbols: "!@#$%&*-_=+?", salt: "", expected: "kPYHb2dYUk$qP6bjbzLAV5A%p3j6T5U_" },
+    ];
+
+    async function runTests() {
+        const results = document.getElementById("results");
+        const summary = document.getElementById("summary");
+        let passed = 0;
+        for (let i = 0; i < VECTORS.length; i++) {
+            const v = VECTORS[i];
+            const actual = await derivePassword(v.secret, v.email, v.length, v.symbols, v.salt);
+            const ok = actual === v.expected;
+            if (ok) passed++;
+            const div = document.createElement("div");
+            div.className = "vector " + (ok ? "pass" : "fail");
+            div.innerHTML = ok
+                ? `&#x2705; Vector ${i + 1}: <code>${v.email}</code> len=${v.length} salt="${v.salt}"`
+                : `&#x274C; Vector ${i + 1}: <code>${v.email}</code> len=${v.length} salt="${v.salt}"<br>Expected: <code>${v.expected}</code><br>Got: <code>${actual}</code>`;
+            results.appendChild(div);
+        }
+        summary.className = passed === VECTORS.length ? "pass" : "fail";
+        summary.textContent = `${passed}/${VECTORS.length} vectors passed`;
+    }
+    runTests();
+    </script>
+</body>
+</html>

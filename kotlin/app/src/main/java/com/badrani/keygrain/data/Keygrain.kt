@@ -65,7 +65,26 @@ object Keygrain {
         return chars.joinToString("")
     }
 
-    private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
+    fun deriveLookupId(secret: ByteArray, email: String): String {
+        val message = "${email.lowercase()}:keygrain-id".toByteArray()
+        return hmacSha256(secret, message).joinToString("") { "%02x".format(it) }
+    }
+
+    fun deriveAuthPassword(secret: ByteArray, email: String): String {
+        return derivePassword(secret, email, length = 32, symbols = DEFAULT_SYMBOLS, salt = "keygrain-auth")
+    }
+
+    fun deriveEncryptionKey(secret: ByteArray, email: String): ByteArray {
+        val message = "${email.lowercase()}:keygrain-encryption".toByteArray()
+        return hmacSha256(secret, message)
+    }
+
+    fun secretFingerprint(secret: ByteArray): List<Int> {
+        val hash = hmacSha256(secret, "keygrain-fingerprint".toByteArray())
+        return (0 until 4).map { (hash[it].toInt() and 0xFF) % 8 }
+    }
+
+    internal fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(key, "HmacSHA256"))
         return mac.doFinal(data)

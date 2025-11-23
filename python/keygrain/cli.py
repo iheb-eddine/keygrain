@@ -18,12 +18,16 @@ def main():
 
     secret = os.environ.get(args.secret_env, "")
     if not secret:
-        print(f"Error: {args.secret_env} environment variable not set", file=sys.stderr)
+        print(f"Error: Master secret not found. Set the {args.secret_env} environment variable.", file=sys.stderr)
         sys.exit(1)
 
-    password = derive_password(
-        secret.encode(), args.email, length=args.length, symbols=args.symbols, salt=args.salt
-    )
+    try:
+        password = derive_password(
+            secret.encode(), args.email, length=args.length, symbols=args.symbols, salt=args.salt
+        )
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
     print(password)
 
 

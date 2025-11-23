@@ -3,12 +3,20 @@ package com.badrani.keygrain.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -16,7 +24,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -24,9 +35,16 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.badrani.keygrain.data.Keygrain
+import com.badrani.keygrain.data.RestoreResult
 import com.badrani.keygrain.data.SecretManager
 import com.badrani.keygrain.data.ServiceEntry
 import com.badrani.keygrain.data.ServiceManager
+import com.badrani.keygrain.data.SyncCrypto
+import com.badrani.keygrain.data.SyncManager
+import com.badrani.keygrain.data.SyncResult
+import com.badrani.keygrain.ui.UserMessages
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +85,21 @@ private fun UnlockScreen(
     val context = LocalContext.current
     var secret by remember { mutableStateOf("") }
     var secretVisible by remember { mutableStateOf(false) }
+    var fingerprintIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
+
+    val wongPalette = listOf(
+        Color(0xFF000000), Color(0xFFE69F00), Color(0xFF56B4E9), Color(0xFF009E73),
+        Color(0xFFF0E442), Color(0xFF0072B2), Color(0xFFD55E00), Color(0xFFCC79A7)
+    )
+
+    LaunchedEffect(secret) {
+        if (secret.isEmpty()) {
+            fingerprintIndices = emptyList()
+            return@LaunchedEffect
+        }
+        delay(500)
+        fingerprintIndices = Keygrain.secretFingerprint(secret.toByteArray())
+    }
 
     // Auto-trigger biometric if secret is stored
     LaunchedEffect(Unit) {
@@ -123,6 +156,14 @@ private fun UnlockScreen(
                     }
                 }
             )
+            if (fingerprintIndices.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                    fingerprintIndices.forEach { idx ->
+                        Box(Modifier.size(16.dp).background(wongPalette[idx], CircleShape))
+                    }
+                }
+            }
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = {
@@ -149,20 +190,137 @@ private fun ServiceListScreen(
 ) {
     val context = LocalContext.current
     var services by remember { mutableStateOf(serviceManager.getServices()) }
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredServices = remember(services, searchQuery) {
+        if (searchQuery.isBlank()) services
+        else services.filter {
+            it.name.contains(searchQuery, ignoreCase = true) ||
+                it.email.contains(searchQuery, ignoreCase = true)
+        }
+    }
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    var syncAction by remember { mutableStateOf<String?>(null) } // "backup" or "restore"
+    var syncEmail by remember { mutableStateOf("") }
+    var showConfirmDialog by remember { mutableStateOf<String?>(null) }
+    var isSyncing by remember { mutableStateOf(false) }
+    var showConflictDialog by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val syncManager = remember { SyncManager() }
+
+    // Export/Import state
+    var fileAction by remember { mutableStateOf<String?>(null) } // "export" or "import"
+    var fileEmail by remember { mutableStateOf("") }
+    var showImportConfirm by remember { mutableStateOf(false) }
+    var importedServices by remember { mutableStateOf<List<ServiceEntry>>(emptyList()) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val msg = try {
+                val key = Keygrain.deriveEncryptionKey(masterSecret.toByteArray(), fileEmail)
+                try {
+                    val json = serviceManager.exportJson().toByteArray()
+                    val encrypted = SyncCrypto.encrypt(key, json)
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(encrypted) }
+                    UserMessages.exportSuccess(services.size)
+                } finally {
+                    key.fill(0)
+                }
+            } catch (e: Exception) {
+                Log.e("Keygrain", "Export failed", e)
+                UserMessages.EXPORT_ERROR
+            }
+            snackbarHostState.showSnackbar(msg)
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            try {
+                val key = Keygrain.deriveEncryptionKey(masterSecret.toByteArray(), fileEmail)
+                try {
+                    val blob = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw Exception("Cannot read file")
+                    val json = SyncCrypto.decrypt(key, blob).toString(Charsets.UTF_8)
+                    importedServices = serviceManager.parseJson(json)
+                    showImportConfirm = true
+                } finally {
+                    key.fill(0)
+                }
+            } catch (e: javax.crypto.AEADBadTagException) {
+                Log.e("Keygrain", "Import decryption failed", e)
+                snackbarHostState.showSnackbar(UserMessages.DECRYPT_FILE_ERROR)
+            } catch (e: Exception) {
+                Log.e("Keygrain", "Import failed", e)
+                snackbarHostState.showSnackbar(UserMessages.IMPORT_ERROR)
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Keygrain") },
                 actions = {
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                        }
+                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Backup to server") },
+                                onClick = {
+                                    menuExpanded = false
+                                    syncEmail = services.groupingBy { it.email }.eachCount()
+                                        .maxByOrNull { it.value }?.key ?: ""
+                                    syncAction = "backup"
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Restore from server") },
+                                onClick = {
+                                    menuExpanded = false
+                                    syncEmail = services.groupingBy { it.email }.eachCount()
+                                        .maxByOrNull { it.value }?.key ?: ""
+                                    syncAction = "restore"
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Export to file") },
+                                onClick = {
+                                    menuExpanded = false
+                                    fileEmail = services.groupingBy { it.email }.eachCount()
+                                        .maxByOrNull { it.value }?.key ?: ""
+                                    fileAction = "export"
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Import from file") },
+                                onClick = {
+                                    menuExpanded = false
+                                    fileEmail = services.groupingBy { it.email }.eachCount()
+                                        .maxByOrNull { it.value }?.key ?: ""
+                                    fileAction = "import"
+                                }
+                            )
+                        }
+                    }
                     IconButton(onClick = onLock) {
                         Icon(Icons.Default.Lock, contentDescription = "Lock")
                     }
                 }
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(onClick = { showAddDialog = true }) {
                 Icon(Icons.Default.Add, contentDescription = "Add service")
@@ -177,21 +335,250 @@ private fun ServiceListScreen(
                 Text("No services yet. Tap + to add one.")
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(services, key = { it.name }) { service ->
-                    ServiceCard(
-                        service = service,
-                        masterSecret = masterSecret,
-                        onDelete = { showDeleteDialog = service.name },
-                        context = context
-                    )
+            Column(modifier = Modifier.padding(padding)) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    placeholder = { Text("Search services...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    singleLine = true,
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear")
+                            }
+                        }
+                    }
+                )
+                if (filteredServices.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No matching services")
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filteredServices, key = { it.name }) { service ->
+                            ServiceCard(
+                                service = service,
+                                masterSecret = masterSecret,
+                                onDelete = { showDeleteDialog = service.name },
+                                context = context
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+
+    // Email prompt dialog
+    syncAction?.let { action ->
+        AlertDialog(
+            onDismissRequest = { syncAction = null },
+            title = { Text(if (action == "backup") "Backup to Server" else "Restore from Server") },
+            text = {
+                Column {
+                    Text("Email for backup identity:")
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = syncEmail,
+                        onValueChange = { syncEmail = it },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        syncAction = null
+                        showConfirmDialog = action
+                    },
+                    enabled = syncEmail.isNotBlank()
+                ) { Text("Continue") }
+            },
+            dismissButton = {
+                TextButton(onClick = { syncAction = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Confirmation dialog
+    showConfirmDialog?.let { action ->
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = null },
+            title = { Text("Confirm") },
+            text = {
+                Text(
+                    if (action == "backup")
+                        "Back up ${services.size} services to the server? This will overwrite any existing backup for this email."
+                    else
+                        "Restore from server? This will replace all ${services.size} local services with the backup."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showConfirmDialog = null
+                    isSyncing = true
+                    val secretBytes = masterSecret.toByteArray()
+                    scope.launch {
+                        val msg: String? = try {
+                            if (action == "backup") {
+                                when (val r = syncManager.backup(secretBytes, syncEmail, serviceManager, context)) {
+                                    is SyncResult.Success -> UserMessages.backupSuccess(services.size)
+                                    is SyncResult.Conflict -> {
+                                        showConflictDialog = true
+                                        null
+                                    }
+                                    is SyncResult.AuthError -> UserMessages.AUTH_ERROR
+                                    is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
+                                    is SyncResult.ServerError -> UserMessages.SERVER_ERROR
+                                }
+                            } else {
+                                when (val r = syncManager.restore(secretBytes, syncEmail, serviceManager, context)) {
+                                    is RestoreResult.Success -> {
+                                        services = serviceManager.getServices()
+                                        UserMessages.restoreSuccess(r.services.size)
+                                    }
+                                    is RestoreResult.AuthError -> UserMessages.AUTH_ERROR
+                                    is RestoreResult.NetworkError -> UserMessages.NETWORK_ERROR
+                                    is RestoreResult.NotFound -> UserMessages.NOT_FOUND
+                                    is RestoreResult.DecryptionError -> UserMessages.DECRYPT_BACKUP_ERROR
+                                    is RestoreResult.ServerError -> UserMessages.SERVER_ERROR
+                                }
+                            }
+                        } finally {
+                            secretBytes.fill(0)
+                        }
+                        isSyncing = false
+                        if (msg != null) snackbarHostState.showSnackbar(msg)
+                    }
+                }) { Text(if (action == "backup") "Backup" else "Restore") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Loading dialog
+    if (isSyncing) {
+        AlertDialog(
+            onDismissRequest = {},
+            confirmButton = {},
+            text = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator()
+                    Text("Syncing...")
+                }
+            }
+        )
+    }
+
+    // Conflict dialog
+    if (showConflictDialog) {
+        AlertDialog(
+            onDismissRequest = { showConflictDialog = false },
+            title = { Text("Backup conflict detected") },
+            text = {
+                Text("Another device updated your backup since you last synced. To avoid losing that device\u2019s changes:\n\n1. Restore to get the latest backup\n2. Review and re-add any local changes\n3. Backup again")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showConflictDialog = false
+                    isSyncing = true
+                    val secretBytes = masterSecret.toByteArray()
+                    scope.launch {
+                        val msg = when (val r = syncManager.restore(secretBytes, syncEmail, serviceManager, context)) {
+                            is RestoreResult.Success -> {
+                                services = serviceManager.getServices()
+                                UserMessages.restoreSuccess(r.services.size)
+                            }
+                            is RestoreResult.AuthError -> UserMessages.AUTH_ERROR
+                            is RestoreResult.NetworkError -> UserMessages.NETWORK_ERROR
+                            is RestoreResult.NotFound -> UserMessages.NOT_FOUND
+                            is RestoreResult.DecryptionError -> UserMessages.DECRYPT_BACKUP_ERROR
+                            is RestoreResult.ServerError -> UserMessages.SERVER_ERROR
+                        }
+                        secretBytes.fill(0)
+                        isSyncing = false
+                        snackbarHostState.showSnackbar(msg)
+                    }
+                }) { Text("Restore Now") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConflictDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // File export/import email prompt
+    fileAction?.let { action ->
+        AlertDialog(
+            onDismissRequest = { fileAction = null },
+            title = { Text(if (action == "export") "Export to File" else "Import from File") },
+            text = {
+                Column {
+                    Text("Email for encryption key:")
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = fileEmail,
+                        onValueChange = { fileEmail = it },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        fileAction = null
+                        if (action == "export") {
+                            exportLauncher.launch("keygrain-backup.keygrain")
+                        } else {
+                            importLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                        }
+                    },
+                    enabled = fileEmail.isNotBlank()
+                ) { Text("Continue") }
+            },
+            dismissButton = {
+                TextButton(onClick = { fileAction = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Import confirmation dialog
+    if (showImportConfirm) {
+        AlertDialog(
+            onDismissRequest = { showImportConfirm = false },
+            title = { Text("Confirm Import") },
+            text = {
+                Text("Replace all ${services.size} local services with ${importedServices.size} services from file?")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showImportConfirm = false
+                    serviceManager.replaceAll(importedServices)
+                    services = serviceManager.getServices()
+                    scope.launch { snackbarHostState.showSnackbar(UserMessages.importSuccess(importedServices.size)) }
+                }) { Text("Replace") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportConfirm = false }) { Text("Cancel") }
+            }
+        )
     }
 
     if (showAddDialog) {
@@ -310,32 +697,43 @@ private fun AddServiceDialog(
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
                 )
-                TextButton(onClick = { showAdvanced = !showAdvanced }) {
-                    Text(if (showAdvanced) "Hide advanced" else "Show advanced")
+                TextButton(
+                    onClick = { showAdvanced = !showAdvanced },
+                    modifier = Modifier.semantics {
+                        contentDescription = if (showAdvanced) "Hide options" else "Show options"
+                    }
+                ) {
+                    Text(if (showAdvanced) "⚙️ Hide options" else "⚙️ Options")
                 }
-                if (showAdvanced) {
-                    OutlinedTextField(
-                        value = length,
-                        onValueChange = { length = it.filter { c -> c.isDigit() } },
-                        label = { Text("Length") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                    )
-                    OutlinedTextField(
-                        value = symbols,
-                        onValueChange = { symbols = it },
-                        label = { Text("Symbols") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = salt,
-                        onValueChange = { salt = it },
-                        label = { Text("Salt") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                AnimatedVisibility(
+                    visible = showAdvanced,
+                    enter = expandVertically(),
+                    exit = shrinkVertically()
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = length,
+                            onValueChange = { length = it.filter { c -> c.isDigit() } },
+                            label = { Text("Length") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                        OutlinedTextField(
+                            value = symbols,
+                            onValueChange = { symbols = it },
+                            label = { Text("Symbols") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = salt,
+                            onValueChange = { salt = it },
+                            label = { Text("Salt") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         },

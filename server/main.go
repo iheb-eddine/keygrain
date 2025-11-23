@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
@@ -13,8 +16,20 @@ func main() {
 		port = "9860"
 	}
 
+	dataDir := os.Getenv("KEYGRAIN_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "./data"
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	backup := newBackupServer(dataDir)
+	rl := newRateLimitMiddleware(ctx)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/api/backup/", rl.Wrap(backup.backupHandler))
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 
 	log.Printf("keygrain server listening on :%s", port)

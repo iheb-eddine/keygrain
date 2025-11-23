@@ -79,5 +79,39 @@
       "expected": "kPYHb2dYUk$qP6bjbzLAV5A%p3j6T5U_",
       "_note": "Longer password \u2014 completely different due to length in HMAC"
     }
+  ],
+  "fingerprint_vectors": [
+    {
+      "secret_utf8": "my-master-secret",
+      "secret_hex": "6d792d6d61737465722d736563726574",
+      "hmac_message": "keygrain-fingerprint",
+      "expected_first_4_bytes_hex": "4482716f",
+      "expected_color_indices": [4, 2, 1, 7],
+      "_note": "Primary test vector — Yellow, Sky Blue, Orange, Reddish Purple"
+    },
+    {
+      "secret_utf8": "different-secret",
+      "secret_hex": "646966666572656e742d736563726574",
+      "hmac_message": "keygrain-fingerprint",
+      "expected_first_4_bytes_hex": "d482d679",
+      "expected_color_indices": [4, 2, 6, 1],
+      "_note": "Different secret — Yellow, Sky Blue, Vermillion, Orange"
+    },
+    {
+      "secret_utf8": "a",
+      "secret_hex": "61",
+      "hmac_message": "keygrain-fingerprint",
+      "expected_first_4_bytes_hex": "b57cc734",
+      "expected_color_indices": [5, 4, 7, 4],
+      "_note": "Single character — Blue, Yellow, Reddish Purple, Yellow"
+    },
+    {
+      "secret_utf8": "contraseña-maëstro",
+      "secret_hex": "636f6e7472617365c3b1612d6d61c3ab7374726f",
+      "hmac_message": "keygrain-fingerprint",
+      "expected_first_4_bytes_hex": "d2c122a0",
+      "expected_color_indices": [2, 1, 2, 0],
+      "_note": "Unicode secret (UTF-8) — Sky Blue, Orange, Sky Blue, Black"
+    }
   ]
 }

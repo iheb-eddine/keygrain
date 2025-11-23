@@ -53,6 +53,46 @@ class ServiceManager(context: Context) {
         save(services)
     }
 
+    fun replaceAll(services: List<ServiceEntry>) {
+        save(services)
+    }
+
+    fun exportJson(): String {
+        val arr = JSONArray()
+        getServices().forEach { s ->
+            arr.put(JSONObject().apply {
+                put("name", s.name)
+                put("email", s.email)
+                put("length", s.length)
+                put("symbols", s.symbols)
+                put("salt", s.salt)
+            })
+        }
+        return JSONObject().apply {
+            put("version", 1)
+            put("services", arr)
+        }.toString()
+    }
+
+    fun parseJson(json: String): List<ServiceEntry> {
+        val trimmed = json.trim()
+        val arr = if (trimmed.startsWith("[")) {
+            JSONArray(trimmed)
+        } else {
+            JSONObject(trimmed).getJSONArray("services")
+        }
+        return (0 until arr.length()).map { i ->
+            val obj = arr.getJSONObject(i)
+            ServiceEntry(
+                name = obj.getString("name"),
+                email = obj.getString("email"),
+                length = obj.optInt("length", 20),
+                symbols = obj.optString("symbols", Keygrain.DEFAULT_SYMBOLS),
+                salt = obj.optString("salt", "")
+            )
+        }
+    }
+
     private fun save(services: List<ServiceEntry>) {
         val arr = JSONArray()
         services.forEach { s ->

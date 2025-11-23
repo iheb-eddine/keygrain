@@ -19,7 +19,8 @@ build-package:
     - cp Dockerfile ../build/app/
     - cp docker-compose.yml ../build/app/
     - cp go.mod ../build/app/
-    - cp main.go ../build/app/
+    - cp go.sum ../build/app/ 2>/dev/null || true
+    - cp *.go ../build/app/
     - cp -r deploy ../build/app/
     - cd ../build && tar -czf ../${APP_NAME}.tar.gz app
     - |
