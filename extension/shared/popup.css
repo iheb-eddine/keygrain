@@ -1,0 +1,26 @@
+body {
+  width: 320px;
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  padding: 12px;
+  color: #222;
+}
+h1 { font-size: 1.2rem; margin: 0 0 10px; }
+label { display: block; margin-top: 8px; font-size: 0.8rem; color: #555; }
+input { width: 100%; padding: 6px; margin-top: 2px; border: 1px solid #ccc; border-radius: 3px; font-size: 0.9rem; box-sizing: border-box; }
+input:focus { outline: none; border-color: #555; }
+#generate { margin-top: 12px; width: 100%; padding: 8px; background: #333; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 0.9rem; }
+#generate:hover { background: #555; }
+.output-row { display: flex; gap: 6px; margin-top: 12px; align-items: center; }
+.output-row input { flex: 1; font-family: monospace; background: #f4f4f4; }
+.output-row button { padding: 6px 10px; border: 1px solid #ccc; background: #f4f4f4; border-radius: 3px; cursor: pointer; font-size: 1rem; }
+.output-row button:hover { background: #e0e0e0; }
+#status { margin-top: 6px; font-size: 0.8rem; color: #555; min-height: 1.1em; }
+#fingerprint { display: flex; gap: 6px; margin-top: 6px; min-height: 12px; }
+.fp-dot { width: 12px; height: 12px; border-radius: 50%; }
+details summary { cursor: pointer; font-size: 0.85rem; margin-top: 10px; color: #555; list-style: none; }
+details summary::-webkit-details-marker { display: none; }
+details .details-content { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 200ms ease; overflow: hidden; }
+details[open] .details-content { grid-template-rows: 1fr; }
+details .details-content > div { overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { details .details-content { transition: none; } }

@@ -3,10 +3,37 @@
 import hashlib
 import hmac
 
+from argon2.low_level import hash_secret_raw, Type
+
 UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
 LOWER = "abcdefghjkmnpqrstuvwxyz"
 DIGITS = "23456789"
 DEFAULT_SYMBOLS = "!@#$%&*-_=+?"
+
+_strengthen_cache: dict[tuple[bytes, str], bytes] = {}
+
+
+def strengthen_secret(secret: bytes, email: str) -> bytes:
+    """Run Argon2id on the secret to produce a strengthened 32-byte key."""
+    email = email.lower()
+    key = (secret, email)
+    if key not in _strengthen_cache:
+        salt = ("keygrain-strengthen:" + email).encode("utf-8")
+        _strengthen_cache[key] = hash_secret_raw(
+            secret=secret,
+            salt=salt,
+            time_cost=3,
+            memory_cost=65536,
+            parallelism=1,
+            hash_len=32,
+            type=Type.ID,
+        )
+    return _strengthen_cache[key]
+
+
+def clear_strengthen_cache() -> None:
+    """Clear the internal Argon2id cache."""
+    _strengthen_cache.clear()
 
 
 def _stream(secret: bytes, email: str, length: int, salt: str) -> bytes:
@@ -29,6 +56,7 @@ def derive_password(
     length: int = 20,
     symbols: str = DEFAULT_SYMBOLS,
     salt: str = "",
+    strengthen: bool = False,
 ) -> str:
     """Derive a deterministic password from secret + email.
 
@@ -38,19 +66,21 @@ def derive_password(
         length: Password length (minimum 8).
         symbols: Symbol charset to use.
         salt: Optional salt for uniqueness.
+        strengthen: If True, pre-process secret through Argon2id.
 
     Returns:
         Password string guaranteed to contain upper, lower, digit, and symbol.
     """
     if length < 8:
-        raise ValueError("length must be >= 8")
+        raise ValueError("Error: Password length must be at least 8.")
     if not symbols:
-        raise ValueError("symbols must not be empty")
+        raise ValueError("Error: At least one symbol character is required.")
 
     email = email.lower()
+    effective_secret = strengthen_secret(secret, email) if strengthen else secret
     full_charset = UPPER + LOWER + DIGITS + symbols
 
-    stream = _stream(secret, email, length, salt)
+    stream = _stream(effective_secret, email, length, salt)
     pos = 0
 
     def next_byte() -> int:

@@ -113,6 +113,42 @@ Per user record:
 - If master secret is lost: backup is unrecoverable (by design)
 - If server is compromised: attacker gets encrypted blobs (useless without master secrets)
 
+## Optional: Argon2id Key Strengthening
+
+For users with memorizable passphrases (lower entropy), an optional Argon2id step strengthens the secret before derivation.
+
+### When to Use
+
+- **Skip** if your master secret is high-entropy (random 20+ characters)
+- **Use** if your master secret is a memorizable passphrase (e.g., "correct horse battery staple")
+
+### Parameters (Fixed)
+
+| Parameter | Value |
+|-----------|-------|
+| Memory | 64 MiB (65536 KiB) |
+| Iterations | 3 |
+| Parallelism | 1 |
+| Output length | 32 bytes |
+| Salt | `"keygrain-strengthen:" + lowercase(email)` (UTF-8) |
+| Type | Argon2id |
+
+### Flow
+
+```
+strengthened_secret = Argon2id(secret, salt, params)
+# Then use strengthened_secret in place of secret for all derivations
+key = HMAC-SHA256(strengthened_secret, message)
+```
+
+### Caching
+
+The Argon2id computation takes ~1 second. Implementations SHOULD cache the result keyed on `(secret, email)` so the cost is paid only once per session.
+
+### Cross-Platform Consistency
+
+All implementations MUST produce identical 32-byte output for the same inputs. The salt is deterministic (not random). Test vectors for the strengthened path are provided separately.
+
 ## Security Properties (General)
 
 - **Master secret compromise** → all passwords exposed. Protect the secret.
@@ -122,11 +158,14 @@ Per user record:
 - **Salt change** → produces entirely different password (salt is in HMAC input).
 - **No password storage** — passwords recomputed on demand.
 - **Config storage** — only derivation parameters stored (email, length, symbols, salt per site). Useless without master secret.
+- **Argon2id** — makes brute-force of weak passphrases expensive (~1 sec per guess).
 
 ## Platforms
 
 | Platform | Location | Status |
 |----------|----------|--------|
-| Python (library + CLI) | `python/` | Phase 1 |
-| Android (Kotlin + Compose) | `kotlin/` | Phase 1 |
-| Web (backup server + landing) | `server/` | Phase 2 |
+| Python (library + CLI) | `python/` | ✅ Complete |
+| Android (Kotlin + Compose) | `kotlin/` | ✅ Complete |
+| Web generator (client-side) | `server/static/generate/` | ✅ Complete |
+| Backup server (Go) | `server/` | ✅ Complete |
+| Browser extension (Chrome + Firefox) | `extension/` | ✅ Complete |
