@@ -28,10 +28,16 @@
   // Fingerprint debounce
   secretInput.addEventListener("input", () => {
     if (fpTimer) clearTimeout(fpTimer);
-    if (!secretInput.value) { fpContainer.innerHTML = ""; return; }
+    if (!secretInput.value) { fpContainer.textContent = ""; return; }
     fpTimer = setTimeout(async () => {
       const indices = await secretFingerprint(secretInput.value);
-      fpContainer.innerHTML = indices.map(i => `<span class="fp-dot" style="background:${WONG_PALETTE[i]}"></span>`).join("");
+      fpContainer.textContent = "";
+      indices.forEach(i => {
+        const dot = document.createElement("span");
+        dot.className = "fp-dot";
+        dot.style.background = WONG_PALETTE[i];
+        fpContainer.appendChild(dot);
+      });
     }, 500);
   });
 
