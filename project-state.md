@@ -102,3 +102,11 @@ keygrain/
 | Rate limiting | 16d3ace | Token bucket per lookup_id + per IP, 16 tests |
 | Secret fingerprint | 57078de | 4 colored circles, Wong palette, all platforms |
 | Progressive disclosure | e0a548c | details/summary for web, AnimatedVisibility for Android |
+
+## Recently Completed (P1)
+
+| Feature | Commit | Description |
+|---------|--------|-------------|
+| Error humanization | 6e3beba | UserMessages.kt, all platforms, no raw exceptions |
+| Backup versioning/ETag | 43b3ae5 | SHA-256 ETag, If-Match, 412 conflict, 11 tests |
+| Onboarding wizard | 557ec7b | 5-step wizard, skippable, crash-resilient |

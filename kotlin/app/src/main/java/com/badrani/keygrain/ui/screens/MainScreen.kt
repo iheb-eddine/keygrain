@@ -24,7 +24,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -43,6 +42,7 @@ import com.badrani.keygrain.data.SyncCrypto
 import com.badrani.keygrain.data.SyncManager
 import com.badrani.keygrain.data.SyncResult
 import com.badrani.keygrain.ui.UserMessages
+import com.badrani.keygrain.ui.WongPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -52,27 +52,51 @@ fun MainScreen() {
     val context = LocalContext.current
     val secretManager = remember { SecretManager(context) }
     val serviceManager = remember { ServiceManager(context) }
+    val settingsPrefs = remember {
+        context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
+    }
 
+    var onboardingCompleted by remember {
+        mutableStateOf(settingsPrefs.getBoolean("onboarding_completed", false))
+    }
     var unlocked by remember { mutableStateOf(false) }
     var masterSecret by remember { mutableStateOf("") }
 
-    if (!unlocked) {
-        UnlockScreen(
-            secretManager = secretManager,
-            onUnlocked = { secret ->
-                masterSecret = secret
-                unlocked = true
-            }
-        )
-    } else {
-        ServiceListScreen(
-            masterSecret = masterSecret,
-            serviceManager = serviceManager,
-            onLock = {
-                unlocked = false
-                masterSecret = ""
-            }
-        )
+    when {
+        !onboardingCompleted && !secretManager.hasSecret() -> {
+            OnboardingWizard(
+                secretManager = secretManager,
+                serviceManager = serviceManager,
+                onComplete = { secret ->
+                    settingsPrefs.edit().putBoolean("onboarding_completed", true).apply()
+                    onboardingCompleted = true
+                    if (secret != null) {
+                        masterSecret = secret
+                        unlocked = true
+                    }
+                }
+            )
+        }
+        !unlocked -> {
+            UnlockScreen(
+                secretManager = secretManager,
+                showSubtitle = !secretManager.hasSecret(),
+                onUnlocked = { secret ->
+                    masterSecret = secret
+                    unlocked = true
+                }
+            )
+        }
+        else -> {
+            ServiceListScreen(
+                masterSecret = masterSecret,
+                serviceManager = serviceManager,
+                onLock = {
+                    unlocked = false
+                    masterSecret = ""
+                }
+            )
+        }
     }
 }
 
@@ -80,17 +104,13 @@ fun MainScreen() {
 @Composable
 private fun UnlockScreen(
     secretManager: SecretManager,
+    showSubtitle: Boolean = false,
     onUnlocked: (String) -> Unit
 ) {
     val context = LocalContext.current
     var secret by remember { mutableStateOf("") }
     var secretVisible by remember { mutableStateOf(false) }
     var fingerprintIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
-
-    val wongPalette = listOf(
-        Color(0xFF000000), Color(0xFFE69F00), Color(0xFF56B4E9), Color(0xFF009E73),
-        Color(0xFFF0E442), Color(0xFF0072B2), Color(0xFFD55E00), Color(0xFFCC79A7)
-    )
 
     LaunchedEffect(secret) {
         if (secret.isEmpty()) {
@@ -140,6 +160,14 @@ private fun UnlockScreen(
                 Spacer(Modifier.height(24.dp))
             }
 
+            if (showSubtitle) {
+                Text(
+                    "Enter your master secret — the single passphrase that generates all your passwords.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+
             OutlinedTextField(
                 value = secret,
                 onValueChange = { secret = it },
@@ -160,7 +188,7 @@ private fun UnlockScreen(
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.CenterHorizontally)) {
                     fingerprintIndices.forEach { idx ->
-                        Box(Modifier.size(16.dp).background(wongPalette[idx], CircleShape))
+                        Box(Modifier.size(16.dp).background(WongPalette[idx], CircleShape))
                     }
                 }
             }
@@ -743,7 +771,7 @@ private fun AddServiceDialog(
                     onAdd(ServiceEntry(
                         name = name.trim(),
                         email = email.trim(),
-                        length = length.toIntOrNull() ?: 20,
+                        length = (length.toIntOrNull() ?: 20).coerceAtLeast(8),
                         symbols = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS },
                         salt = salt
                     ))

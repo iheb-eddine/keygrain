@@ -11,7 +11,9 @@ for target in chrome firefox; do
   cp "$target/manifest.json" "dist/$target/"
 done
 
-cd dist
-zip -r keygrain-chrome.zip chrome/
-zip -r keygrain-firefox.zip firefox/
+cd dist/chrome
+zip -r ../keygrain-chrome.zip .
+cd ../firefox
+zip -r ../keygrain-firefox.zip .
+cd ..
 echo "Built: dist/keygrain-chrome.zip, dist/keygrain-firefox.zip"

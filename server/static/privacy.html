@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keygrain — Privacy Policy</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 700px; margin: 60px auto; padding: 0 20px; color: #333; line-height: 1.7; }
+        h1 { font-size: 1.8rem; }
+        h2 { font-size: 1.3rem; margin-top: 2rem; }
+    </style>
+</head>
+<body>
+    <h1>Keygrain — Privacy Policy</h1>
+    <p><em>Last updated: May 2026</em></p>
+
+    <h2>Summary</h2>
+    <p>Keygrain does not collect, store, or transmit any personal data. Your master secret never leaves your device.</p>
+
+    <h2>What Keygrain Does</h2>
+    <p>Keygrain is a deterministic password generator. It computes passwords locally using cryptographic functions (HMAC-SHA256). All computation happens on your device — in the browser extension, the mobile app, or the web generator.</p>
+
+    <h2>Data We Do NOT Collect</h2>
+    <ul>
+        <li>Your master secret</li>
+        <li>Your generated passwords</li>
+        <li>Your email addresses</li>
+        <li>Your browsing history</li>
+        <li>Analytics or telemetry</li>
+        <li>Cookies or tracking identifiers</li>
+    </ul>
+
+    <h2>Optional Backup Service</h2>
+    <p>If you choose to use the backup feature, an encrypted blob is stored on our server. The server cannot decrypt this blob — it is encrypted with a key derived from your master secret. The server stores:</p>
+    <ul>
+        <li>A lookup identifier (derived hash — not your email)</li>
+        <li>A bcrypt hash of your auth password (derived — not your master secret)</li>
+        <li>Your encrypted configuration blob (opaque to the server)</li>
+    </ul>
+    <p>You can delete your backup at any time. Without your master secret, the backup is unrecoverable and useless.</p>
+
+    <h2>Browser Extension Permissions</h2>
+    <ul>
+        <li><strong>activeTab</strong> — to fill password fields on the current page when you click "Fill"</li>
+        <li><strong>scripting</strong> — to inject the fill script into the active tab</li>
+        <li><strong>storage</strong> — to remember your last-used email per domain (locally, never transmitted)</li>
+    </ul>
+    <p>The extension makes no network requests. It works entirely offline.</p>
+
+    <h2>Contact</h2>
+    <p>Questions? Email: admin@secbytech.com</p>
+</body>
+</html>
