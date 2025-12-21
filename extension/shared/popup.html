@@ -2,36 +2,91 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <title>Keygrain</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <h1>🔑 Keygrain</h1>
-  <form id="form">
-    <label for="secret">Secret</label>
+  <!-- Lock Screen -->
+  <div id="lock-screen">
+    <h1>🔑 Keygrain</h1>
+    <label for="secret">Master Secret</label>
     <input type="password" id="secret" autocomplete="off" required>
     <div id="fingerprint" aria-label="Secret fingerprint"></div>
-    <label for="email">Email</label>
-    <input type="email" id="email" autocomplete="off" required>
-    <details id="options-panel">
-      <summary>⚙️ Options</summary>
-      <div class="details-content"><div>
-        <label for="length">Length</label>
-        <input type="number" id="length" min="8" value="20">
-        <label for="symbols">Symbols</label>
-        <input type="text" id="symbols" value="!@#$%&*-_=+?">
-        <label for="salt">Salt</label>
-        <input type="text" id="salt" autocomplete="off">
-      </div></div>
-    </details>
-    <button type="submit" id="generate">Generate</button>
-  </form>
-  <div class="output-row">
-    <input type="text" id="output" readonly aria-label="Generated password">
-    <button type="button" id="copy" aria-label="Copy to clipboard">📋</button>
-    <button type="button" id="fill" aria-label="Fill password field">▶</button>
+    <button id="unlock-btn" disabled>Unlock</button>
   </div>
+
+  <!-- Main Screen -->
+  <div id="main-screen" class="hidden">
+    <div class="header">
+      <h1>🔑 Keygrain</h1>
+      <div class="header-actions">
+        <button id="menu-btn" title="Menu">☰</button>
+        <button id="lock-btn" title="Lock">🔒</button>
+      </div>
+    </div>
+
+    <div id="menu-dropdown" class="hidden">
+      <button id="backup-btn">Backup to server</button>
+      <button id="restore-btn">Restore from server</button>
+      <hr>
+      <button id="export-btn">Export to file</button>
+      <button id="import-btn">Import from file</button>
+    </div>
+
+    <input type="text" id="search" placeholder="Search services..." autocomplete="off">
+
+    <div id="service-list"></div>
+
+    <button id="add-btn" title="Add service">＋</button>
+  </div>
+
+  <!-- Add Service Dialog -->
+  <div id="add-dialog" class="dialog hidden">
+    <h2>Add Service</h2>
+    <label for="add-name">Service name</label>
+    <input type="text" id="add-name" required>
+    <label for="add-email">Email</label>
+    <input type="email" id="add-email" required>
+    <details id="add-options">
+      <summary>⚙️ Options</summary>
+      <label for="add-length">Length</label>
+      <input type="number" id="add-length" min="8" value="20">
+      <label for="add-symbols">Symbols</label>
+      <input type="text" id="add-symbols" value="!@#$%&*-_=+?">
+      <label for="add-salt">Salt</label>
+      <input type="text" id="add-salt">
+    </details>
+    <div class="dialog-actions">
+      <button id="add-cancel">Cancel</button>
+      <button id="add-confirm">Add</button>
+    </div>
+  </div>
+
+  <!-- Email Prompt Dialog -->
+  <div id="email-dialog" class="dialog hidden">
+    <h2 id="email-dialog-title">Backup</h2>
+    <label for="sync-email">Email for backup identity</label>
+    <input type="email" id="sync-email">
+    <div class="dialog-actions">
+      <button id="email-cancel">Cancel</button>
+      <button id="email-confirm">Continue</button>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Dialog -->
+  <div id="delete-dialog" class="dialog hidden">
+    <h2>Delete <span id="delete-service-name"></span>?</h2>
+    <p>This cannot be undone.</p>
+    <div class="dialog-actions">
+      <button id="delete-cancel">Cancel</button>
+      <button id="delete-confirm">Delete</button>
+    </div>
+  </div>
+
   <div id="status" aria-live="polite"></div>
+
   <script src="keygrain.js"></script>
+  <script src="sync.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

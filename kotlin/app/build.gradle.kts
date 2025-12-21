@@ -17,7 +17,7 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file(System.getProperty("user.home") + "/.android/release.keystore")
+            storeFile = file("${rootProject.projectDir}/release.keystore")
             storePassword = "keygrain"
             keyAlias = "keygrain"
             keyPassword = "keygrain"
