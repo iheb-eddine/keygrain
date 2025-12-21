@@ -49,8 +49,6 @@ build-mobile:
     - rm /tmp/cmdline-tools.zip
     - yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
     - $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "build-tools;34.0.0" "platforms;android-34"
-    - mkdir -p ~/.android
-    - keytool -genkey -v -keystore ~/.android/release.keystore -storepass keygrain -alias keygrain -keypass keygrain -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Keygrain,O=Badrani,C=DE" 2>/dev/null || true
     - cd kotlin
     - chmod +x gradlew
     - 'sed -i "s/versionName = \"1.0.0\"/versionName = \"1.0.0-${CI_COMMIT_SHORT_SHA}\"/" app/build.gradle.kts'

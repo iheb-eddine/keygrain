@@ -8,7 +8,8 @@ mkdir -p dist/chrome dist/firefox
 
 for target in chrome firefox; do
   cp -r shared/* "dist/$target/"
-  cp "$target/manifest.json" "dist/$target/"
+  # Overwrite with browser-specific files (manifest.json, background.js)
+  cp "$target"/* "dist/$target/"
 done
 
 cd dist/chrome
