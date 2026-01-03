@@ -1,5 +1,10 @@
 // sync.js — Backup/restore/export/import (depends on keygrain.js)
-const SYNC_SERVER = "https://keygrain.secbytech.com";
+const DEFAULT_SYNC_SERVER = "https://keygrain.secbytech.com";
+
+async function getSyncServer() {
+  const data = await chrome.storage.local.get("settings");
+  return (data.settings && data.settings.serverUrl) || DEFAULT_SYNC_SERVER;
+}
 
 async function deriveLookupId(secret, email) {
   const enc = new TextEncoder();
@@ -39,6 +44,7 @@ async function backupToServer(secret, email, servicesJson, storedEtag) {
   const lookupId = await deriveLookupId(secret, email);
   const authPassword = await deriveAuthPassword(secret, email);
   const encKey = await deriveEncryptionKey(secret, email);
+  const syncServer = await getSyncServer();
   try {
     const encrypted = await encryptBlob(encKey, new TextEncoder().encode(servicesJson));
     const headers = {
@@ -46,7 +52,7 @@ async function backupToServer(secret, email, servicesJson, storedEtag) {
       "Content-Type": "application/octet-stream",
     };
     if (storedEtag) headers["If-Match"] = storedEtag;
-    const resp = await fetch(SYNC_SERVER + "/api/backup/" + lookupId, {
+    const resp = await fetch(syncServer + "/api/backup/" + lookupId, {
       method: "PUT", headers, body: encrypted,
     });
     if (resp.status === 412) throw new Error("conflict");
@@ -63,8 +69,9 @@ async function restoreFromServer(secret, email) {
   const lookupId = await deriveLookupId(secret, email);
   const authPassword = await deriveAuthPassword(secret, email);
   const encKey = await deriveEncryptionKey(secret, email);
+  const syncServer = await getSyncServer();
   try {
-    const resp = await fetch(SYNC_SERVER + "/api/backup/" + lookupId, {
+    const resp = await fetch(syncServer + "/api/backup/" + lookupId, {
       method: "GET",
       headers: {"Authorization": "Basic " + btoa(lookupId + ":" + authPassword)},
     });

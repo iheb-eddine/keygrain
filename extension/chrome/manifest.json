@@ -5,8 +5,10 @@
   "description": "Deterministic password generator — no storage, no sync, no trust.",
   "permissions": [
     "activeTab",
+    "alarms",
     "scripting",
-    "storage"
+    "storage",
+    "tabs"
   ],
   "action": {
     "default_popup": "popup.html",
