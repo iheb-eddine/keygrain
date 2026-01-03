@@ -23,7 +23,7 @@
 
   // Get secret and email from background
   const secretResp = await sendMsg({action: "getSecret"});
-  const emailResp = await sendMsg({action: "getImportEmail"});
+  const emailResp = await sendMsg({action: "getEmail"});
   const secret = secretResp?.secret;
   const email = emailResp?.email;
 
@@ -56,7 +56,26 @@
 
   confirmBtn.addEventListener("click", async () => {
     if (!parsedServices) return;
-    await chrome.storage.local.set({services: {version: 1, services: parsedServices}});
+    // Encrypt with local storage key before saving
+    const enc = new TextEncoder();
+    const storageKey = await hmacSHA256(enc.encode(secret), enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+    try {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const aad = enc.encode(email.toLowerCase());
+      const plaintext = enc.encode(JSON.stringify({version: 1, services: parsedServices}));
+      const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["encrypt"]);
+      const ciphertext = await crypto.subtle.encrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, plaintext);
+      const bytes = new Uint8Array(ciphertext);
+      let ivB64 = "";
+      for (let i = 0; i < iv.length; i++) ivB64 += String.fromCharCode(iv[i]);
+      ivB64 = btoa(ivB64);
+      let ctB64 = "";
+      for (let i = 0; i < bytes.length; i++) ctB64 += String.fromCharCode(bytes[i]);
+      ctB64 = btoa(ctB64);
+      await chrome.storage.local.set({services: {version: 2, iv: ivB64, ciphertext: ctB64}});
+    } finally {
+      storageKey.fill(0);
+    }
     showStatus("Import complete! " + parsedServices.length + " services imported.", "success");
     confirmSection.style.display = "none";
     setTimeout(() => window.close(), 2000);

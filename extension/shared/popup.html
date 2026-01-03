@@ -9,6 +9,8 @@
   <!-- Lock Screen -->
   <div id="lock-screen">
     <h1>🔑 Keygrain</h1>
+    <label for="email">Email</label>
+    <input type="email" id="email" autocomplete="email" required>
     <label for="secret">Master Secret</label>
     <input type="password" id="secret" autocomplete="off" required>
     <div id="fingerprint" aria-label="Secret fingerprint"></div>
@@ -21,6 +23,7 @@
       <h1>🔑 Keygrain</h1>
       <div class="header-actions">
         <button id="menu-btn" title="Menu">☰</button>
+        <button id="settings-btn" title="Settings">⚙</button>
         <button id="lock-btn" title="Lock">🔒</button>
       </div>
     </div>
@@ -34,6 +37,10 @@
     </div>
 
     <input type="text" id="search" placeholder="Search services..." autocomplete="off">
+
+    <div id="site-suggestion" class="hidden"></div>
+
+    <div id="quick-fill" class="hidden"></div>
 
     <div id="service-list"></div>
 
@@ -62,17 +69,6 @@
     </div>
   </div>
 
-  <!-- Email Prompt Dialog -->
-  <div id="email-dialog" class="dialog hidden">
-    <h2 id="email-dialog-title">Backup</h2>
-    <label for="sync-email">Email for backup identity</label>
-    <input type="email" id="sync-email">
-    <div class="dialog-actions">
-      <button id="email-cancel">Cancel</button>
-      <button id="email-confirm">Continue</button>
-    </div>
-  </div>
-
   <!-- Delete Confirmation Dialog -->
   <div id="delete-dialog" class="dialog hidden">
     <h2>Delete <span id="delete-service-name"></span>?</h2>
@@ -80,6 +76,23 @@
     <div class="dialog-actions">
       <button id="delete-cancel">Cancel</button>
       <button id="delete-confirm">Delete</button>
+    </div>
+  </div>
+
+  <!-- Settings Panel -->
+  <div id="settings-panel" class="dialog hidden">
+    <h2>Settings</h2>
+    <label for="set-lock-timeout">Auto-lock timeout (minutes)</label>
+    <input type="number" id="set-lock-timeout" min="1" value="15">
+    <label for="set-length">Default password length</label>
+    <input type="number" id="set-length" min="8" value="20">
+    <label for="set-symbols">Default symbols</label>
+    <input type="text" id="set-symbols" value="!@#$%&*-_=+?">
+    <label for="set-server-url">Server URL</label>
+    <input type="url" id="set-server-url" value="https://keygrain.secbytech.com">
+    <div class="dialog-actions">
+      <button id="settings-cancel">Cancel</button>
+      <button id="settings-save">Save</button>
     </div>
   </div>
 
