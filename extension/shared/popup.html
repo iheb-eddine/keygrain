@@ -34,11 +34,14 @@
       <hr>
       <button id="export-btn">Export to file</button>
       <button id="import-btn">Import from file</button>
+      <button id="migrate-btn">Migrate from another manager</button>
     </div>
 
     <input type="text" id="search" placeholder="Search services..." autocomplete="off">
 
     <div id="site-suggestion" class="hidden"></div>
+
+    <div id="breach-warnings" role="alert" aria-live="assertive"></div>
 
     <div id="quick-fill" class="hidden"></div>
 
@@ -52,6 +55,7 @@
     <h2>Add Service</h2>
     <label for="add-name">Service name</label>
     <input type="text" id="add-name" required>
+    <div id="add-rule-indicator" class="hidden" aria-live="polite"></div>
     <label for="add-email">Email</label>
     <input type="email" id="add-email" required>
     <details id="add-options">
@@ -62,6 +66,7 @@
       <input type="text" id="add-symbols" value="!@#$%&*-_=+?">
       <label for="add-salt">Salt</label>
       <input type="text" id="add-salt">
+      <div id="add-pw-warning" class="hidden" aria-live="polite">⚠️ Changing these options will change your generated password.</div>
     </details>
     <div class="dialog-actions">
       <button id="add-cancel">Cancel</button>

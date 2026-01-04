@@ -23,6 +23,8 @@
   const addSalt = document.getElementById("add-salt");
   const addCancel = document.getElementById("add-cancel");
   const addConfirm = document.getElementById("add-confirm");
+  const addRuleIndicator = document.getElementById("add-rule-indicator");
+  const addPwWarning = document.getElementById("add-pw-warning");
 
   // Delete dialog
   const deleteDialog = document.getElementById("delete-dialog");
@@ -45,15 +47,18 @@
   let currentEmail = null;
   let services = [];
   let deleteTarget = null;
+  let editIndex = null;
   let clearTimer = null;
   let fpTimer = null;
   let statusTimer = null;
   let currentHostname = null;
   let focusedIndex = -1;
   let settings = {autoLockMinutes: 15, defaultLength: 20, defaultSymbols: "!@#$%&*-_=+?", serverUrl: "https://keygrain.secbytech.com"};
+  let siteRules = null;
 
   const siteSuggestion = document.getElementById("site-suggestion");
   const quickFill = document.getElementById("quick-fill");
+  const breachWarnings = document.getElementById("breach-warnings");
 
   // === Helpers ===
   function showStatus(msg) {
@@ -65,6 +70,172 @@
   async function loadSettings() {
     const data = await chrome.storage.local.get("settings");
     if (data.settings) Object.assign(settings, data.settings);
+  }
+
+  async function fetchSiteRules() {
+    const data = await chrome.storage.local.get("siteRules");
+    const cached = data.siteRules;
+    if (cached && Date.now() - cached.fetchedAt < 86400000) {
+      siteRules = cached.rules;
+      return;
+    }
+    try {
+      const resp = await fetch(settings.serverUrl + "/rules.json");
+      if (!resp.ok) throw new Error(resp.status);
+      const json = await resp.json();
+      if (!Array.isArray(json.rules) || !json.version) throw new Error("invalid");
+      if (cached && json.version <= cached.version) {
+        siteRules = cached.rules;
+        await chrome.storage.local.set({siteRules: {...cached, fetchedAt: Date.now()}});
+        return;
+      }
+      siteRules = json.rules;
+      await chrome.storage.local.set({siteRules: {version: json.version, rules: json.rules, fetchedAt: Date.now()}});
+    } catch {
+      siteRules = cached ? cached.rules : null;
+    }
+  }
+
+  function lookupRule(hostname) {
+    if (!siteRules || !hostname) return null;
+    const host = hostname.toLowerCase().replace(/^www\./, "");
+    for (const rule of siteRules) {
+      if (rule.exact) {
+        if (host === rule.domain) return rule;
+      } else {
+        if (host === rule.domain || host.endsWith("." + rule.domain)) return rule;
+      }
+    }
+    return null;
+  }
+
+  async function fetchBreaches() {
+    const data = await chrome.storage.local.get("breachFeed");
+    const cached = data.breachFeed;
+    if (cached && Date.now() - cached.fetchedAt < 86400000) {
+      checkBreaches(cached.breaches);
+      return;
+    }
+    try {
+      const resp = await fetch(settings.serverUrl + "/breaches.json");
+      if (!resp.ok) throw new Error(resp.status);
+      const json = await resp.json();
+      if (!Array.isArray(json.breaches)) throw new Error("invalid");
+      await chrome.storage.local.set({breachFeed: {version: json.version, breaches: json.breaches, fetchedAt: Date.now()}});
+      checkBreaches(json.breaches);
+    } catch {
+      if (cached) checkBreaches(cached.breaches);
+    }
+  }
+
+  async function checkBreaches(breaches) {
+    const data = await chrome.storage.local.get("dismissedBreaches");
+    const dismissed = data.dismissedBreaches || [];
+    const matched = breaches.filter(b => {
+      if (dismissed.includes(b.id)) return false;
+      return services.some(svc => {
+        const name = svc.name.toLowerCase().replace(/^www\./, "");
+        return name === b.domain || name.endsWith("." + b.domain);
+      });
+    });
+    renderBreachWarnings(matched);
+  }
+
+  function renderBreachWarnings(matched) {
+    breachWarnings.textContent = "";
+    const visible = matched.slice(0, 3);
+    const remaining = matched.length - visible.length;
+    visible.forEach(b => {
+      const div = document.createElement("div");
+      div.className = "breach-banner " + b.severity;
+      div.setAttribute("tabindex", "0");
+      const icon = b.severity === "info" ? "\u2139\uFE0F" : "\u26A0\uFE0F";
+      const dateStr = new Date(b.date + "T00:00:00").toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric"});
+      const headline = document.createElement("div");
+      headline.className = "breach-headline";
+      headline.textContent = icon + " " + b.domain + " was breached (" + dateStr + ")";
+      div.appendChild(headline);
+      const desc = document.createElement("div");
+      desc.className = "breach-desc";
+      desc.textContent = b.description;
+      div.appendChild(desc);
+      if (b.action && b.severity !== "info") {
+        const action = document.createElement("div");
+        action.className = "breach-action";
+        action.textContent = "\u2192 " + b.action;
+        div.appendChild(action);
+      }
+      const dismiss = document.createElement("button");
+      dismiss.className = "breach-dismiss";
+      dismiss.textContent = "\u00D7";
+      dismiss.setAttribute("aria-label", "Dismiss breach warning for " + b.domain);
+      dismiss.addEventListener("click", async () => {
+        const d = await chrome.storage.local.get("dismissedBreaches");
+        const arr = d.dismissedBreaches || [];
+        arr.push(b.id);
+        await chrome.storage.local.set({dismissedBreaches: arr});
+        div.remove();
+      });
+      div.appendChild(dismiss);
+      breachWarnings.appendChild(div);
+    });
+    if (remaining > 0) {
+      const more = document.createElement("div");
+      more.className = "breach-more";
+      more.textContent = "+" + remaining + " more breach warning" + (remaining > 1 ? "s" : "");
+      more.addEventListener("click", () => {
+        more.remove();
+        matched.slice(3).forEach(b => {
+          const div = document.createElement("div");
+          div.className = "breach-banner " + b.severity;
+          div.setAttribute("tabindex", "0");
+          const icon = b.severity === "info" ? "\u2139\uFE0F" : "\u26A0\uFE0F";
+          const dateStr = new Date(b.date + "T00:00:00").toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric"});
+          const headline = document.createElement("div");
+          headline.className = "breach-headline";
+          headline.textContent = icon + " " + b.domain + " was breached (" + dateStr + ")";
+          div.appendChild(headline);
+          const desc = document.createElement("div");
+          desc.className = "breach-desc";
+          desc.textContent = b.description;
+          div.appendChild(desc);
+          if (b.action && b.severity !== "info") {
+            const action = document.createElement("div");
+            action.className = "breach-action";
+            action.textContent = "\u2192 " + b.action;
+            div.appendChild(action);
+          }
+          const dismiss = document.createElement("button");
+          dismiss.className = "breach-dismiss";
+          dismiss.textContent = "\u00D7";
+          dismiss.setAttribute("aria-label", "Dismiss breach warning for " + b.domain);
+          dismiss.addEventListener("click", async () => {
+            const d = await chrome.storage.local.get("dismissedBreaches");
+            const arr = d.dismissedBreaches || [];
+            arr.push(b.id);
+            await chrome.storage.local.set({dismissedBreaches: arr});
+            div.remove();
+          });
+          div.appendChild(dismiss);
+          breachWarnings.appendChild(div);
+        });
+      });
+      breachWarnings.appendChild(more);
+    }
+  }
+
+  function applyRule(name) {
+    if (!name || !name.includes(".")) { addRuleIndicator.classList.add("hidden"); return; }
+    const domain = name.toLowerCase().replace(/^www\./, "");
+    const rule = lookupRule(domain);
+    if (rule) {
+      addLength.value = rule.maxLength || settings.defaultLength;
+      addSymbols.value = rule.symbols || settings.defaultSymbols;
+      addRuleIndicator.textContent = "\u2713 Optimized for " + rule.domain;
+      addRuleIndicator.classList.remove("hidden");
+    } else {
+      addRuleIndicator.classList.add("hidden");
+    }
   }
 
   async function sendMsg(msg) {
@@ -259,9 +430,15 @@
       delBtn.textContent = "🗑";
       delBtn.addEventListener("click", () => handleDeletePrompt(realIdx));
 
+      const editBtn = document.createElement("button");
+      editBtn.title = "Edit";
+      editBtn.textContent = "✏️";
+      editBtn.addEventListener("click", () => handleEdit(realIdx));
+
       actions.appendChild(toggleBtn);
       actions.appendChild(copyBtn);
       actions.appendChild(fillBtn);
+      actions.appendChild(editBtn);
       actions.appendChild(delBtn);
 
       row.appendChild(info);
@@ -276,6 +453,17 @@
   }
 
   // === Auto-detect site ===
+  async function updateMigrateBtn() {
+    const data = await chrome.storage.local.get("migrationChecklist");
+    const cl = data.migrationChecklist;
+    const btn = document.getElementById("migrate-btn");
+    if (cl) {
+      const pending = cl.items.filter(i => i.status === "pending").length;
+      if (pending > 0) { btn.textContent = "Migration progress (" + pending + " remaining)"; return; }
+    }
+    btn.textContent = "Migrate from another manager";
+  }
+
   async function autoDetectSite() {
     try {
       const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
@@ -307,11 +495,16 @@
       link.addEventListener("click", (e) => {
         e.preventDefault();
         siteSuggestion.classList.add("hidden");
+        editIndex = null;
         addName.value = currentHostname;
         addEmail.value = currentEmail || "";
         addLength.value = settings.defaultLength;
         addSymbols.value = settings.defaultSymbols;
         addSalt.value = "";
+        applyRule(currentHostname);
+        addPwWarning.classList.add("hidden");
+        addDialog.querySelector("h2").textContent = "Add Service";
+        addConfirm.textContent = "Add";
         addDialog.classList.remove("hidden");
         addName.focus();
       });
@@ -362,7 +555,10 @@
     await setEmail(e);
     await chrome.storage.local.set({lastEmail: e});
     showMainScreen();
+    await fetchSiteRules();
+    fetchBreaches();
     autoDetectSite();
+    updateMigrateBtn();
   });
 
   lockBtn.addEventListener("click", async () => {
@@ -411,16 +607,35 @@
 
   // Add service
   addBtn.addEventListener("click", () => {
+    editIndex = null;
     addName.value = "";
     addEmail.value = "";
     addLength.value = settings.defaultLength;
     addSymbols.value = settings.defaultSymbols;
     addSalt.value = "";
+    addRuleIndicator.classList.add("hidden");
+    addPwWarning.classList.add("hidden");
+    addDialog.querySelector("h2").textContent = "Add Service";
+    addConfirm.textContent = "Add";
     addDialog.classList.remove("hidden");
     addName.focus();
   });
 
   addCancel.addEventListener("click", () => addDialog.classList.add("hidden"));
+
+  addName.addEventListener("input", () => applyRule(addName.value.trim()));
+
+  function checkPwWarning() {
+    if (editIndex === null) { addPwWarning.classList.add("hidden"); return; }
+    const orig = services[editIndex];
+    const changed = parseInt(addLength.value, 10) !== (orig.length || 20) ||
+      addSymbols.value !== (orig.symbols || "!@#$%&*-_=+?") ||
+      addSalt.value !== (orig.salt || "");
+    addPwWarning.classList.toggle("hidden", !changed);
+  }
+  addLength.addEventListener("input", checkPwWarning);
+  addSymbols.addEventListener("input", checkPwWarning);
+  addSalt.addEventListener("input", checkPwWarning);
 
   addConfirm.addEventListener("click", async () => {
     const name = addName.value.trim();
@@ -430,7 +645,14 @@
     if (length < 8) { showStatus("Length must be at least 8."); return; }
     const symbols = addSymbols.value;
     if (!symbols) { showStatus("At least one symbol is required."); return; }
-    services.push({name, email, length, symbols, salt: addSalt.value});
+    // Name collision check
+    const duplicate = services.some((s, i) => s.name === name && i !== editIndex);
+    if (duplicate) { showStatus("A service with that name already exists."); return; }
+    if (editIndex !== null) {
+      services[editIndex] = {name, email, length, symbols, salt: addSalt.value};
+    } else {
+      services.push({name, email, length, symbols, salt: addSalt.value});
+    }
     await saveServices();
     addDialog.classList.add("hidden");
     renderServiceList();
@@ -441,6 +663,23 @@
     deleteTarget = idx;
     deleteServiceName.textContent = services[idx].name;
     deleteDialog.classList.remove("hidden");
+  }
+
+  // Edit service
+  function handleEdit(idx) {
+    const svc = services[idx];
+    editIndex = idx;
+    addName.value = svc.name;
+    addEmail.value = svc.email;
+    addLength.value = svc.length || 20;
+    addSymbols.value = svc.symbols || "!@#$%&*-_=+?";
+    addSalt.value = svc.salt || "";
+    addRuleIndicator.classList.add("hidden");
+    addPwWarning.classList.add("hidden");
+    addDialog.querySelector("h2").textContent = "Edit Service";
+    addConfirm.textContent = "Save";
+    addDialog.classList.remove("hidden");
+    addName.focus();
   }
 
   deleteCancel.addEventListener("click", () => {
@@ -645,6 +884,14 @@
     chrome.tabs.create({url: "import.html"});
   });
 
+  document.getElementById("migrate-btn").addEventListener("click", async () => {
+    menuDropdown.classList.add("hidden");
+    const data = await chrome.storage.local.get("migrationChecklist");
+    const cl = data.migrationChecklist;
+    const pending = cl ? cl.items.filter(i => i.status === "pending").length : 0;
+    chrome.tabs.create({url: pending > 0 ? "migrate.html#checklist" : "migrate.html"});
+  });
+
   // === Auto-lock heartbeat ===
   document.addEventListener("click", () => sendMsg({action: "heartbeat"}));
   document.addEventListener("keydown", () => sendMsg({action: "heartbeat"}));
@@ -658,7 +905,10 @@
     try { ok = await loadServices(); } catch { ok = false; }
     if (ok) {
       showMainScreen();
+      await fetchSiteRules();
+      fetchBreaches();
       autoDetectSite();
+      updateMigrateBtn();
     } else {
       currentSecret = null;
       currentEmail = null;

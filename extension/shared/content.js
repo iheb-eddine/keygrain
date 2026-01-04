@@ -1,6 +1,12 @@
 if (!window.__keygrain_injected) {
   window.__keygrain_injected = true;
 
+  let lastContextMenuTarget = null;
+
+  document.addEventListener("contextmenu", (e) => {
+    lastContextMenuTarget = e.target;
+  });
+
   function findPasswordField() {
     const focused = document.activeElement;
     if (focused?.type === "password") return focused;
@@ -31,6 +37,15 @@ if (!window.__keygrain_injected) {
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.action === "fill") {
       const field = findPasswordField();
+      if (field) {
+        fillField(field, msg.password);
+        sendResponse({success: true});
+      } else {
+        sendResponse({success: false, error: "No password field found."});
+      }
+    }
+    if (msg.action === "fillContextMenu") {
+      const field = lastContextMenuTarget?.tagName === "INPUT" ? lastContextMenuTarget : findPasswordField();
       if (field) {
         fillField(field, msg.password);
         sendResponse({success: true});

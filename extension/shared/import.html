@@ -5,14 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Keygrain Import</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 400px; margin: 40px auto; padding: 20px; color: #222; }
+    :root {
+      --bg: #ffffff;
+      --text: #222222;
+      --text-secondary: #555555;
+      --accent: #333333;
+      --accent-hover: #555555;
+      --error: #cc0000;
+      --success: #090;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a1a2e;
+        --text: #e0e0e0;
+        --text-secondary: #a0a0b0;
+        --accent: #5b9cf6;
+        --accent-hover: #7db4f8;
+        --error: #ff6b6b;
+        --success: #4cdf8a;
+      }
+    }
+    body { font-family: system-ui, sans-serif; max-width: 400px; margin: 40px auto; padding: 20px; color: var(--text); background: var(--bg); }
     h1 { font-size: 1.2rem; }
-    input[type="file"] { margin: 16px 0; }
-    #status { margin-top: 12px; font-size: 0.9rem; color: #555; }
-    .error { color: #c00; }
-    .success { color: #090; }
-    button { margin-top: 12px; padding: 8px 16px; background: #333; color: #fff; border: none; border-radius: 3px; cursor: pointer; }
-    button:hover { background: #555; }
+    input[type="file"] { margin: 16px 0; color: var(--text); }
+    #status { margin-top: 12px; font-size: 0.9rem; color: var(--text-secondary); }
+    .error { color: var(--error); }
+    .success { color: var(--success); }
+    button { margin-top: 12px; padding: 8px 16px; background: var(--accent); color: var(--bg); border: none; border-radius: 3px; cursor: pointer; }
+    button:hover { background: var(--accent-hover); }
   </style>
 </head>
 <body>

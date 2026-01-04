@@ -53,6 +53,11 @@ class ServiceManager(context: Context) {
         save(services)
     }
 
+    fun updateService(oldName: String, newEntry: ServiceEntry) {
+        val services = getServices().map { if (it.name == oldName) newEntry else it }
+        save(services)
+    }
+
     fun replaceAll(services: List<ServiceEntry>) {
         save(services)
     }
