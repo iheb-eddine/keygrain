@@ -6,6 +6,7 @@
   "permissions": [
     "activeTab",
     "alarms",
+    "contextMenus",
     "storage",
     "tabs"
   ],
@@ -18,7 +19,7 @@
     }
   },
   "background": {
-    "scripts": ["background.js"]
+    "scripts": ["keygrain.js", "background.js"]
   },
   "commands": {
     "_execute_browser_action": {

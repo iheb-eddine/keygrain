@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keygrain Migration</title>
+  <link rel="stylesheet" href="migrate.css">
+</head>
+<body>
+  <h1>🔑 Keygrain — Migration Wizard</h1>
+  <div id="error-screen" class="hidden">
+    <p>Please unlock Keygrain from the popup first.</p>
+  </div>
+
+  <!-- Step 1: File Picker -->
+  <div id="step-1" class="step">
+    <h2>Step 1: Select CSV Export</h2>
+    <div id="drop-zone" role="button" tabindex="0" aria-label="Drop CSV file here or click to browse">
+      <p>Drop CSV file here or click to browse</p>
+      <p class="hint">Supported: 1Password, Bitwarden, LastPass, Chrome, Firefox</p>
+    </div>
+    <input type="file" id="file-input" accept=".csv" class="hidden" aria-label="Select CSV file">
+    <div id="parse-error" class="error hidden" role="alert"></div>
+  </div>
+
+  <!-- Step 2: Preview -->
+  <div id="step-2" class="step hidden">
+    <h2 id="preview-header">Preview</h2>
+    <div class="table-controls">
+      <button id="select-all-btn">Select All</button>
+      <button id="deselect-all-btn">Deselect All</button>
+    </div>
+    <div class="table-wrapper">
+      <table id="preview-table" aria-label="Imported services preview">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="toggle-all" aria-label="Toggle all" checked></th>
+            <th>Service Name</th>
+            <th>Email/Username</th>
+            <th>Old Password</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="preview-body"></tbody>
+      </table>
+    </div>
+    <div id="preview-footer"></div>
+    <div class="step-actions">
+      <button id="back-to-1" class="btn-secondary">Back</button>
+      <button id="continue-to-3" class="btn-primary">Continue</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Confirm -->
+  <div id="step-3" class="step hidden">
+    <h2>Confirm Import</h2>
+    <div id="warning-banner" class="warning" role="alert">
+      <span>⚠️</span>
+      <p>After import, you must visit each site and change your password to your new Keygrain-generated password. Your old passwords will NOT be imported — Keygrain generates new ones. Until you rotate, your old passwords remain active on those sites.</p>
+    </div>
+    <p id="confirm-summary"></p>
+    <p id="confirm-skip" class="hidden"></p>
+    <div class="step-actions">
+      <button id="back-to-2" class="btn-secondary">Back</button>
+      <button id="import-btn" class="btn-primary">Import</button>
+    </div>
+  </div>
+
+  <!-- Step 4: Checklist -->
+  <div id="step-4" class="step hidden">
+    <h2>Password Rotation Checklist</h2>
+    <div id="progress-bar-container">
+      <div id="progress-bar"></div>
+      <span id="progress-text"></span>
+    </div>
+    <div class="filter-buttons">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="pending">Pending</button>
+      <button class="filter-btn" data-filter="done">Done</button>
+    </div>
+    <div id="checklist" role="list"></div>
+    <div id="all-done" class="hidden">
+      <p>🎉 All services rotated!</p>
+      <button id="dismiss-btn" class="btn-primary">Dismiss checklist</button>
+    </div>
+  </div>
+
+  <script src="keygrain.js"></script>
+  <script src="sync.js"></script>
+  <script src="migrate.js"></script>
+</body>
+</html>

@@ -116,3 +116,40 @@ browser.runtime.onMessage.addListener((msg) => {
     return Promise.resolve({ok: true});
   }
 });
+
+// === Context Menu ===
+browser.runtime.onInstalled.addListener(() => {
+  browser.contextMenus.create({id: "keygrain-fill", title: "Fill with Keygrain", contexts: ["editable"]});
+});
+
+browser.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId !== "keygrain-fill" || !tab?.id) return;
+  if (!sessionSecret || !sessionEmail) {
+    browser.browserAction.openPopup();
+    return;
+  }
+  let host;
+  try { host = new URL(tab.url).hostname.replace(/^www\./, "").toLowerCase(); } catch { return; }
+  if (!host) return;
+
+  const data = await browser.storage.local.get("services");
+  if (!data.services || data.services.version !== 2) return;
+  const enc = new TextEncoder();
+  const storageKey = await hmacSHA256(enc.encode(sessionSecret), enc.encode(sessionEmail.toLowerCase() + ":keygrain-local-storage"));
+  try {
+    const iv = base64ToArrayBuffer(data.services.iv);
+    const ciphertext = base64ToArrayBuffer(data.services.ciphertext);
+    const aad = enc.encode(sessionEmail.toLowerCase());
+    const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["decrypt"]);
+    const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
+    const services = JSON.parse(new TextDecoder().decode(decrypted)).services || [];
+    const match = services.find(s => {
+      const name = s.name.toLowerCase();
+      return name.includes(host) || host.includes(name);
+    });
+    if (!match) return;
+    const password = await derivePassword(sessionSecret, match.email, match.length || 20, match.symbols || "!@#$%&*-_=+?", match.salt || "");
+    await browser.tabs.executeScript(tab.id, {file: "content.js"});
+    browser.tabs.sendMessage(tab.id, {action: "fillContextMenu", password});
+  } catch {}
+});

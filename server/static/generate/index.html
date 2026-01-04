@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keygrain — Generate Password</title>
+    <link rel="manifest" href="./manifest.json">
     <style>
         body { font-family: system-ui, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
         h1 { font-size: 2rem; }
@@ -169,5 +170,6 @@
         }, 30000);
     });
     </script>
+    <script>if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js")</script>
 </body>
 </html>

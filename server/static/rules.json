@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "signature": "",
+  "rules": [
+    {
+      "domain": "chase.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*",
+      "notes": "Chase: 8-16 chars, restricted symbols"
+    },
+    {
+      "domain": "wellsfargo.com",
+      "maxLength": 14,
+      "symbols": "!@#$%&*",
+      "notes": "Wells Fargo: 8-14 chars, restricted symbols"
+    },
+    {
+      "domain": "bankofamerica.com",
+      "maxLength": 20,
+      "symbols": "!@#$%&*",
+      "notes": "Bank of America: 8-20 chars, restricted symbols"
+    },
+    {
+      "domain": "americanexpress.com",
+      "maxLength": 20,
+      "symbols": "!@#$%&*",
+      "notes": "Amex: 8-20 chars, no hyphens/underscores/special"
+    },
+    {
+      "domain": "capitalone.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*-_",
+      "notes": "Capital One: 8-16 chars, limited symbols"
+    },
+    {
+      "domain": "citi.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*",
+      "notes": "Citi: 8-16 chars, restricted symbols"
+    },
+    {
+      "domain": "usbank.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*",
+      "notes": "US Bank: 8-16 chars, restricted symbols"
+    },
+    {
+      "domain": "discover.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*",
+      "notes": "Discover: 8-16 chars, restricted symbols"
+    },
+    {
+      "domain": "ally.com",
+      "maxLength": 20,
+      "symbols": "!@#$%&*-_",
+      "notes": "Ally: 8-20 chars, limited symbols"
+    },
+    {
+      "domain": "fidelity.com",
+      "maxLength": 20,
+      "symbols": "!@#$%&*",
+      "notes": "Fidelity: 8-20 chars, restricted symbols"
+    },
+    {
+      "domain": "schwab.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*-_",
+      "notes": "Schwab: 8-16 chars, limited symbols"
+    },
+    {
+      "domain": "vanguard.com",
+      "maxLength": 20,
+      "symbols": "!@#$%&*",
+      "notes": "Vanguard: 8-20 chars, restricted symbols"
+    },
+    {
+      "domain": "paypal.com",
+      "maxLength": 20,
+      "symbols": "!@#$%&*-_",
+      "notes": "PayPal: 8-20 chars, no =+? symbols"
+    },
+    {
+      "domain": "venmo.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*",
+      "notes": "Venmo: 8-16 chars, restricted symbols"
+    },
+    {
+      "domain": "netflix.com",
+      "symbols": "!@#$%&*",
+      "notes": "Netflix: restricted symbol set, no -_=+?"
+    },
+    {
+      "domain": "southwest.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*",
+      "notes": "Southwest Airlines: 8-16 chars, restricted symbols"
+    },
+    {
+      "domain": "delta.com",
+      "maxLength": 20,
+      "symbols": "!@#$%&*-_",
+      "notes": "Delta: 8-20 chars, limited symbols"
+    },
+    {
+      "domain": "united.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*",
+      "notes": "United Airlines: 8-16 chars, restricted symbols"
+    },
+    {
+      "domain": "hilton.com",
+      "maxLength": 16,
+      "symbols": "!@#$%&*",
+      "notes": "Hilton: 8-16 chars, restricted symbols"
+    },
+    {
+      "domain": "marriott.com",
+      "maxLength": 20,
+      "symbols": "!@#$%&*-_",
+      "notes": "Marriott: 8-20 chars, limited symbols"
+    }
+  ]
+}

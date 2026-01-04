@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "signature": "",
+  "breaches": [
+    {
+      "id": "ticketmaster-2024-05",
+      "domain": "ticketmaster.com",
+      "date": "2024-05-20",
+      "severity": "critical",
+      "description": "560M customer records including names, emails, and payment card data exposed via Snowflake breach",
+      "action": "Regenerate password (change salt)",
+      "source": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001335258&type=8-K"
+    },
+    {
+      "id": "dropbox-2024-04",
+      "domain": "dropbox.com",
+      "date": "2024-04-24",
+      "severity": "warning",
+      "description": "Dropbox Sign users had auth tokens, MFA keys, and hashed passwords accessed by attacker",
+      "action": "Regenerate password (change salt)",
+      "source": "https://sign.dropbox.com/blog/a-recent-security-incident-involving-dropbox-sign"
+    },
+    {
+      "id": "att-2024-03",
+      "domain": "att.com",
+      "date": "2024-03-30",
+      "severity": "critical",
+      "description": "73M current and former customer records including encrypted passcodes leaked on dark web",
+      "action": "Regenerate password (change salt)",
+      "source": "https://about.att.com/story/2024/addressing-data-set-released-on-dark-web.html"
+    },
+    {
+      "id": "23andme-2023-10",
+      "domain": "23andme.com",
+      "date": "2023-10-06",
+      "severity": "critical",
+      "description": "6.9M user genetic and ancestry profiles accessed via credential stuffing attack",
+      "action": "Regenerate password (change salt)",
+      "source": "https://blog.23andme.com/articles/addressing-data-security-concerns"
+    },
+    {
+      "id": "zellis-2023-06",
+      "domain": "zellis.com",
+      "date": "2023-06-05",
+      "severity": "warning",
+      "description": "Payroll data for multiple organizations exposed via MOVEit Transfer zero-day vulnerability",
+      "action": "Review account and change password",
+      "source": "https://www.zellis.com/resources/statement-on-moveit/"
+    },
+    {
+      "id": "x-2023-01",
+      "domain": "x.com",
+      "date": "2023-01-04",
+      "severity": "info",
+      "description": "200M email addresses associated with Twitter/X accounts scraped and published online",
+      "action": "",
+      "source": "https://privacy.twitter.com/en/blog/2023/how-we-keep-your-account-secure"
+    },
+    {
+      "id": "lastpass-2022-12",
+      "domain": "lastpass.com",
+      "date": "2022-12-22",
+      "severity": "critical",
+      "description": "Encrypted password vaults and customer metadata stolen from cloud backup storage",
+      "action": "Regenerate password (change salt)",
+      "source": "https://blog.lastpass.com/2022/12/notice-of-recent-security-incident/"
+    }
+  ]
+}

@@ -228,6 +228,7 @@ private fun ServiceListScreen(
     }
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
+    var showEditDialog by remember { mutableStateOf<ServiceEntry?>(null) }
     var menuExpanded by remember { mutableStateOf(false) }
     var syncAction by remember { mutableStateOf<String?>(null) } // "backup" or "restore"
     var syncEmail by remember { mutableStateOf("") }
@@ -396,6 +397,7 @@ private fun ServiceListScreen(
                                 service = service,
                                 masterSecret = masterSecret,
                                 onDelete = { showDeleteDialog = service.name },
+                                onEdit = { showEditDialog = service },
                                 context = context
                             )
                         }
@@ -620,6 +622,18 @@ private fun ServiceListScreen(
         )
     }
 
+    showEditDialog?.let { editEntry ->
+        AddServiceDialog(
+            onDismiss = { showEditDialog = null },
+            onAdd = { entry ->
+                serviceManager.updateService(editEntry.name, entry)
+                services = serviceManager.getServices()
+                showEditDialog = null
+            },
+            initialEntry = editEntry
+        )
+    }
+
     showDeleteDialog?.let { name ->
         AlertDialog(
             onDismissRequest = { showDeleteDialog = null },
@@ -643,6 +657,7 @@ private fun ServiceCard(
     service: ServiceEntry,
     masterSecret: String,
     onDelete: () -> Unit,
+    onEdit: () -> Unit,
     context: Context
 ) {
     val password = remember(service, masterSecret) {
@@ -663,9 +678,13 @@ private fun ServiceCard(
                     Text(service.name, style = MaterialTheme.typography.titleMedium)
                     Text(service.email, style = MaterialTheme.typography.bodySmall)
                 }
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit")
+                }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = "Delete")
                 }
+            
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -696,18 +715,25 @@ private fun ServiceCard(
 @Composable
 private fun AddServiceDialog(
     onDismiss: () -> Unit,
-    onAdd: (ServiceEntry) -> Unit
+    onAdd: (ServiceEntry) -> Unit,
+    initialEntry: ServiceEntry? = null
 ) {
-    var name by remember { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
-    var length by remember { mutableStateOf("20") }
-    var symbols by remember { mutableStateOf(Keygrain.DEFAULT_SYMBOLS) }
-    var salt by remember { mutableStateOf("") }
-    var showAdvanced by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf(initialEntry?.name ?: "") }
+    var email by remember { mutableStateOf(initialEntry?.email ?: "") }
+    var length by remember { mutableStateOf(initialEntry?.length?.toString() ?: "20") }
+    var symbols by remember { mutableStateOf(initialEntry?.symbols ?: Keygrain.DEFAULT_SYMBOLS) }
+    var salt by remember { mutableStateOf(initialEntry?.salt ?: "") }
+    var showAdvanced by remember { mutableStateOf(initialEntry != null) }
+    val isEdit = initialEntry != null
+    val pwChanged = isEdit && (
+        (length.toIntOrNull() ?: 20) != initialEntry!!.length ||
+        symbols != initialEntry.symbols ||
+        salt != initialEntry.salt
+    )
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Service") },
+        title = { Text(if (isEdit) "Edit Service" else "Add Service") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
@@ -761,6 +787,13 @@ private fun AddServiceDialog(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
+                        if (pwChanged) {
+                            Text(
+                                "⚠️ Changing these options will change your generated password.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }
@@ -777,7 +810,7 @@ private fun AddServiceDialog(
                     ))
                 },
                 enabled = name.isNotBlank() && email.isNotBlank()
-            ) { Text("Add") }
+            ) { Text(if (isEdit) "Save" else "Add") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
