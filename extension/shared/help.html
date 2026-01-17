@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Keygrain Help</title>
+  <link rel="stylesheet" href="help.css">
+</head>
+<body>
+  <h1>🔑 Keygrain Help</h1>
+  <p class="subtitle">Frequently asked questions</p>
+
+  <details role="region" aria-label="What is Keygrain?">
+    <summary>What is Keygrain?</summary>
+    <div class="faq-content">
+      <p>Keygrain is a deterministic password manager. Instead of storing passwords, it generates them on the fly from your master secret + email + site name.</p>
+      <p>The same inputs always produce the same password. Nothing is stored, nothing can be stolen from a server breach.</p>
+    </div>
+  </details>
+
+  <details role="region" aria-label="Getting started">
+    <summary>Getting started</summary>
+    <div class="faq-content">
+      <p>1. Enter your email address.</p>
+      <p>2. Choose a strong master secret (passphrase). This is the only thing you need to remember.</p>
+      <p>3. Add services (websites) — Keygrain generates a unique password for each one instantly.</p>
+    </div>
+  </details>
+
+  <details role="region" aria-label="What is my master secret?">
+    <summary>What is my master secret?</summary>
+    <div class="faq-content">
+      <p>Your master secret is the single passphrase that generates all your passwords. It is never stored anywhere — not on your device, not on any server.</p>
+      <div class="warning">
+        <p><strong>⚠️ If you lose your master secret, all your passwords are lost.</strong> There is no recovery mechanism. This is by design.</p>
+      </div>
+      <p>The colored dots (fingerprint) help you verify you typed it correctly — same secret always shows the same colors.</p>
+    </div>
+  </details>
+
+  <details role="region" aria-label="How does sync work?">
+    <summary>How does sync work?</summary>
+    <div class="faq-content">
+      <p>Sync stores your service list (names, sites, emails, options) encrypted on the server. The encryption key is derived from your master secret + email — the server never sees your plaintext data.</p>
+      <p>Your master secret and generated passwords are never transmitted.</p>
+    </div>
+  </details>
+
+  <details role="region" aria-label="How do I rotate a password?">
+    <summary>How do I rotate a password?</summary>
+    <div class="faq-content">
+      <p>Edit the service and click <strong>🔄 Rotate password</strong>. This increments an internal counter, generating a completely new password.</p>
+      <p>After rotating, update the password on the actual website. Click <strong>✅ Mark as rotated</strong> once done.</p>
+    </div>
+  </details>
+
+  <details role="region" aria-label="How do I migrate from another manager?">
+    <summary>How do I migrate from another manager?</summary>
+    <div class="faq-content">
+      <p>Menu → <strong>Migrate from another manager</strong>. Export a CSV from your old password manager and import it into Keygrain.</p>
+      <p>Keygrain will map entries to its format. You can then update each site to use the Keygrain-generated password at your own pace.</p>
+    </div>
+  </details>
+
+  <details role="region" aria-label="What is the PIN for?">
+    <summary>What is the PIN for?</summary>
+    <div class="faq-content">
+      <p>The PIN provides quick unlock without retyping your full master secret. It encrypts your secret locally on the device.</p>
+      <p>The PIN does <strong>not</strong> replace your master secret. If you clear browser data, you'll need your master secret again.</p>
+    </div>
+  </details>
+
+  <details role="region" aria-label="Keyboard shortcuts">
+    <summary>Keyboard shortcuts</summary>
+    <div class="faq-content">
+      <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> (<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> on Mac) — Auto-fill credentials on the current site.</p>
+      <p><kbd>↓</kbd> / <kbd>↑</kbd> — Navigate the service list.</p>
+      <p><kbd>Enter</kbd> — Fill the selected service.</p>
+      <p><kbd>Escape</kbd> — Clear search or close the popup.</p>
+    </div>
+  </details>
+
+  <details role="region" aria-label="What if I forget my secret?">
+    <summary>What if I forget my secret?</summary>
+    <div class="faq-content">
+      <div class="warning">
+        <p><strong>You cannot recover it.</strong> There is no reset, no backup, no support email that can help. This is by design — nobody can access your passwords except you.</p>
+      </div>
+      <p>Recommendation: write your master secret on paper and store it somewhere physically secure (e.g., a safe). Never store it digitally.</p>
+    </div>
+  </details>
+
+  <details role="region" aria-label="Troubleshooting">
+    <summary>Troubleshooting</summary>
+    <div class="faq-content">
+      <p><strong>Wrong password generated?</strong> Check that the email and site name match exactly what you used when you created the entry. Sites are case-insensitive, but verify the exact domain matches.</p>
+      <p><strong>Sync failing?</strong> Verify the server URL in Settings and ensure you're using the same email you synced with originally.</p>
+      <p><strong>Auto-fill not working?</strong> Some sites block auto-fill. Try the right-click context menu, or use the copy button in the popup and paste manually.</p>
+    </div>
+  </details>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Keygrain — Wallet Derivation</title>
+  <link rel="stylesheet" href="wallet-page.css">
+</head>
+<body>
+  <h1>🔑 Wallet Derivation</h1>
+
+  <div id="locked-msg" class="locked-msg hidden">
+    <p>🔒 Please unlock Keygrain first, then reopen this page.</p>
+  </div>
+
+  <div id="wallet-ui" class="hidden">
+    <div class="warning-banner" role="alert">⚠️  DISASTER RECOVERY DERIVATION
+
+This derives a wallet mnemonic from your master secret.
+
+CRITICAL RISKS:
+• If you lose or forget your master secret, ALL derived wallets and their funds are PERMANENTLY and IRRECOVERABLY LOST.
+• There is NO recovery mechanism, NO support team, NO reset.
+• This tool does NOT store your mnemonic or private keys.
+• This is intended as DISASTER RECOVERY, not primary wallet management.
+
+RECOMMENDED USAGE:
+• Use a hardware wallet (Ledger, Trezor) for daily operations.
+• Use this derivation ONLY to verify you can recover your mnemonic if your hardware wallet is lost or destroyed.
+• NEVER send funds to a derived wallet without first verifying the addresses match your hardware wallet.</div>
+
+    <label for="wallet-email">Email</label>
+    <input type="email" id="wallet-email" autocomplete="email">
+
+    <label for="wallet-name">Wallet name <span style="font-size:0.75rem">(lowercase, digits, hyphens only)</span></label>
+    <input type="text" id="wallet-name" placeholder="e.g. personal, savings" pattern="[a-z0-9\-]+" autocomplete="off">
+
+    <label for="wallet-chain">Chain</label>
+    <select id="wallet-chain">
+      <option value="bitcoin">Bitcoin</option>
+      <option value="ethereum">Ethereum</option>
+      <option value="solana">Solana</option>
+      <option value="litecoin">Litecoin</option>
+      <option value="dogecoin">Dogecoin</option>
+      <option value="bitcoin-testnet">Bitcoin Testnet</option>
+      <option value="polkadot">Polkadot</option>
+      <option value="cosmos">Cosmos</option>
+      <option value="avalanche">Avalanche</option>
+    </select>
+
+    <label for="wallet-counter">Counter</label>
+    <input type="number" id="wallet-counter" min="1" value="1">
+
+    <div class="confirm-row">
+      <input type="checkbox" id="wallet-confirm">
+      <label for="wallet-confirm">I understand the risks</label>
+    </div>
+
+    <div>
+      <button id="derive-btn" disabled>Derive Mnemonic</button>
+      <button id="clear-btn" class="hidden">Clear</button>
+    </div>
+
+    <div id="countdown-msg" class="auto-clear-notice hidden"></div>
+    <div id="error-msg" class="error hidden"></div>
+
+    <div id="result" class="hidden">
+      <div class="path-display" id="path-display"></div>
+      <div class="mnemonic-grid" id="mnemonic-grid"></div>
+      <div class="auto-clear-notice">Mnemonic will auto-clear in <span id="clear-countdown">60</span>s</div>
+    </div>
+  </div>
+
+  <script src="lib/hash-wasm-argon2.js"></script>
+  <script src="keygrain.js"></script>
+  <script src="sync.js"></script>
+  <script src="bip39-wordlist.js"></script>
+  <script src="wallet.js"></script>
+  <script src="wallet-page.js"></script>
+</body>
+</html>

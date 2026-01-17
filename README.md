@@ -1,124 +1,138 @@
-# Keygrain
+<p align="center">
+  <img src="logo/keygrain-128x128.png" alt="Keygrain" width="96" />
+</p>
 
-Deterministic password derivation from a master secret. One secret, all your passwords — no storage needed.
+<h1 align="center">Keygrain</h1>
 
-## How It Works
+<p align="center">
+  Deterministic password derivation. One secret, all your passwords — no vault needed.
+</p>
 
-Enter your master secret + email → get a unique, strong password for any site. The same inputs always produce the same output. Change the length, symbols, or salt → entirely different password.
+---
 
-## Features
+## What is Keygrain?
 
-- **Deterministic** — no password database to lose or sync
-- **Cross-platform** — identical output from Python, Kotlin, JS, and browser extension
-- **Customizable** — per-site symbol sets, length, and salt
-- **Encrypted backup** — sync config (not passwords) across devices via server
-- **Offline** — works without internet (backup/sync is optional)
-- **Biometric unlock** — fingerprint/face on Android
-- **Browser extension** — Chrome + Firefox with autofill
-- **Web generator** — client-side, no server interaction
-- **Argon2id** — optional key strengthening for memorizable passphrases
+Keygrain derives unique, strong passwords from your master secret and site information. The same inputs always produce the same output — across every platform, every time. There is no password database to lose, breach, or sync. Only your per-site settings (length, symbols, counter) are stored, and those are useless without your secret.
 
-## Platforms
+## Key Features
 
-| Platform | Location | Install |
-|----------|----------|---------|
-| Python library + CLI | `python/` | `pip install git+ssh://git@dev.secbytech.com/tools/keygrain.git#subdirectory=python` |
-| Android app | `kotlin/` | Download APK from [keygrain.secbytech.com](https://keygrain.secbytech.com) |
-| Web generator | `server/static/generate/` | [keygrain.secbytech.com/generate](https://keygrain.secbytech.com/generate/) |
-| Browser extension | `extension/` | Build with `extension/build.sh` |
-| Backup server | `server/` | Self-hosted at keygrain.secbytech.com |
+**Core**
+- Deterministic — no password storage, passwords recomputed on demand
+- Cross-platform — identical output from Python, Kotlin, JavaScript, and the browser extension
+- Per-site customization — length, symbol set, and counter per service
 
-## Quick Start (Python)
+**Security**
+- Argon2id key strengthening (64 MiB, 3 iterations) — mandatory on all platforms
+- HMAC-SHA256 derivation — single password compromise cannot reveal the secret
+- End-to-end encrypted sync — server sees only opaque ciphertext
+- Visual secret fingerprint — colored dot pattern confirms you typed the right secret
+
+**Browser Extension**
+- Autofill username + password into login forms
+- Zero-click fill via `Ctrl+Shift+K`
+- PIN unlock (no need to re-enter master secret every time)
+- Fuzzy search with frecency ranking
+- Breach warnings for compromised sites
+- Site rules (auto-detect length/symbol constraints)
+- Migration wizard — import from LastPass, Bitwarden, 1Password, Chrome, Firefox
+- Dark mode
+
+**Android**
+- Biometric unlock (fingerprint / face)
+- Services CRUD with search
+- Encrypted sync across devices
+- Export / import (JSON)
+
+**Web Generator**
+- Progressive Web App — works offline
+- Client-side only, no server interaction
+
+## Quick Start
+
+### Browser Extension
+
+1. Download from the [Chrome Web Store](#) or [Firefox Add-ons](#), or load unpacked from `extension/dist/chrome/`
+2. Click the Keygrain icon → enter your master secret and email
+3. Add a site → your password is derived instantly
+4. Click **Fill** or press `Ctrl+Shift+K` to autofill the active page
+
+### Python CLI
 
 ```bash
 pip install git+ssh://git@dev.secbytech.com/tools/keygrain.git#subdirectory=python
+
+keygrain me@example.com --site github.com
 ```
 
-```python
-from keygrain import derive_password
+### Switching from another password manager?
 
-password = derive_password(
-    secret=b"my-master-secret",
-    email="me@example.com",
-    length=20,
-    symbols="!@#$%&*-_=+?",
-    salt="",
-)
+The extension includes a migration wizard. Open Settings → Import → select your source (LastPass, Bitwarden, 1Password, Chrome, Firefox) and follow the steps.
+
+## How It Works
+
+```
+secret + email
+       │
+       ▼
+Argon2id(secret, "keygrain-strengthen:" + email)  →  strengthened key
+       │
+       ▼
+HMAC-SHA256(strengthened, "site:email:length:counter")  →  key stream
+       │
+       ▼
+Character mapping + Fisher-Yates shuffle  →  password
 ```
 
-## Using as a Library
+Every password contains at least one uppercase, one lowercase, one digit, and one symbol. Ambiguous characters (`I`, `l`, `O`, `0`, `1`) are excluded by default.
 
-```python
-from keygrain import derive_password
+**Counter:** Increment the counter to rotate a password without changing your secret or any other parameter. Useful when a site forces periodic password changes or after a breach.
 
-SECRET = b"my-master-secret"
+Full specification: [SPEC.md](SPEC.md)
 
-# Generate passwords for multiple email providers
-gmail_pw = derive_password(SECRET, "me@gmail.com")
-outlook_pw = derive_password(SECRET, "me@outlook.com")
-yahoo_pw = derive_password(SECRET, "me@yahoo.com")
+## Platforms
 
-# Custom symbols for providers with restrictions
-icloud_pw = derive_password(SECRET, "me@icloud.com", symbols="!@#$%&*-_=+")
+| Platform | Description | Access |
+|----------|-------------|--------|
+| Browser extension | Chrome + Firefox (MV3) | [Extension store](#) or build from `extension/` |
+| Android app | Kotlin + Jetpack Compose | [APK download](https://keygrain.secbytech.com) |
+| Web generator | Client-side PWA | [keygrain.secbytech.com/generate](https://keygrain.secbytech.com/generate/) |
+| Python library + CLI | Library and command-line tool | `pip install` from repo |
+| Sync server | Go, sync API only | Self-hosted at keygrain.secbytech.com |
 
-# Different length
-short_pw = derive_password(SECRET, "me@example.com", length=16)
+## Security
 
-# Salt for password rotation (same email, different password)
-rotated_pw = derive_password(SECRET, "me@gmail.com", salt="v2")
-```
+| Property | Detail |
+|----------|--------|
+| Key strengthening | Argon2id — 64 MiB memory, 3 iterations, parallelism 1 |
+| Derivation | HMAC-SHA256 — compromising one password reveals nothing about others |
+| Sync encryption | AES-256-GCM — encrypted locally before transmission |
+| Server knowledge | Opaque encrypted blob + bcrypt(auth_password). Server never sees: master secret, encryption key, or plaintext config |
+| Secret verification | Visual fingerprint (4-color dot pattern) confirms correct secret entry |
 
-## Argon2id (Weak Passphrase Protection)
+Your master secret never leaves your device in plaintext. If the server is compromised, attackers get only encrypted blobs — useless without individual master secrets.
 
-If your master secret is a memorizable passphrase, enable Argon2id to make brute-force expensive:
-
-```python
-from keygrain import derive_password
-
-# ~1 second on first call (cached after that)
-pw = derive_password(b"my memorable passphrase", "me@gmail.com", strengthen=True)
-```
-
-Skip `strengthen=True` if your secret is already high-entropy (random 20+ chars).
-
-## Quick Start (CLI)
+## Building from Source
 
 ```bash
-export KEYGRAIN_SECRET="my-master-secret"
-keygrain me@example.com --length 20
-```
+# Python (library + tests)
+cd python && pip install -e . && pytest tests/
 
-## Browser Extension
-
-Build for Chrome and Firefox:
-
-```bash
+# Browser extension
 cd extension && ./build.sh
+# Produces dist/keygrain-chrome.zip and dist/keygrain-firefox.zip
+
+# Android (requires Android SDK)
+cd kotlin && ./gradlew assembleRelease
+
+# Server (requires Go 1.22+)
+cd server && go build && go test ./...
 ```
 
-Produces `dist/chrome.zip` and `dist/firefox.zip` for store submission. Load unpacked from `dist/chrome/` or `dist/firefox/` for development.
+## Documentation
 
-Features:
-- Generate password in popup
-- Autofill password fields (Ctrl+Shift+K)
-- Per-domain email memory
-- Copy to clipboard with 30s auto-clear
-
-## Algorithm
-
-See [SPEC.md](SPEC.md) for the full specification.
-
-## Project Structure
-
-```
-python/          — Python library + CLI
-kotlin/          — Android app (Jetpack Compose + Material 3)
-extension/       — Browser extension (Chrome MV3 + Firefox)
-server/          — Go backup server + web generator + landing page
-designs/         — Design documents
-vectors.json     — Cross-platform test vectors (8 vectors)
-SPEC.md          — Algorithm specification
-```
+- [Algorithm Specification](SPEC.md)
+- [Design Documents](designs/) — 33 design docs covering every feature
+- [Handover & Developer Guide](HANDOVER.md)
 
 ## License
 

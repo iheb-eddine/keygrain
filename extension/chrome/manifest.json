@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Keygrain",
-  "version": "1.0.0",
-  "description": "Deterministic password generator — no storage, no sync, no trust.",
+  "version": "1.1.0",
+  "description": "Deterministic password generator with encrypted sync. Your master password never leaves your device.",
   "permissions": [
     "activeTab",
     "alarms",
@@ -10,6 +10,9 @@
     "scripting",
     "storage",
     "tabs"
+  ],
+  "host_permissions": [
+    "https://keygrain.secbytech.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -23,12 +26,12 @@
     "service_worker": "background.js"
   },
   "commands": {
-    "_execute_action": {
+    "fill_credentials": {
       "suggested_key": {
         "default": "Ctrl+Shift+K",
         "mac": "Command+Shift+K"
       },
-      "description": "Open Keygrain popup"
+      "description": "Fill credentials for current site"
     }
   },
   "icons": {

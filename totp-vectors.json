@@ -1,0 +1,95 @@
+{
+  "_comment": "Cross-platform TOTP test vectors. All implementations MUST produce identical output.",
+  "rfc6238_vectors": {
+    "_note": "RFC 6238 Appendix B. Seeds are ASCII strings. All use digits=8, period=30.",
+    "seeds": {
+      "SHA1": "3132333435363738393031323334353637383930",
+      "SHA256": "3132333435363738393031323334353637383930313233343536373839303132",
+      "SHA512": "31323334353637383930313233343536373839303132333435363738393031323334353637383930313233343536373839303132333435363738393031323334"
+    },
+    "vectors": [
+      {"time": 59, "algorithm": "SHA1", "expected": "94287082"},
+      {"time": 59, "algorithm": "SHA256", "expected": "46119246"},
+      {"time": 59, "algorithm": "SHA512", "expected": "90693936"},
+      {"time": 1111111109, "algorithm": "SHA1", "expected": "07081804"},
+      {"time": 1111111109, "algorithm": "SHA256", "expected": "68084774"},
+      {"time": 1111111109, "algorithm": "SHA512", "expected": "25091201"},
+      {"time": 1111111111, "algorithm": "SHA1", "expected": "14050471"},
+      {"time": 1111111111, "algorithm": "SHA256", "expected": "67062674"},
+      {"time": 1111111111, "algorithm": "SHA512", "expected": "99943326"},
+      {"time": 1234567890, "algorithm": "SHA1", "expected": "89005924"},
+      {"time": 1234567890, "algorithm": "SHA256", "expected": "91819424"},
+      {"time": 1234567890, "algorithm": "SHA512", "expected": "93441116"},
+      {"time": 2000000000, "algorithm": "SHA1", "expected": "69279037"},
+      {"time": 2000000000, "algorithm": "SHA256", "expected": "90698825"},
+      {"time": 2000000000, "algorithm": "SHA512", "expected": "38618901"},
+      {"time": 20000000000, "algorithm": "SHA1", "expected": "65353130"},
+      {"time": 20000000000, "algorithm": "SHA256", "expected": "77737706"},
+      {"time": 20000000000, "algorithm": "SHA512", "expected": "47863826"}
+    ]
+  },
+  "derivation_vectors": {
+    "_note": "Model B seed derivation. seed = HMAC-SHA256(strengthen(secret, email), lowercase(site):lowercase(email):keygrain-totp)",
+    "vectors": [
+      {
+        "secret_utf8": "my-master-secret",
+        "secret_hex": "6d792d6d61737465722d736563726574",
+        "email": "test@gmail.com",
+        "site": "github.com",
+        "expected_seed_hex": "70e3c85d59c28c927b1a356731c793f780289a486078f902b5861dc7e39b6b1c",
+        "_note": "Base case"
+      },
+      {
+        "secret_utf8": "my-master-secret",
+        "secret_hex": "6d792d6d61737465722d736563726574",
+        "email": "test@gmail.com",
+        "site": "GitHub.com",
+        "expected_seed_hex": "70e3c85d59c28c927b1a356731c793f780289a486078f902b5861dc7e39b6b1c",
+        "_note": "Site case insensitive — must match vector 1"
+      },
+      {
+        "secret_utf8": "my-master-secret",
+        "secret_hex": "6d792d6d61737465722d736563726574",
+        "email": "TEST@Gmail.com",
+        "site": "github.com",
+        "expected_seed_hex": "70e3c85d59c28c927b1a356731c793f780289a486078f902b5861dc7e39b6b1c",
+        "_note": "Email case insensitive — must match vector 1"
+      },
+      {
+        "secret_utf8": "different-secret",
+        "secret_hex": "646966666572656e742d736563726574",
+        "email": "test@gmail.com",
+        "site": "github.com",
+        "expected_seed_hex": "b6159a6a5111621662886bed56b5bec9d7394692e673c2d2263c9044ca8cfd88",
+        "_note": "Different secret — must differ from vector 1"
+      }
+    ]
+  },
+  "parse_vectors": {
+    "_note": "Input parsing test cases",
+    "vectors": [
+      {
+        "input": "otpauth://totp/GitHub:user@ex.com?secret=JBSWY3DPEHPK3PXP&digits=6&period=30",
+        "expected_seed_hex": "48656c6c6f21deadbeef",
+        "expected_digits": 6,
+        "expected_period": 30,
+        "expected_algorithm": "SHA1"
+      },
+      {
+        "input": "JBSWY3DPEHPK3PXP",
+        "expected_seed_hex": "48656c6c6f21deadbeef",
+        "expected_digits": 6,
+        "expected_period": 30,
+        "expected_algorithm": "SHA1"
+      },
+      {
+        "input": "48656c6c6f21deadbeef",
+        "expected_seed_hex": "48656c6c6f21deadbeef",
+        "expected_digits": 6,
+        "expected_period": 30,
+        "expected_algorithm": "SHA1",
+        "_note": "Hex — contains 0, 1, 8, 9, lowercase a-f"
+      }
+    ]
+  }
+}

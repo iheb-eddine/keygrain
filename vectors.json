@@ -1,117 +1,157 @@
 {
-  "_comment": "Cross-platform test vectors. Every implementation MUST produce identical output for these inputs.",
-  "_algorithm": "See SPEC.md",
+  "_comment": "Cross-platform test vectors (algorithm v3 — Argon2id strengthening mandatory). Every implementation MUST produce identical output for these inputs.",
+  "_algorithm": "strengthened = Argon2id(secret, salt='keygrain-strengthen:'+lowercase(email), t=3, m=65536, p=1, len=32); message = lowercase(site) + ':' + lowercase(email) + ':' + str(length) + ':' + str(counter); key = HMAC-SHA256(strengthened, message)",
+  "strengthen_vectors": [
+    {
+      "secret_hex": "6d792d6d61737465722d736563726574",
+      "secret_utf8": "my-master-secret",
+      "email": "test@gmail.com",
+      "expected_hex": "d7b935b8298f476c6046cb71501fcb8c9a53327df3cc4e05c696fea7ef3d035a",
+      "_note": "Base case"
+    },
+    {
+      "secret_hex": "73686f7274",
+      "secret_utf8": "short",
+      "email": "Alice@Example.COM",
+      "expected_hex": "3633552e469c5ea783380f877b271672e7261795298870734940afe4f808b47b",
+      "_note": "Email case normalized before salt construction"
+    },
+    {
+      "secret_hex": "73686f7274",
+      "secret_utf8": "short",
+      "email": "alice@example.com",
+      "expected_hex": "3633552e469c5ea783380f877b271672e7261795298870734940afe4f808b47b",
+      "_note": "Must match previous vector — email case insensitive"
+    }
+  ],
   "vectors": [
     {
       "secret_hex": "6d792d6d61737465722d736563726574",
       "secret_utf8": "my-master-secret",
+      "site": "github.com",
       "email": "test@gmail.com",
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
-      "salt": "",
-      "expected": "jU8D8b@epA_=X$4CN7&4"
+      "counter": 1,
+      "expected": "A=4BXNAHYUU_hmVwv$h?",
+      "_note": "Base case"
     },
     {
       "secret_hex": "6d792d6d61737465722d736563726574",
       "secret_utf8": "my-master-secret",
-      "email": "test@outlook.com",
+      "site": "google.com",
+      "email": "test@gmail.com",
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
-      "salt": "",
-      "expected": "FQ9a3aV2bY2Wdf75$Y4X"
+      "counter": 1,
+      "expected": "=78WtX?e!hpp6?TMqddW",
+      "_note": "Different site — different password"
     },
     {
       "secret_hex": "6d792d6d61737465722d736563726574",
       "secret_utf8": "my-master-secret",
+      "site": "GitHub.com",
+      "email": "test@gmail.com",
+      "length": 20,
+      "symbols": "!@#$%&*-_=+?",
+      "counter": 1,
+      "expected": "A=4BXNAHYUU_hmVwv$h?",
+      "_note": "Site case insensitive — must match vector 1"
+    },
+    {
+      "secret_hex": "6d792d6d61737465722d736563726574",
+      "secret_utf8": "my-master-secret",
+      "site": "github.com",
       "email": "TEST@Gmail.com",
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
-      "salt": "",
-      "expected": "jU8D8b@epA_=X$4CN7&4",
-      "_note": "Uppercase email \u2014 must match lowercase version"
+      "counter": 1,
+      "expected": "A=4BXNAHYUU_hmVwv$h?",
+      "_note": "Email case insensitive — must match vector 1"
     },
     {
       "secret_hex": "6d792d6d61737465722d736563726574",
       "secret_utf8": "my-master-secret",
-      "email": "user@custom.org",
+      "site": "github.com",
+      "email": "test@gmail.com",
       "length": 16,
       "symbols": "!@#$%&*-_=+?",
-      "salt": "",
-      "expected": "uktU-g7kXY&zPQ7k"
+      "counter": 1,
+      "expected": "gp4QHeNzA72YX-_A",
+      "_note": "Different length"
     },
     {
       "secret_hex": "6d792d6d61737465722d736563726574",
       "secret_utf8": "my-master-secret",
+      "site": "github.com",
       "email": "test@gmail.com",
       "length": 20,
-      "symbols": "!@#$%&*-_",
-      "salt": "",
-      "expected": "rX8K@m%esG_AX*4FR*&4",
-      "_note": "Restricted symbols \u2014 different output"
+      "symbols": "!@#$%&",
+      "counter": 1,
+      "expected": "AR4HdgNVYpUC4tVw9Kw&",
+      "_note": "Restricted symbols — different output"
     },
     {
       "secret_hex": "6d792d6d61737465722d736563726574",
       "secret_utf8": "my-master-secret",
+      "site": "github.com",
       "email": "test@gmail.com",
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
-      "salt": "2024",
-      "expected": "NUWrnAkPf8Xb@R7WV66$",
-      "_note": "With salt \u2014 different output"
+      "counter": 2,
+      "expected": "GnkEz!F9-z_NqkGTy4n2",
+      "_note": "Counter rotation — different output"
     },
     {
       "secret_hex": "646966666572656e742d736563726574",
       "secret_utf8": "different-secret",
+      "site": "github.com",
       "email": "test@gmail.com",
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
-      "salt": "",
-      "expected": "c$RV9KGJppwJeUp_c3Y8",
-      "_note": "Different secret \u2014 different output"
+      "counter": 1,
+      "expected": "q=xsG_Tm3_MCeJ2GZ4zF",
+      "_note": "Different secret — different output"
     },
     {
       "secret_hex": "6d792d6d61737465722d736563726574",
       "secret_utf8": "my-master-secret",
+      "site": "home-wifi",
       "email": "test@gmail.com",
-      "length": 32,
+      "length": 20,
       "symbols": "!@#$%&*-_=+?",
-      "salt": "",
-      "expected": "kPYHb2dYUk$qP6bjbzLAV5A%p3j6T5U_",
-      "_note": "Longer password \u2014 completely different due to length in HMAC"
+      "counter": 1,
+      "expected": "4$$7A-h4U6YqDm@zb?%4",
+      "_note": "Non-domain site"
     }
   ],
   "fingerprint_vectors": [
     {
       "secret_utf8": "my-master-secret",
       "secret_hex": "6d792d6d61737465722d736563726574",
+      "email": "test@gmail.com",
       "hmac_message": "keygrain-fingerprint",
-      "expected_first_4_bytes_hex": "4482716f",
-      "expected_color_indices": [4, 2, 1, 7],
-      "_note": "Primary test vector — Yellow, Sky Blue, Orange, Reddish Purple"
+      "expected_first_4_bytes_hex": "ee276b25",
+      "expected_color_indices": [6, 7, 3, 5],
+      "_note": "Fingerprint now uses strengthened key — requires email"
     },
     {
       "secret_utf8": "different-secret",
       "secret_hex": "646966666572656e742d736563726574",
+      "email": "test@gmail.com",
       "hmac_message": "keygrain-fingerprint",
-      "expected_first_4_bytes_hex": "d482d679",
-      "expected_color_indices": [4, 2, 6, 1],
-      "_note": "Different secret — Yellow, Sky Blue, Vermillion, Orange"
+      "expected_first_4_bytes_hex": "1b7e0c53",
+      "expected_color_indices": [3, 6, 4, 3],
+      "_note": "Different secret"
     },
     {
       "secret_utf8": "a",
       "secret_hex": "61",
+      "email": "test@gmail.com",
       "hmac_message": "keygrain-fingerprint",
-      "expected_first_4_bytes_hex": "b57cc734",
-      "expected_color_indices": [5, 4, 7, 4],
-      "_note": "Single character — Blue, Yellow, Reddish Purple, Yellow"
-    },
-    {
-      "secret_utf8": "contraseña-maëstro",
-      "secret_hex": "636f6e7472617365c3b1612d6d61c3ab7374726f",
-      "hmac_message": "keygrain-fingerprint",
-      "expected_first_4_bytes_hex": "d2c122a0",
-      "expected_color_indices": [2, 1, 2, 0],
-      "_note": "Unicode secret (UTF-8) — Sky Blue, Orange, Sky Blue, Black"
+      "expected_first_4_bytes_hex": "a2ff4deb",
+      "expected_color_indices": [2, 7, 5, 3],
+      "_note": "Single character secret"
     }
   ]
 }

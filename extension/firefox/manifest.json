@@ -1,14 +1,15 @@
 {
   "manifest_version": 2,
   "name": "Keygrain",
-  "version": "1.0.0",
-  "description": "Deterministic password generator — no storage, no sync, no trust.",
+  "version": "1.1.0",
+  "description": "Deterministic password generator with encrypted sync. Your master password never leaves your device.",
   "permissions": [
     "activeTab",
     "alarms",
     "contextMenus",
     "storage",
-    "tabs"
+    "tabs",
+    "https://keygrain.secbytech.com/*"
   ],
   "browser_action": {
     "default_popup": "popup.html",
@@ -19,15 +20,15 @@
     }
   },
   "background": {
-    "scripts": ["keygrain.js", "background.js"]
+    "scripts": ["lib/hash-wasm-argon2.js", "keygrain.js", "sync.js", "background.js"]
   },
   "commands": {
-    "_execute_browser_action": {
+    "fill_credentials": {
       "suggested_key": {
         "default": "Ctrl+Shift+K",
         "mac": "Command+Shift+K"
       },
-      "description": "Open Keygrain popup"
+      "description": "Fill credentials for current site"
     }
   },
   "icons": {
@@ -42,7 +43,7 @@
       "strict_min_version": "109.0",
       "data_collection_permissions": {
         "is_exempt": true,
-        "reason": "Keygrain does not collect, store, or transmit any user data. All computation is local."
+        "reason": "Keygrain transmits only end-to-end encrypted data to its sync server. No plaintext user data is collected or shared. The server cannot decrypt the stored blobs."
       }
     }
   }

@@ -34,17 +34,19 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.badrani.keygrain.data.Keygrain
-import com.badrani.keygrain.data.RestoreResult
 import com.badrani.keygrain.data.SecretManager
 import com.badrani.keygrain.data.ServiceEntry
 import com.badrani.keygrain.data.ServiceManager
 import com.badrani.keygrain.data.SyncCrypto
+import com.badrani.keygrain.data.TotpEngine
+import com.badrani.keygrain.data.SshEngine
 import com.badrani.keygrain.data.SyncManager
 import com.badrani.keygrain.data.SyncResult
 import com.badrani.keygrain.ui.UserMessages
 import com.badrani.keygrain.ui.WongPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +96,7 @@ fun MainScreen() {
                 onLock = {
                     unlocked = false
                     masterSecret = ""
+                    Keygrain.clearStrengthenCache()
                 }
             )
         }
@@ -174,6 +177,7 @@ private fun UnlockScreen(
                 label = { Text("Master Secret") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(autoCorrect = false, keyboardType = KeyboardType.Password),
                 visualTransformation = if (secretVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     IconButton(onClick = { secretVisible = !secretVisible }) {
@@ -230,11 +234,11 @@ private fun ServiceListScreen(
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
     var showEditDialog by remember { mutableStateOf<ServiceEntry?>(null) }
     var menuExpanded by remember { mutableStateOf(false) }
-    var syncAction by remember { mutableStateOf<String?>(null) } // "backup" or "restore"
+    var showHelpScreen by remember { mutableStateOf(false) }
+    var showWalletScreen by remember { mutableStateOf(false) }
+    var showSyncEmailDialog by remember { mutableStateOf(false) }
     var syncEmail by remember { mutableStateOf("") }
-    var showConfirmDialog by remember { mutableStateOf<String?>(null) }
     var isSyncing by remember { mutableStateOf(false) }
-    var showConflictDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val syncManager = remember { SyncManager() }
@@ -294,6 +298,21 @@ private fun ServiceListScreen(
         }
     }
 
+    if (showWalletScreen) {
+        WalletScreen(
+            masterSecret = masterSecret,
+            defaultEmail = services.groupingBy { it.email }.eachCount()
+                .maxByOrNull { it.value }?.key ?: "",
+            onBack = { showWalletScreen = false }
+        )
+        return
+    }
+
+    if (showHelpScreen) {
+        HelpScreen(onBack = { showHelpScreen = false })
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -305,21 +324,12 @@ private fun ServiceListScreen(
                         }
                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                             DropdownMenuItem(
-                                text = { Text("Backup to server") },
+                                text = { Text("Sync") },
                                 onClick = {
                                     menuExpanded = false
                                     syncEmail = services.groupingBy { it.email }.eachCount()
                                         .maxByOrNull { it.value }?.key ?: ""
-                                    syncAction = "backup"
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Restore from server") },
-                                onClick = {
-                                    menuExpanded = false
-                                    syncEmail = services.groupingBy { it.email }.eachCount()
-                                        .maxByOrNull { it.value }?.key ?: ""
-                                    syncAction = "restore"
+                                    showSyncEmailDialog = true
                                 }
                             )
                             HorizontalDivider()
@@ -339,6 +349,21 @@ private fun ServiceListScreen(
                                     fileEmail = services.groupingBy { it.email }.eachCount()
                                         .maxByOrNull { it.value }?.key ?: ""
                                     fileAction = "import"
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Help") },
+                                onClick = {
+                                    menuExpanded = false
+                                    showHelpScreen = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Wallet") },
+                                onClick = {
+                                    menuExpanded = false
+                                    showWalletScreen = true
                                 }
                             )
                         }
@@ -407,14 +432,14 @@ private fun ServiceListScreen(
         }
     }
 
-    // Email prompt dialog
-    syncAction?.let { action ->
+    // Sync email prompt dialog
+    if (showSyncEmailDialog) {
         AlertDialog(
-            onDismissRequest = { syncAction = null },
-            title = { Text(if (action == "backup") "Backup to Server" else "Restore from Server") },
+            onDismissRequest = { showSyncEmailDialog = false },
+            title = { Text("Sync to Server") },
             text = {
                 Column {
-                    Text("Email for backup identity:")
+                    Text("Email for sync identity:")
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = syncEmail,
@@ -428,72 +453,37 @@ private fun ServiceListScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        syncAction = null
-                        showConfirmDialog = action
+                        showSyncEmailDialog = false
+                        isSyncing = true
+                        val secretBytes = masterSecret.toByteArray()
+                        scope.launch {
+                            val msg = try {
+                                when (val r = syncManager.sync(secretBytes, syncEmail, serviceManager, context)) {
+                                    is SyncResult.Success -> {
+                                        services = serviceManager.getServices()
+                                        UserMessages.syncSuccess(r.services.size)
+                                    }
+                                    is SyncResult.AuthError -> UserMessages.AUTH_ERROR
+                                    is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
+                                    is SyncResult.ServerError -> UserMessages.SERVER_ERROR
+                                    is SyncResult.IntegrityError -> UserMessages.INTEGRITY_ERROR
+                                    is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
+                                }
+                            } catch (e: Exception) {
+                                Log.e("Keygrain", "Sync failed", e)
+                                UserMessages.NETWORK_ERROR
+                            } finally {
+                                secretBytes.fill(0)
+                            }
+                            isSyncing = false
+                            snackbarHostState.showSnackbar(msg)
+                        }
                     },
                     enabled = syncEmail.isNotBlank()
                 ) { Text("Continue") }
             },
             dismissButton = {
-                TextButton(onClick = { syncAction = null }) { Text("Cancel") }
-            }
-        )
-    }
-
-    // Confirmation dialog
-    showConfirmDialog?.let { action ->
-        AlertDialog(
-            onDismissRequest = { showConfirmDialog = null },
-            title = { Text("Confirm") },
-            text = {
-                Text(
-                    if (action == "backup")
-                        "Back up ${services.size} services to the server? This will overwrite any existing backup for this email."
-                    else
-                        "Restore from server? This will replace all ${services.size} local services with the backup."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showConfirmDialog = null
-                    isSyncing = true
-                    val secretBytes = masterSecret.toByteArray()
-                    scope.launch {
-                        val msg: String? = try {
-                            if (action == "backup") {
-                                when (val r = syncManager.backup(secretBytes, syncEmail, serviceManager, context)) {
-                                    is SyncResult.Success -> UserMessages.backupSuccess(services.size)
-                                    is SyncResult.Conflict -> {
-                                        showConflictDialog = true
-                                        null
-                                    }
-                                    is SyncResult.AuthError -> UserMessages.AUTH_ERROR
-                                    is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
-                                    is SyncResult.ServerError -> UserMessages.SERVER_ERROR
-                                }
-                            } else {
-                                when (val r = syncManager.restore(secretBytes, syncEmail, serviceManager, context)) {
-                                    is RestoreResult.Success -> {
-                                        services = serviceManager.getServices()
-                                        UserMessages.restoreSuccess(r.services.size)
-                                    }
-                                    is RestoreResult.AuthError -> UserMessages.AUTH_ERROR
-                                    is RestoreResult.NetworkError -> UserMessages.NETWORK_ERROR
-                                    is RestoreResult.NotFound -> UserMessages.NOT_FOUND
-                                    is RestoreResult.DecryptionError -> UserMessages.DECRYPT_BACKUP_ERROR
-                                    is RestoreResult.ServerError -> UserMessages.SERVER_ERROR
-                                }
-                            }
-                        } finally {
-                            secretBytes.fill(0)
-                        }
-                        isSyncing = false
-                        if (msg != null) snackbarHostState.showSnackbar(msg)
-                    }
-                }) { Text(if (action == "backup") "Backup" else "Restore") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showConfirmDialog = null }) { Text("Cancel") }
+                TextButton(onClick = { showSyncEmailDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -511,43 +501,6 @@ private fun ServiceListScreen(
                     CircularProgressIndicator()
                     Text("Syncing...")
                 }
-            }
-        )
-    }
-
-    // Conflict dialog
-    if (showConflictDialog) {
-        AlertDialog(
-            onDismissRequest = { showConflictDialog = false },
-            title = { Text("Backup conflict detected") },
-            text = {
-                Text("Another device updated your backup since you last synced. To avoid losing that device\u2019s changes:\n\n1. Restore to get the latest backup\n2. Review and re-add any local changes\n3. Backup again")
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showConflictDialog = false
-                    isSyncing = true
-                    val secretBytes = masterSecret.toByteArray()
-                    scope.launch {
-                        val msg = when (val r = syncManager.restore(secretBytes, syncEmail, serviceManager, context)) {
-                            is RestoreResult.Success -> {
-                                services = serviceManager.getServices()
-                                UserMessages.restoreSuccess(r.services.size)
-                            }
-                            is RestoreResult.AuthError -> UserMessages.AUTH_ERROR
-                            is RestoreResult.NetworkError -> UserMessages.NETWORK_ERROR
-                            is RestoreResult.NotFound -> UserMessages.NOT_FOUND
-                            is RestoreResult.DecryptionError -> UserMessages.DECRYPT_BACKUP_ERROR
-                            is RestoreResult.ServerError -> UserMessages.SERVER_ERROR
-                        }
-                        secretBytes.fill(0)
-                        isSyncing = false
-                        snackbarHostState.showSnackbar(msg)
-                    }
-                }) { Text("Restore Now") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showConflictDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -664,12 +617,43 @@ private fun ServiceCard(
         Keygrain.derivePassword(
             secret = masterSecret.toByteArray(),
             email = service.email,
+            site = service.site,
             length = service.length,
             symbols = service.symbols,
-            salt = service.salt
+            counter = service.counter
         )
     }
     var visible by remember { mutableStateOf(false) }
+
+    // TOTP state
+    var totpCode by remember { mutableStateOf("") }
+    var totpRemaining by remember { mutableIntStateOf(0) }
+    val totpPeriod = service.totp?.optInt("period", 30) ?: 30
+
+    if (service.totp != null) {
+        LaunchedEffect(service.totp) {
+            while (true) {
+                val mode = service.totp.optString("mode", "")
+                val digits = service.totp.optInt("digits", 6)
+                val period = service.totp.optInt("period", 30)
+                val algorithm = service.totp.optString("algorithm", "SHA1")
+                val now = System.currentTimeMillis() / 1000
+                try {
+                    val seed = if (mode == "stored") {
+                        android.util.Base64.decode(service.totp.getString("seed"), android.util.Base64.DEFAULT)
+                    } else {
+                        TotpEngine.deriveTotpSeed(masterSecret.toByteArray(), service.email, service.site)
+                    }
+                    totpCode = TotpEngine.generateTotp(seed, now, digits, period, algorithm)
+                    totpRemaining = (period - (now % period)).toInt()
+                } catch (_: Exception) {
+                    totpCode = "error"
+                    totpRemaining = 0
+                }
+                delay(1000)
+            }
+        }
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -707,6 +691,80 @@ private fun ServiceCard(
                     Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
                 }
             }
+            // TOTP display
+            if (service.totp != null && totpCode.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val formatted = if (totpCode.length == 8)
+                        totpCode.substring(0, 4) + " " + totpCode.substring(4)
+                    else
+                        totpCode.substring(0, 3) + " " + totpCode.substring(3)
+                    Text(
+                        text = formatted,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "${totpRemaining}s",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    IconButton(onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("totp", totpCode))
+                        Toast.makeText(context, "TOTP copied", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy TOTP")
+                    }
+                }
+                LinearProgressIndicator(
+                    progress = { totpRemaining.toFloat() / totpPeriod },
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                )
+            }
+            // SSH display
+            if (service.ssh != null) {
+                val sshKeyName = service.ssh.optString("key_name", "")
+                if (sshKeyName.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                "SSH",
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = sshKeyName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            try {
+                                val sshCounter = service.ssh.optInt("counter", 1)
+                                val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
+                                val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
+                                val line = SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("ssh-pubkey", line))
+                                Toast.makeText(context, "SSH public key copied", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "SSH error: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy SSH public key")
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -719,17 +777,39 @@ private fun AddServiceDialog(
     initialEntry: ServiceEntry? = null
 ) {
     var name by remember { mutableStateOf(initialEntry?.name ?: "") }
+    var site by remember { mutableStateOf(initialEntry?.site ?: "") }
     var email by remember { mutableStateOf(initialEntry?.email ?: "") }
     var length by remember { mutableStateOf(initialEntry?.length?.toString() ?: "20") }
     var symbols by remember { mutableStateOf(initialEntry?.symbols ?: Keygrain.DEFAULT_SYMBOLS) }
-    var salt by remember { mutableStateOf(initialEntry?.salt ?: "") }
+    var counter by remember { mutableStateOf(initialEntry?.counter?.toString() ?: "1") }
     var showAdvanced by remember { mutableStateOf(initialEntry != null) }
     val isEdit = initialEntry != null
     val pwChanged = isEdit && (
         (length.toIntOrNull() ?: 20) != initialEntry!!.length ||
         symbols != initialEntry.symbols ||
-        salt != initialEntry.salt
+        (counter.toIntOrNull() ?: 1) != initialEntry.counter
     )
+
+    // TOTP state
+    val totpModes = listOf("None", "Stored", "Derived")
+    val initialTotpMode = when (initialEntry?.totp?.optString("mode")) {
+        "stored" -> 1
+        "derived" -> 2
+        else -> 0
+    }
+    var totpModeIndex by remember { mutableIntStateOf(initialTotpMode) }
+    val originalTotpSeed = remember { initialEntry?.totp?.optString("seed", "") ?: "" }
+    var totpSeed by remember { mutableStateOf(originalTotpSeed) }
+
+    // SSH state
+    var sshKeyName by remember { mutableStateOf(initialEntry?.ssh?.optString("key_name", "") ?: "") }
+
+    // Auto-fill site from name if it looks like a domain
+    LaunchedEffect(name) {
+        if (!isEdit && site.isEmpty() && name.contains(".")) {
+            site = name.lowercase()
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -742,6 +822,14 @@ private fun AddServiceDialog(
                     label = { Text("Service name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = site,
+                    onValueChange = { if (!isEdit) site = it },
+                    label = { Text("Site") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isEdit
                 )
                 OutlinedTextField(
                     value = email,
@@ -781,11 +869,12 @@ private fun AddServiceDialog(
                             modifier = Modifier.fillMaxWidth()
                         )
                         OutlinedTextField(
-                            value = salt,
-                            onValueChange = { salt = it },
-                            label = { Text("Salt") },
+                            value = counter,
+                            onValueChange = { counter = it.filter { c -> c.isDigit() } },
+                            label = { Text("Counter") },
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                         )
                         if (pwChanged) {
                             Text(
@@ -794,6 +883,38 @@ private fun AddServiceDialog(
                                 color = MaterialTheme.colorScheme.error
                             )
                         }
+                        // TOTP section
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text("🔑 TOTP", style = MaterialTheme.typography.labelLarge)
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            totpModes.forEachIndexed { index, label ->
+                                SegmentedButton(
+                                    selected = totpModeIndex == index,
+                                    onClick = { totpModeIndex = index },
+                                    shape = SegmentedButtonDefaults.itemShape(index, totpModes.size)
+                                ) { Text(label, style = MaterialTheme.typography.bodySmall) }
+                            }
+                        }
+                        if (totpModeIndex == 1) {
+                            OutlinedTextField(
+                                value = totpSeed,
+                                onValueChange = { totpSeed = it },
+                                label = { Text("Seed / otpauth:// URI") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        // SSH section
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text("🔐 SSH Key", style = MaterialTheme.typography.labelLarge)
+                        OutlinedTextField(
+                            value = sshKeyName,
+                            onValueChange = { sshKeyName = it.filter { c -> !c.isWhitespace() } },
+                            label = { Text("Key name (optional)") },
+                            placeholder = { Text("e.g. github, work-servers") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
@@ -801,12 +922,48 @@ private fun AddServiceDialog(
         confirmButton = {
             TextButton(
                 onClick = {
+                    val totpJson = when (totpModeIndex) {
+                        1 -> { // Stored
+                            val input = totpSeed.trim()
+                            if (input == originalTotpSeed && initialEntry?.totp != null) {
+                                initialEntry.totp
+                            } else {
+                                try {
+                                    val parsed = TotpEngine.parseTotpInput(input)
+                                    JSONObject().apply {
+                                        put("mode", "stored")
+                                        put("seed", android.util.Base64.encodeToString(parsed.seed, android.util.Base64.NO_WRAP))
+                                        put("digits", parsed.digits)
+                                        put("period", parsed.period)
+                                        put("algorithm", parsed.algorithm)
+                                    }
+                                } catch (_: Exception) { null }
+                            }
+                        }
+                        2 -> JSONObject().apply { // Derived
+                            put("mode", "derived")
+                            put("digits", 6)
+                            put("period", 30)
+                            put("algorithm", "SHA1")
+                        }
+                        else -> null
+                    }
+                    val sshJson = if (sshKeyName.isNotBlank()) {
+                        val sshCounter = initialEntry?.ssh?.optInt("counter", 1) ?: 1
+                        JSONObject().apply {
+                            put("key_name", sshKeyName.trim())
+                            put("counter", sshCounter)
+                        }
+                    } else null
                     onAdd(ServiceEntry(
                         name = name.trim(),
+                        site = site.trim().ifEmpty { name.trim().lowercase() },
                         email = email.trim(),
                         length = (length.toIntOrNull() ?: 20).coerceAtLeast(8),
                         symbols = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS },
-                        salt = salt
+                        counter = (counter.toIntOrNull() ?: 1).coerceAtLeast(1),
+                        totp = totpJson,
+                        ssh = sshJson
                     ))
                 },
                 enabled = name.isNotBlank() && email.isNotBlank()

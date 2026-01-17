@@ -1,5 +1,7 @@
 package com.badrani.keygrain.data
 
+import org.bouncycastle.crypto.generators.Argon2BytesGenerator
+import org.bouncycastle.crypto.params.Argon2Parameters
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -9,27 +11,65 @@ object Keygrain {
     const val DIGITS = "23456789"
     const val DEFAULT_SYMBOLS = "!@#\$%&*-_=+?"
 
+    private var strengthenCache: Triple<ByteArray, String, ByteArray>? = null
+
+    fun strengthenSecret(secret: ByteArray, email: String): ByteArray {
+        val emailLower = email.lowercase()
+        strengthenCache?.let { (cachedSecret, cachedEmail, cachedResult) ->
+            if (cachedSecret.contentEquals(secret) && cachedEmail == emailLower) {
+                return cachedResult
+            }
+        }
+        val salt = "keygrain-strengthen:$emailLower".toByteArray(Charsets.UTF_8)
+        val params = Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
+            .withSalt(salt)
+            .withIterations(3)
+            .withMemoryAsKB(65536)
+            .withParallelism(1)
+            .build()
+        val generator = Argon2BytesGenerator()
+        generator.init(params)
+        val result = ByteArray(32)
+        generator.generateBytes(secret, result)
+        strengthenCache = Triple(secret.copyOf(), emailLower, result)
+        return result
+    }
+
+    fun clearStrengthenCache() {
+        strengthenCache = null
+    }
+
     fun derivePassword(
         secret: ByteArray,
         email: String,
+        site: String,
         length: Int = 20,
         symbols: String = DEFAULT_SYMBOLS,
-        salt: String = ""
+        counter: Int = 1
     ): String {
         require(length >= 8) { "length must be >= 8" }
         require(symbols.isNotEmpty()) { "symbols must not be empty" }
+        require(site.isNotEmpty()) { "site must not be empty" }
 
-        val normalizedEmail = email.lowercase()
-        val message = "$normalizedEmail:$length:$salt".toByteArray()
+        val strengthened = strengthenSecret(secret, email)
+        val message = "${site.lowercase()}:${email.lowercase()}:$length:$counter".toByteArray()
+        return buildPassword(strengthened, message, length, symbols)
+    }
+
+    fun deriveAuthPassword(secret: ByteArray, email: String): String {
+        val strengthened = strengthenSecret(secret, email)
+        val message = "${email.lowercase()}:32:keygrain-auth".toByteArray()
+        return buildPassword(strengthened, message, 32, DEFAULT_SYMBOLS)
+    }
+
+    private fun buildPassword(secret: ByteArray, message: ByteArray, length: Int, symbols: String): String {
         val key = hmacSha256(secret, message)
-
-        // Build stream
         val stream = mutableListOf<Byte>()
         stream.addAll(key.toList())
-        var counter = 1
+        var ctr = 1
         while (stream.size < length * 2) {
-            stream.addAll(hmacSha256(key, byteArrayOf(counter.toByte())).toList())
-            counter++
+            stream.addAll(hmacSha256(key, byteArrayOf(ctr.toByte())).toList())
+            ctr++
         }
 
         var pos = 0
@@ -40,45 +80,43 @@ object Keygrain {
         }
 
         val fullCharset = UPPER + LOWER + DIGITS + symbols
-
-        // Step 2: Force one char from each category
         val chars = mutableListOf(
             UPPER[nextByte() % UPPER.length],
             LOWER[nextByte() % LOWER.length],
             DIGITS[nextByte() % DIGITS.length],
             symbols[nextByte() % symbols.length],
         )
-
-        // Step 3: Fill remaining
         repeat(length - 4) {
             chars.add(fullCharset[nextByte() % fullCharset.length])
         }
-
-        // Step 4: Fisher-Yates shuffle
         for (i in (length - 1) downTo 1) {
             val j = nextByte() % (i + 1)
             val tmp = chars[i]
             chars[i] = chars[j]
             chars[j] = tmp
         }
-
         return chars.joinToString("")
     }
 
     fun deriveLookupId(secret: ByteArray, email: String): String {
+        val strengthened = strengthenSecret(secret, email)
         val message = "${email.lowercase()}:keygrain-id".toByteArray()
-        return hmacSha256(secret, message).joinToString("") { "%02x".format(it) }
-    }
-
-    fun deriveAuthPassword(secret: ByteArray, email: String): String {
-        return derivePassword(secret, email, length = 32, symbols = DEFAULT_SYMBOLS, salt = "keygrain-auth")
+        return hmacSha256(strengthened, message).joinToString("") { "%02x".format(it) }
     }
 
     fun deriveEncryptionKey(secret: ByteArray, email: String): ByteArray {
+        val strengthened = strengthenSecret(secret, email)
         val message = "${email.lowercase()}:keygrain-encryption".toByteArray()
-        return hmacSha256(secret, message)
+        return hmacSha256(strengthened, message)
     }
 
+    fun secretFingerprint(secret: ByteArray, email: String): List<Int> {
+        val strengthened = strengthenSecret(secret, email)
+        val hash = hmacSha256(strengthened, "keygrain-fingerprint".toByteArray())
+        return (0 until 4).map { (hash[it].toInt() and 0xFF) % 8 }
+    }
+
+    /** Fingerprint without email — for unlock screen where email is not yet known. */
     fun secretFingerprint(secret: ByteArray): List<Int> {
         val hash = hmacSha256(secret, "keygrain-fingerprint".toByteArray())
         return (0 until 4).map { (hash[it].toInt() and 0xFF) % 8 }
