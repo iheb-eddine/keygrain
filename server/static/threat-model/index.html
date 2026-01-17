@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Threat Model — Keygrain</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --red: #ef4444;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --font: system-ui, -apple-system, sans-serif;
+            --max-w: 720px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); }
+        .container { max-width: var(--max-w); margin: 0 auto; padding: 48px 24px; }
+        h1 { font-size: 32px; margin-bottom: 8px; }
+        h2 { font-size: 22px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        h3 { font-size: 17px; margin: 24px 0 8px; }
+        p { margin-bottom: 12px; color: var(--text-secondary); }
+        ul, ol { margin: 0 0 16px 24px; color: var(--text-secondary); }
+        li { margin-bottom: 6px; }
+        strong { color: var(--text); }
+        code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+        .back { display: inline-block; margin-bottom: 32px; font-size: 14px; }
+        .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
+        .tag-protected { background: #16291a; color: var(--green); }
+        .tag-risk { background: #2d1515; color: var(--red); }
+        .tag-partial { background: #2d2a10; color: var(--yellow); }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+        th { color: var(--text); font-weight: 600; }
+        td { color: var(--text-secondary); }
+        footer { border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <a href="/" class="back">← Back to Keygrain</a>
+    <h1>Threat Model</h1>
+    <p>An honest assessment of what Keygrain protects against, what it does not, and the trust boundaries involved.</p>
+
+    <h2>What Is Protected</h2>
+
+    <h3><span class="tag tag-protected">Protected</span> Password database breaches</h3>
+    <p>No password database exists. Passwords are derived on-demand from inputs and discarded after use. There is nothing to exfiltrate from a server.</p>
+
+    <h3><span class="tag tag-protected">Protected</span> Brute-force against the secret</h3>
+    <p>Derivation uses <strong>Argon2id</strong> (64 MiB memory, 3 iterations) making each guess take ~1 second on consumer hardware. An attacker who knows the algorithm, your email, and a target site still faces this cost per attempt.</p>
+    <p><strong>However:</strong> Argon2id slows attacks but does not make a weak passphrase safe. A 4-word passphrase (~50 bits of entropy) is within reach of a determined attacker with GPU clusters. Use a strong, high-entropy secret.</p>
+
+    <h3><span class="tag tag-protected">Protected</span> Sync content exposure</h3>
+    <p>Site configurations are encrypted client-side with AES-GCM using a key derived from your master secret via Argon2id. The sync server receives only ciphertext. It cannot read service names, emails, or configuration.</p>
+
+    <h2>What Is NOT Protected</h2>
+
+    <h3><span class="tag tag-risk">Risk</span> Master secret compromise</h3>
+    <p>If your secret is exposed (phishing, keylogger, shoulder surfing), <strong>all passwords are compromised</strong>. This is the single point of failure inherent to deterministic password managers. Mitigation: use Keygrain only on trusted devices.</p>
+
+    <h3><span class="tag tag-risk">Risk</span> Compromised device</h3>
+    <p>If malware has access to your device's memory or input, it can capture your secret as you type it. Keygrain cannot protect against a compromised operating environment.</p>
+
+    <h3><span class="tag tag-risk">Risk</span> No breach monitoring</h3>
+    <p>Keygrain does not monitor whether your generated passwords have appeared in data breaches. If a site is breached, you must manually rotate by incrementing the counter for that site.</p>
+
+    <h3><span class="tag tag-risk">Risk</span> Site-specific password exposure</h3>
+    <p>If one generated password is leaked (e.g., a site stores it in plaintext), an attacker could attempt to reverse-engineer your secret. Argon2id makes this expensive but not impossible for weak secrets.</p>
+
+    <h2>Sync-Specific Risks</h2>
+
+    <h3><span class="tag tag-partial">Partial</span> Clock skew (last-writer-wins)</h3>
+    <p>Sync uses last-writer-wins by timestamp. If two devices have skewed clocks, the device with the "later" timestamp wins regardless of which edit was actually more recent. Mitigation: keep device clocks synchronized (NTP).</p>
+
+    <h3><span class="tag tag-partial">Partial</span> Delete-wins-over-edit</h3>
+    <p>The sync model uses absence = deletion. If device A deletes a service and pushes after device B edited it, the deletion wins. The edit is lost. Mitigation: avoid concurrent edits across devices for the same service.</p>
+
+    <h3><span class="tag tag-partial">Partial</span> Server replay attack</h3>
+    <p>A malicious sync server could serve stale (old) encrypted payloads on GET requests, causing a device to revert to an older configuration. The server cannot forge new content (it lacks the encryption key), but it can replay old valid ciphertext.</p>
+
+    <h3><span class="tag tag-partial">Partial</span> Metadata leakage</h3>
+    <p>The sync server can observe: number of services stored, timestamps of sync operations, and payload size. It cannot observe service names, emails, or password configurations (these are encrypted).</p>
+
+    <h2>Trust Boundaries</h2>
+
+    <table>
+        <thead>
+            <tr><th>Boundary</th><th>Trust Level</th><th>Rationale</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>Local device</td><td>Fully trusted</td><td>Secret is entered and derivation happens here. If compromised, all security is lost.</td></tr>
+            <tr><td>Sync server</td><td>Untrusted for content</td><td>Sees only ciphertext. Trusted for availability and ordering (replay risk noted above).</td></tr>
+            <tr><td>Browser extension</td><td>Scoped trust</td><td>Requests tabs permission for active tab detection. Code only reads the current active tab URL — does not access other tabs or history.</td></tr>
+            <tr><td>Web generator</td><td>Fully local</td><td>Runs entirely in-browser. No network requests. Can be used offline.</td></tr>
+        </tbody>
+    </table>
+
+    <h2>Accepted Trade-offs</h2>
+
+    <ul>
+        <li><strong>Modulo bias:</strong> Password character selection has &lt;1% bias for charset sizes under 100. Accepted as negligible impact on entropy.</li>
+        <li><strong>No password sharing:</strong> Deterministic derivation is inherently single-user. Passwords cannot be shared without revealing the master secret.</li>
+        <li><strong>Counter-based rotation:</strong> Rotating a password requires incrementing a counter and remembering (or syncing) the new value. Less convenient than vault-based managers.</li>
+    </ul>
+
+    <h2>Assumptions</h2>
+
+    <ul>
+        <li>The user's master secret has sufficient entropy (recommended: 6+ random words or 70+ bits).</li>
+        <li>The device running Keygrain is free of malware and keyloggers.</li>
+        <li>Device clocks are reasonably synchronized when using sync.</li>
+        <li>The Argon2id implementation (browser/native) is correct and not backdoored.</li>
+    </ul>
+</div>
+
+<footer>
+    <a href="/">Keygrain</a> · <a href="/privacy.html">Privacy</a> · © 2026 SecByTech
+</footer>
+
+</body>
+</html>

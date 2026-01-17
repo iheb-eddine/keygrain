@@ -193,7 +193,7 @@ func TestMiddleware_AllowsUnderLimit(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	r := httptest.NewRequest("GET", "/api/backup/"+string(make([]byte, 0))+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil)
+	r := httptest.NewRequest("GET", "/api/sync/"+string(make([]byte, 0))+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil)
 	r.Header.Set("X-Real-IP", "1.2.3.4")
 	w := httptest.NewRecorder()
 	handler(w, r)
@@ -215,13 +215,13 @@ func TestMiddleware_RejectsOverLimit(t *testing.T) {
 
 	lookupID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for i := 0; i < 3; i++ {
-		r := httptest.NewRequest("GET", "/api/backup/"+lookupID, nil)
+		r := httptest.NewRequest("GET", "/api/sync/"+lookupID, nil)
 		r.Header.Set("X-Real-IP", "1.2.3.4")
 		w := httptest.NewRecorder()
 		handler(w, r)
 	}
 
-	r := httptest.NewRequest("GET", "/api/backup/"+lookupID, nil)
+	r := httptest.NewRequest("GET", "/api/sync/"+lookupID, nil)
 	r.Header.Set("X-Real-IP", "1.2.3.4")
 	w := httptest.NewRecorder()
 	handler(w, r)
@@ -247,14 +247,14 @@ func TestMiddleware_IPConsumedOnIDReject(t *testing.T) {
 	lookupID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 	// First request passes both
-	r := httptest.NewRequest("GET", "/api/backup/"+lookupID, nil)
+	r := httptest.NewRequest("GET", "/api/sync/"+lookupID, nil)
 	r.Header.Set("X-Real-IP", "1.2.3.4")
 	w := httptest.NewRecorder()
 	handler(w, r)
 
 	// Next 4 requests: per-ID rejects, but per-IP token still consumed
 	for i := 0; i < 4; i++ {
-		r := httptest.NewRequest("GET", "/api/backup/"+lookupID, nil)
+		r := httptest.NewRequest("GET", "/api/sync/"+lookupID, nil)
 		r.Header.Set("X-Real-IP", "1.2.3.4")
 		w := httptest.NewRecorder()
 		handler(w, r)
@@ -277,11 +277,11 @@ func TestExtractLookupID(t *testing.T) {
 		path string
 		want string
 	}{
-		{"/api/backup/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		{"/api/backup/short", ""},
-		{"/api/backup/", ""},
+		{"/api/sync/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{"/api/sync/short", ""},
+		{"/api/sync/", ""},
 		{"/other/path", ""},
-		{"/api/backup/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extra", ""},
+		{"/api/sync/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extra", ""},
 	}
 	for _, tt := range tests {
 		got := extractLookupID(tt.path)

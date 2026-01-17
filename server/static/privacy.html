@@ -30,7 +30,7 @@
         <li>Cookies or tracking identifiers</li>
     </ul>
 
-    <h2>Optional Backup Service</h2>
+    <h2>Optional Sync &amp; Backup Service</h2>
     <p>If you choose to use the backup feature, an encrypted blob is stored on our server. The server cannot decrypt this blob — it is encrypted with a key derived from your master secret. The server stores:</p>
     <ul>
         <li>A lookup identifier (derived hash — not your email)</li>
@@ -41,11 +41,15 @@
 
     <h2>Browser Extension Permissions</h2>
     <ul>
-        <li><strong>activeTab</strong> — to fill password fields on the current page when you click "Fill"</li>
-        <li><strong>scripting</strong> — to inject the fill script into the active tab</li>
-        <li><strong>storage</strong> — to remember your last-used email per domain (locally, never transmitted)</li>
+        <li><strong>activeTab</strong> — to read the current tab's URL for site identification and to fill password fields when you click Fill</li>
+        <li><strong>alarms</strong> — to schedule an auto-lock timer that clears your master secret from memory after inactivity</li>
+        <li><strong>contextMenus</strong> — to add a quick-access option to the right-click menu</li>
+        <li><strong>scripting</strong> — to inject the autofill script into the active tab</li>
+        <li><strong>storage</strong> — to store your encrypted site list, sync preferences, and per-domain settings locally</li>
+        <li><strong>tabs</strong> — to read tab URL during background operations (e.g., context menu clicks) when activeTab context is unavailable</li>
+        <li><strong>host_permissions (keygrain.secbytech.com)</strong> — to communicate with the sync server for pushing and pulling encrypted vault data</li>
     </ul>
-    <p>The extension makes no network requests. It works entirely offline.</p>
+    <p>When sync is enabled, the extension makes network requests to keygrain.secbytech.com to transmit and retrieve your encrypted data. All transmitted data is encrypted locally before sending — the server cannot decrypt it.</p>
 
     <h2>Contact</h2>
     <p>Questions? Email: admin@secbytech.com</p>

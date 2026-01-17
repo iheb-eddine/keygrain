@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import re
 
 from argon2.low_level import hash_secret_raw, Type
 
@@ -9,6 +10,15 @@ UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
 LOWER = "abcdefghjkmnpqrstuvwxyz"
 DIGITS = "23456789"
 DEFAULT_SYMBOLS = "!@#$%&*-_=+?"
+
+def normalize_site(site: str) -> str:
+    """Normalize a site identifier: strip protocol, www, path, lowercase."""
+    site = re.sub(r'^https?://', '', site, flags=re.IGNORECASE)
+    site = site.split('/')[0].split('?')[0].split('#')[0]
+    site = site.rstrip('/').lower()
+    site = re.sub(r'^www\.', '', site)
+    return site
+
 
 _strengthen_cache: dict[tuple[bytes, str], bytes] = {}
 
@@ -36,16 +46,14 @@ def clear_strengthen_cache() -> None:
     _strengthen_cache.clear()
 
 
-def _stream(secret: bytes, email: str, length: int, salt: str) -> bytes:
+def _stream(secret: bytes, message: bytes, length: int) -> bytes:
     """Generate pseudorandom byte stream via HMAC-SHA256."""
-    message = f"{email}:{length}:{salt}".encode()
     key = hmac.new(secret, message, hashlib.sha256).digest()
     stream = key
-    counter = 1
-    # Extend until we have enough bytes (length * 2 is generous)
+    ctr = 1
     while len(stream) < length * 2:
-        stream += hmac.new(key, counter.to_bytes(1, "big"), hashlib.sha256).digest()
-        counter += 1
+        stream += hmac.new(key, ctr.to_bytes(1, "big"), hashlib.sha256).digest()
+        ctr += 1
     return stream
 
 
@@ -53,20 +61,20 @@ def derive_password(
     secret: bytes,
     email: str,
     *,
+    site: str,
     length: int = 20,
     symbols: str = DEFAULT_SYMBOLS,
-    salt: str = "",
-    strengthen: bool = False,
+    counter: int = 1,
 ) -> str:
-    """Derive a deterministic password from secret + email.
+    """Derive a deterministic password from secret + email + site.
 
     Args:
         secret: Master secret bytes.
         email: Email address (lowercased internally).
+        site: Site identifier (lowercased internally).
         length: Password length (minimum 8).
         symbols: Symbol charset to use.
-        salt: Optional salt for uniqueness.
-        strengthen: If True, pre-process secret through Argon2id.
+        counter: Rotation counter (default 1).
 
     Returns:
         Password string guaranteed to contain upper, lower, digit, and symbol.
@@ -75,12 +83,16 @@ def derive_password(
         raise ValueError("Error: Password length must be at least 8.")
     if not symbols:
         raise ValueError("Error: At least one symbol character is required.")
+    if not site:
+        raise ValueError("Error: Site must not be empty.")
 
     email = email.lower()
-    effective_secret = strengthen_secret(secret, email) if strengthen else secret
+    site = site.lower()
+    effective_secret = strengthen_secret(secret, email)
     full_charset = UPPER + LOWER + DIGITS + symbols
 
-    stream = _stream(effective_secret, email, length, salt)
+    message = f"{site}:{email}:{length}:{counter}".encode()
+    stream = _stream(effective_secret, message, length)
     pos = 0
 
     def next_byte() -> int:

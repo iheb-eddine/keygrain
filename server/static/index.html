@@ -3,228 +3,166 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Keygrain — Your passwords, derived from memory</title>
+    <title>Keygrain — One secret. Every password. Nothing stored.</title>
     <style>
         :root {
-            --bg: #fafafa;
-            --surface: #ffffff;
-            --text: #1a1a1a;
-            --text-secondary: #555555;
-            --accent: #2563eb;
-            --accent-hover: #1d4ed8;
-            --hero-bg: #111827;
-            --hero-text: #f9fafb;
-            --win: #ecfdf5;
-            --loss: #fef2f2;
-            --shadow: 0 1px 3px rgba(0,0,0,0.08);
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
             --font: system-ui, -apple-system, sans-serif;
-            --max-w: 1080px;
+            --max-w: 960px;
         }
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: var(--font); font-size: 16px; line-height: 1.6; color: var(--text); background: var(--bg); }
-        h1, h2, h3 { line-height: 1.2; }
         a { color: var(--accent); text-decoration: none; }
         a:hover { color: var(--accent-hover); }
         .container { max-width: var(--max-w); margin: 0 auto; padding: 0 24px; }
-        .section-heading { text-align: center; margin-bottom: 8px; font-size: 31px; }
-        .section-sub { text-align: center; color: var(--text-secondary); margin-bottom: 32px; max-width: 65ch; margin-left: auto; margin-right: auto; }
 
         /* Hero */
-        .hero { background: var(--hero-bg); color: var(--hero-text); padding: 120px 24px; text-align: center; }
-        .hero h1 { font-size: 39px; margin-bottom: 16px; }
-        .hero p { font-size: 20px; max-width: 65ch; margin: 0 auto 32px; opacity: 0.9; }
+        .hero { padding: 120px 24px 80px; text-align: center; }
+        .hero h1 { font-size: 42px; margin-bottom: 16px; letter-spacing: -0.5px; }
+        .hero p { font-size: 20px; color: var(--text-secondary); max-width: 55ch; margin: 0 auto 32px; }
         .hero-buttons { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
-        .btn { display: inline-block; padding: 16px 32px; border-radius: 9999px; font-weight: 600; font-size: 16px; text-decoration: none; transition: background 0.2s, color 0.2s; }
+        .btn { display: inline-block; padding: 14px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; transition: background 0.2s; }
         .btn-primary { background: var(--accent); color: #fff; }
         .btn-primary:hover { background: var(--accent-hover); color: #fff; }
-        .btn-secondary { background: transparent; border: 2px solid var(--hero-text); color: var(--hero-text); }
-        .btn-secondary:hover { background: var(--hero-text); color: var(--hero-bg); }
+        .btn-outline { border: 1px solid var(--border); color: var(--text); }
+        .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
 
         /* How It Works */
-        .how { background: var(--surface); padding: 80px 24px; }
-        .steps { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 16px; max-width: var(--max-w); margin: 0 auto; }
-        .step-card { background: var(--surface); box-shadow: var(--shadow); border-radius: 8px; padding: 24px; text-align: center; }
-        .step-card .emoji { font-size: 48px; margin-bottom: 12px; }
-        .step-card h3 { margin-bottom: 8px; }
-        .step-card p { color: var(--text-secondary); font-size: 14px; }
-        .step-arrow { font-size: 24px; color: var(--text-secondary); }
+        .how { padding: 80px 24px; }
+        .section-title { text-align: center; font-size: 28px; margin-bottom: 12px; }
+        .section-sub { text-align: center; color: var(--text-secondary); margin-bottom: 48px; }
+        .derivation { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+        .derivation .input-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; text-align: center; min-width: 140px; }
+        .derivation .input-box .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 4px; }
+        .derivation .input-box .value { font-weight: 600; }
+        .derivation .op { font-size: 24px; color: var(--text-secondary); }
+        .derivation .output-box { background: var(--accent); border-radius: 8px; padding: 16px 20px; text-align: center; min-width: 160px; }
+        .derivation .output-box .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.8; margin-bottom: 4px; }
+        .derivation .output-box .value { font-weight: 600; font-family: monospace; }
+        .how-note { text-align: center; color: var(--text-secondary); font-size: 14px; }
 
-        /* Features */
-        .features { background: var(--bg); padding: 80px 24px; }
-        .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; max-width: var(--max-w); margin: 0 auto; }
-        .feature-card { background: var(--surface); box-shadow: var(--shadow); border-radius: 8px; padding: 24px; }
-        .feature-card .emoji { font-size: 36px; margin-bottom: 12px; }
-        .feature-card h3 { margin-bottom: 8px; }
-        .feature-card p { color: var(--text-secondary); }
-
-        /* Comparison */
-        .comparison { background: var(--surface); padding: 80px 24px; }
-        .table-wrap { max-width: var(--max-w); margin: 0 auto; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-        .table-wrap table { width: 100%; border-collapse: collapse; font-size: 15px; }
-        .table-wrap th, .table-wrap td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #e5e7eb; }
-        .table-wrap th { background: var(--bg); font-weight: 600; position: sticky; top: 0; }
-        .table-wrap td:first-child { font-weight: 600; }
-        .cell-win { background: var(--win); }
-        .cell-loss { background: var(--loss); }
+        /* Security */
+        .security { padding: 80px 24px; background: var(--surface); }
+        .security-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; max-width: var(--max-w); margin: 0 auto; }
+        .sec-card { border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
+        .sec-card h3 { margin-bottom: 8px; font-size: 16px; }
+        .sec-card p { color: var(--text-secondary); font-size: 14px; }
+        .security-link { text-align: center; margin-top: 32px; }
 
         /* Download */
-        .download { background: var(--bg); padding: 80px 24px; }
-        .download-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; max-width: var(--max-w); margin: 0 auto; }
-        .download-card { background: var(--surface); box-shadow: var(--shadow); border-radius: 8px; padding: 24px; text-align: center; }
-        .download-card .emoji { font-size: 36px; margin-bottom: 12px; }
-        .download-card h3 { margin-bottom: 12px; }
-        .download-card img { display: block; margin: 12px auto; }
-        .download-card .note { font-size: 13px; color: var(--text-secondary); margin-top: 12px; }
-        .download-card a { display: inline-block; margin: 4px 0; }
+        .download { padding: 80px 24px; }
+        .download-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; max-width: var(--max-w); margin: 0 auto; }
+        .dl-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 24px; text-align: center; }
+        .dl-card h3 { margin-bottom: 12px; }
+        .dl-card p { color: var(--text-secondary); font-size: 13px; margin-top: 8px; }
 
         /* Footer */
-        footer { background: var(--hero-bg); color: var(--hero-text); padding: 48px 24px; text-align: center; }
-        .footer-links { margin-bottom: 16px; }
-        .footer-links a { color: var(--hero-text); opacity: 0.8; }
-        .footer-links a:hover { opacity: 1; }
-        .footer-links .sep { margin: 0 8px; opacity: 0.4; }
-        .footer-links .muted { opacity: 0.5; cursor: default; }
-        footer small { color: var(--hero-text); opacity: 0.5; }
+        footer { border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+        footer a { color: var(--text-secondary); }
+        footer a:hover { color: var(--text); }
+        footer .links { margin-bottom: 12px; }
+        footer .links a { margin: 0 12px; }
 
-        /* Tablet */
-        @media (max-width: 1079px) {
-            .hero { padding: 80px 24px; }
-            .hero h1 { font-size: 31px; }
-            .features-grid { grid-template-columns: repeat(2, 1fr); }
-            .section-heading { font-size: 25px; }
-        }
-
-        /* Mobile */
         @media (max-width: 767px) {
-            .hero h1 { font-size: 25px; }
-            .hero p { font-size: 16px; }
-            .hero-buttons { flex-direction: column; align-items: stretch; gap: 12px; }
-            .hero-buttons .btn { text-align: center; }
-            .how { padding: 48px 24px; }
-            .steps { grid-template-columns: 1fr; gap: 8px; }
-            .step-arrow { transform: rotate(90deg); justify-self: center; }
-            .step-card { padding: 16px; }
-            .features { padding: 48px 24px; }
-            .features-grid { grid-template-columns: 1fr; }
-            .comparison { padding: 48px 24px; }
-            .table-wrap td, .table-wrap th { font-size: 14px; padding: 8px 12px; }
-            .table-wrap td:first-child, .table-wrap th:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
-            .table-wrap th:first-child { background: var(--bg); }
-            .download { padding: 48px 24px; }
-            .download-grid { grid-template-columns: 1fr; }
-            .section-heading { font-size: 22px; }
-            footer .footer-links { display: flex; flex-direction: column; gap: 8px; }
-            footer .footer-links .sep { display: none; }
+            .hero { padding: 80px 24px 60px; }
+            .hero h1 { font-size: 28px; }
+            .hero p { font-size: 17px; }
+            .hero-buttons { flex-direction: column; align-items: stretch; }
+            .derivation { flex-direction: column; }
+            .derivation .op { transform: rotate(90deg); }
+            .security-grid, .download-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
 
-<!-- Hero -->
 <section class="hero">
-    <h1>Your passwords, derived from memory.</h1>
-    <p>No vault to hack. No database to breach. One secret you remember — unique passwords for every site, every time.</p>
-    <div class="hero-buttons">
-        <a href="/generate/" class="btn btn-primary">Try Web Generator</a>
-        <a href="#download" class="btn btn-secondary">Download App</a>
+    <div class="container">
+        <h1>One secret. Every password. Nothing stored.</h1>
+        <p>Keygrain derives unique passwords from a single secret you remember. No vault. No database. No account. Just math.</p>
+        <div class="hero-buttons">
+            <a href="/generate/" class="btn btn-primary">Try Web Generator</a>
+            <a href="#download" class="btn btn-outline">Download</a>
+        </div>
     </div>
 </section>
 
-<!-- How It Works -->
 <section class="how">
     <div class="container">
-        <h2 class="section-heading">How it works</h2>
-        <p class="section-sub">Three inputs. One password. Every time.</p>
-    </div>
-    <div class="steps">
-        <div class="step-card"><div class="emoji">🔑</div><h3>Enter your secret</h3><p>A single passphrase you remember. Never stored anywhere.</p></div>
-        <span class="step-arrow">→</span>
-        <div class="step-card"><div class="emoji">🌐</div><h3>Pick the site</h3><p>Select which account — by site name or email. The extension detects it automatically.</p></div>
-        <span class="step-arrow">→</span>
-        <div class="step-card"><div class="emoji">✅</div><h3>Get your password</h3><p>A unique, strong password is generated instantly. Same inputs = same output, always.</p></div>
+        <h2 class="section-title">How it works</h2>
+        <p class="section-sub">Deterministic derivation — same inputs always produce the same password.</p>
+        <div class="derivation">
+            <div class="input-box"><div class="label">Secret</div><div class="value">••••••••</div></div>
+            <span class="op">+</span>
+            <div class="input-box"><div class="label">Site</div><div class="value">github.com</div></div>
+            <span class="op">+</span>
+            <div class="input-box"><div class="label">Email</div><div class="value">you@mail.com</div></div>
+            <span class="op">→</span>
+            <div class="output-box"><div class="label">Password</div><div class="value">kX9#mP2$vL</div></div>
+        </div>
+        <p class="how-note">Your secret never leaves your device. Passwords are computed locally in milliseconds.</p>
     </div>
 </section>
 
-<!-- Features -->
-<section class="features">
+<section class="security">
     <div class="container">
-        <h2 class="section-heading">Why Keygrain</h2>
+        <h2 class="section-title">Security</h2>
+        <p class="section-sub">Designed to minimize attack surface.</p>
     </div>
-    <div class="features-grid">
-        <div class="feature-card"><div class="emoji">🚫</div><h3>Nothing to steal</h3><p>No password database. No vault. Nothing for hackers to target.</p></div>
-        <div class="feature-card"><div class="emoji">🔄</div><h3>Works everywhere</h3><p>Same secret produces the same password on any device — phone, laptop, or browser.</p></div>
-        <div class="feature-card"><div class="emoji">⚡</div><h3>Instant &amp; offline</h3><p>Passwords are generated locally in milliseconds. No server needed.</p></div>
-        <div class="feature-card"><div class="emoji">🎛️</div><h3>Fully configurable</h3><p>Control length, symbols, and versioning. Different rules per site.</p></div>
-        <div class="feature-card"><div class="emoji">🔒</div><h3>Zero-knowledge</h3><p>Your secret never leaves your device. We cannot see it, even if we wanted to.</p></div>
-        <div class="feature-card"><div class="emoji">💾</div><h3>Optional encrypted backup</h3><p>Export your site configs (not passwords) with AES encryption. Restore on any device.</p></div>
+    <div class="security-grid">
+        <div class="sec-card">
+            <h3>Argon2id Key Stretching</h3>
+            <p>64 MiB memory, 3 iterations. Makes brute-force attacks against your secret computationally expensive (~1s per guess).</p>
+        </div>
+        <div class="sec-card">
+            <h3>Nothing Stored</h3>
+            <p>No password database exists. Passwords are recomputed on demand. There is nothing to breach.</p>
+        </div>
+        <div class="sec-card">
+            <h3>E2E Encrypted Sync</h3>
+            <p>Site configurations (not passwords) sync between devices using AES-GCM encryption derived from your secret. The server sees only ciphertext.</p>
+        </div>
     </div>
+    <p class="security-link"><a href="/threat-model/">Read the full threat model →</a></p>
 </section>
 
-<!-- Comparison -->
-<section class="comparison">
-    <div class="container">
-        <h2 class="section-heading">How Keygrain compares</h2>
-        <p class="section-sub">Honest comparison. Every tool has trade-offs.</p>
-    </div>
-    <div class="table-wrap">
-        <table>
-            <thead>
-                <tr><th>Dimension</th><th>Keygrain</th><th>LessPass</th><th>Spectre</th><th>Bitwarden (free)</th></tr>
-            </thead>
-            <tbody>
-                <tr><td>Approach</td><td>Deterministic derivation</td><td>Deterministic derivation</td><td>Deterministic derivation</td><td>Encrypted vault</td></tr>
-                <tr><td>Password storage</td><td>None — recomputed</td><td>None — recomputed</td><td>None — recomputed</td><td>Encrypted cloud vault</td></tr>
-                <tr><td>Breach risk</td><td class="cell-win">Nothing to steal</td><td>Nothing to steal</td><td>Nothing to steal</td><td>Encrypted cloud storage</td></tr>
-                <tr><td>Offline use</td><td class="cell-win">✅ Full</td><td>✅ Full</td><td>✅ Full</td><td>⚠️ Partial (cached)</td></tr>
-                <tr><td>Cross-device sync</td><td class="cell-win">Automatic (same inputs)</td><td>Automatic (same inputs)</td><td>Automatic (same inputs)</td><td>✅ Cloud sync</td></tr>
-                <tr><td>Browser extension</td><td>✅</td><td>✅</td><td>❌</td><td>✅</td></tr>
-                <tr><td>Mobile app</td><td>✅ Android</td><td>✅ Android/iOS</td><td>⚠️ iOS (dormant)</td><td>✅ Android/iOS</td></tr>
-                <tr><td>Open source</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
-                <tr><td>Password sharing</td><td class="cell-loss">❌</td><td>❌</td><td>❌</td><td>✅</td></tr>
-                <tr><td>Breach monitoring</td><td class="cell-loss">❌</td><td>❌</td><td>❌</td><td>✅</td></tr>
-                <tr><td>Autofill</td><td class="cell-loss">Extension only</td><td>Extension only</td><td>Manual</td><td>✅ Native</td></tr>
-                <tr><td>Trade-offs</td><td>Must remember one secret; no sharing; no breach alerts</td><td>Unmaintained since 2022; limited config</td><td>iOS app (dormant); no extension</td><td>Requires trust in cloud infrastructure; account needed</td></tr>
-            </tbody>
-        </table>
-    </div>
-</section>
-
-<!-- Download -->
 <section class="download" id="download">
     <div class="container">
-        <h2 class="section-heading">Get Keygrain</h2>
-        <p class="section-sub">Free. No account needed. Start in seconds.</p>
+        <h2 class="section-title">Get Keygrain</h2>
+        <p class="section-sub">Free and open source. No account required.</p>
     </div>
     <div class="download-grid">
-        <div class="download-card">
-            <div class="emoji">📱</div>
-            <h3>Android App</h3>
-            <img src="/qr-download.png" alt="QR code to download Keygrain APK" width="200" height="200">
-            <a href="/app/keygrain.apk">Download APK</a>
-            <p class="note">Android 8+ • No Play Store account needed</p>
+        <div class="dl-card">
+            <h3>Chrome</h3>
+            <a href="#" class="btn btn-outline">Chrome Web Store</a>
+            <p>Chrome, Edge, Brave, Arc</p>
         </div>
-        <div class="download-card">
-            <div class="emoji">🧩</div>
-            <h3>Browser Extension</h3>
-            <a href="#">Chrome Web Store</a><br>
-            <a href="#">Firefox Add-ons</a>
-            <p class="note">Auto-detects sites • One-click fill</p>
+        <div class="dl-card">
+            <h3>Firefox</h3>
+            <a href="#" class="btn btn-outline">Firefox Add-ons</a>
+            <p>Firefox 109+</p>
         </div>
-        <div class="download-card">
-            <div class="emoji">🌐</div>
-            <h3>Web Generator</h3>
-            <a href="/generate/">Open in Browser</a>
-            <p class="note">No install needed • Works on any device</p>
+        <div class="dl-card">
+            <h3>Android</h3>
+            <a href="/app/keygrain.apk" class="btn btn-outline">Download APK</a>
+            <p>Android 8+ · No Play Store needed</p>
         </div>
     </div>
 </section>
 
-<!-- Footer -->
 <footer>
-    <div class="footer-links">
-        <a href="/privacy.html">Privacy Policy</a><span class="sep">·</span><span class="muted">GitHub (coming soon)</span><span class="sep">·</span><span>contact@secbytech.com</span>
+    <div class="links">
+        <a href="/privacy.html">Privacy</a>
+        <a href="/threat-model/">Threat Model</a>
+        <a href="/generate/">Web Generator</a>
     </div>
-    <small>© 2026 SecByTech. Keygrain is open-source software.</small>
+    <small>© 2026 SecByTech · contact@secbytech.com</small>
 </footer>
 
 </body>

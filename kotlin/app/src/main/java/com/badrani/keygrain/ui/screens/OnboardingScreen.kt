@@ -179,6 +179,7 @@ private fun MasterSecretPage(
             label = { Text("Master Secret") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
+            keyboardOptions = KeyboardOptions(autoCorrect = false, keyboardType = KeyboardType.Password),
             visualTransformation = if (secretVisible) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
                 IconButton(onClick = { secretVisible = !secretVisible }) {
@@ -230,25 +231,25 @@ private fun FirstServicePage(
     }
 
     val context = LocalContext.current
-    var name by remember { mutableStateOf("Google") }
+    var name by remember { mutableStateOf("google.com") }
+    var site by remember { mutableStateOf("google.com") }
     var email by remember { mutableStateOf("") }
     var length by remember { mutableStateOf("20") }
     var symbols by remember { mutableStateOf(Keygrain.DEFAULT_SYMBOLS) }
-    var salt by remember { mutableStateOf("") }
     var showAdvanced by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
 
-    val password = remember(name, email, length, symbols, salt, masterSecret) {
-        if (email.isBlank()) return@remember null
+    val password = remember(name, site, email, length, symbols, masterSecret) {
+        if (email.isBlank() || site.isBlank()) return@remember null
         val len = (length.toIntOrNull() ?: 20).coerceAtLeast(8)
         val syms = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS }
         try {
             Keygrain.derivePassword(
                 secret = masterSecret.toByteArray(),
                 email = email.trim(),
+                site = site.trim(),
                 length = len,
-                symbols = syms,
-                salt = salt
+                symbols = syms
             )
         } catch (_: Exception) { null }
     }
@@ -260,10 +261,10 @@ private fun FirstServicePage(
             serviceManager.addService(
                 ServiceEntry(
                     name = name.trim(),
+                    site = site.trim().ifEmpty { name.trim().lowercase() },
                     email = email.trim(),
                     length = (length.toIntOrNull() ?: 20).coerceAtLeast(8),
-                    symbols = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS },
-                    salt = salt
+                    symbols = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS }
                 )
             )
             onServiceAdded(name.trim())
@@ -279,8 +280,16 @@ private fun FirstServicePage(
         Spacer(Modifier.height(16.dp))
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it },
+            onValueChange = { name = it; if (it.contains(".")) site = it.lowercase() },
             label = { Text("Service name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = site,
+            onValueChange = { site = it },
+            label = { Text("Site") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -310,13 +319,6 @@ private fun FirstServicePage(
                     value = symbols,
                     onValueChange = { symbols = it },
                     label = { Text("Symbols") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = salt,
-                    onValueChange = { salt = it },
-                    label = { Text("Salt") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )

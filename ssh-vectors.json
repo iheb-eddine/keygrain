@@ -1,0 +1,79 @@
+{
+  "_comment": "Cross-platform SSH key derivation test vectors. All implementations MUST produce identical output.",
+  "derivation_vectors": {
+    "_note": "seed = HMAC-SHA256(strengthen(secret, email), lowercase(email):lowercase(key_name):counter:keygrain-ssh). Ed25519 public key derived from seed.",
+    "vectors": [
+      {
+        "secret_utf8": "my-master-secret",
+        "secret_hex": "6d792d6d61737465722d736563726574",
+        "email": "test@gmail.com",
+        "key_name": "github",
+        "counter": 1,
+        "message_utf8": "test@gmail.com:github:1:keygrain-ssh",
+        "message_hex": "7465737440676d61696c2e636f6d3a6769746875623a313a6b6579677261696e2d737368",
+        "seed_hex": "15d7cd5c74358c1cd7f7f93ef45d074afcf6fd9e008a94de9e8608a330d96dc1",
+        "public_key_hex": "f2aadbd608703b65bb87d3d1c746c48dfed9095a2b7ae4c8ada057afa6bf9032",
+        "authorized_keys": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPKq29YIcDtlu4fT0cdGxI3+2QlaK3rkyK2gV6+mv5Ay test@gmail.com:github",
+        "_note": "Base case"
+      },
+      {
+        "secret_utf8": "my-master-secret",
+        "secret_hex": "6d792d6d61737465722d736563726574",
+        "email": "test@gmail.com",
+        "key_name": "work-servers",
+        "counter": 1,
+        "message_utf8": "test@gmail.com:work-servers:1:keygrain-ssh",
+        "message_hex": "7465737440676d61696c2e636f6d3a776f726b2d736572766572733a313a6b6579677261696e2d737368",
+        "seed_hex": "d415ea7afd4b8e113bee60f42ae84b387b564f38e8b95a0c3326b3720d5fb9f0",
+        "public_key_hex": "5050a666581b46ebd076f5f902eaaa14a2dc7b14bdeada5fae5c861e049530e0",
+        "authorized_keys": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFBQpmZYG0br0Hb1+QLqqhSi3HsUveraX65chh4ElTDg test@gmail.com:work-servers",
+        "_note": "Different key_name"
+      },
+      {
+        "secret_utf8": "my-master-secret",
+        "secret_hex": "6d792d6d61737465722d736563726574",
+        "email": "test@gmail.com",
+        "key_name": "github",
+        "counter": 2,
+        "message_utf8": "test@gmail.com:github:2:keygrain-ssh",
+        "message_hex": "7465737440676d61696c2e636f6d3a6769746875623a323a6b6579677261696e2d737368",
+        "seed_hex": "657c26252e9b425f83f5fd763177b75ea7046b4f9167a2116f248c19455ab9e2",
+        "public_key_hex": "1d921af7c1c68c75100e741008e903a28b14fc42fce5c0e33803f1cb3bbed16a",
+        "authorized_keys": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB2SGvfBxox1EA50EAjpA6KLFPxC/OXA4zgD8cs7vtFq test@gmail.com:github",
+        "_note": "Counter rotation"
+      },
+      {
+        "secret_utf8": "my-master-secret",
+        "secret_hex": "6d792d6d61737465722d736563726574",
+        "email": "TEST@Gmail.com",
+        "key_name": "GitHub",
+        "counter": 1,
+        "message_utf8": "test@gmail.com:github:1:keygrain-ssh",
+        "message_hex": "7465737440676d61696c2e636f6d3a6769746875623a313a6b6579677261696e2d737368",
+        "seed_hex": "15d7cd5c74358c1cd7f7f93ef45d074afcf6fd9e008a94de9e8608a330d96dc1",
+        "public_key_hex": "f2aadbd608703b65bb87d3d1c746c48dfed9095a2b7ae4c8ada057afa6bf9032",
+        "authorized_keys": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPKq29YIcDtlu4fT0cdGxI3+2QlaK3rkyK2gV6+mv5Ay test@gmail.com:github",
+        "_note": "Case normalization — must match vector 1"
+      },
+      {
+        "secret_utf8": "different-secret",
+        "secret_hex": "646966666572656e742d736563726574",
+        "email": "test@gmail.com",
+        "key_name": "github",
+        "counter": 1,
+        "message_utf8": "test@gmail.com:github:1:keygrain-ssh",
+        "message_hex": "7465737440676d61696c2e636f6d3a6769746875623a313a6b6579677261696e2d737368",
+        "seed_hex": "247c4840e93dd75558b52c3979ed67420de5093f22fb1cdd74e86202d1f17e99",
+        "public_key_hex": "60efc824475a7a03dfba1bfc6abc49c4d4156bd705872fcf5615b00d210999ba",
+        "authorized_keys": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGDvyCRHWnoD37ob/Gq8ScTUFWvXBYcvz1YVsA0hCZm6 test@gmail.com:github",
+        "_note": "Different secret"
+      }
+    ]
+  },
+  "verification_rules": [
+    "Vectors 1 and 4 MUST produce identical output (email and key_name case normalization)",
+    "Vectors 1 and 3 MUST differ (counter change)",
+    "Vectors 1 and 2 MUST differ (key_name change)",
+    "Vectors 1 and 5 MUST differ (secret change)"
+  ]
+}

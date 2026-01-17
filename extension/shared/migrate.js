@@ -370,7 +370,8 @@
     existingServices = [];
     if (data.services && data.services.version === 2) {
       const enc = new TextEncoder();
-      const storageKey = await hmacSHA256(enc.encode(secret), enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+      const strengthened = await strengthenSecret(secret, email);
+      const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
       try {
         const iv = base64ToArrayBuffer(data.services.iv);
         const ct = base64ToArrayBuffer(data.services.ciphertext);
@@ -424,14 +425,15 @@
     selectedEntries.forEach(e => {
       const exists = existingServices.some(s => s.name.toLowerCase() === e.serviceName.toLowerCase() && s.email.toLowerCase() === e.email.toLowerCase());
       if (!exists) {
-        newServices.push({ name: e.serviceName, email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, salt: "" });
+        newServices.push({ name: e.serviceName, email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, migrating: true });
       }
     });
     const merged = existingServices.concat(newServices);
 
     // Encrypt and save
     const enc = new TextEncoder();
-    const storageKey = await hmacSHA256(enc.encode(secret), enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+    const strengthened = await strengthenSecret(secret, email);
+    const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const aad = enc.encode(email.toLowerCase());
     const plaintext = enc.encode(JSON.stringify({ version: 1, services: merged }));
@@ -458,6 +460,33 @@
   });
 
   // === Step 4: Checklist ===
+  async function clearMigratingFlag(name, svcEmail) {
+    if (!secret || !email) return;
+    const data = await chrome.storage.local.get("services");
+    if (!data.services || data.services.version !== 2) return;
+    const enc = new TextEncoder();
+    const strengthened = await strengthenSecret(secret, email);
+    const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+    try {
+      const iv = base64ToArrayBuffer(data.services.iv);
+      const ct = base64ToArrayBuffer(data.services.ciphertext);
+      const aad = enc.encode(email.toLowerCase());
+      const cryptoKey = await crypto.subtle.importKey("raw", storageKey, { name: "AES-GCM" }, false, ["decrypt"]);
+      const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: aad }, cryptoKey, ct);
+      const parsed = JSON.parse(new TextDecoder().decode(decrypted));
+      const svcs = parsed.services || parsed;
+      const match = svcs.find(s => s.name.toLowerCase() === name.toLowerCase() && s.email.toLowerCase() === svcEmail.toLowerCase());
+      if (match && match.migrating) {
+        delete match.migrating;
+        const newIv = crypto.getRandomValues(new Uint8Array(12));
+        const plaintext = enc.encode(JSON.stringify({ version: 1, services: svcs }));
+        const encKey = await crypto.subtle.importKey("raw", storageKey, { name: "AES-GCM" }, false, ["encrypt"]);
+        const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: newIv, additionalData: aad }, encKey, plaintext);
+        await chrome.storage.local.set({ services: { version: 2, iv: arrayBufferToBase64(newIv), ciphertext: arrayBufferToBase64(ciphertext) } });
+      }
+    } finally { storageKey.fill(0); }
+  }
+
   function renderChecklist(checklist) {
     const items = checklist.items;
     const doneCount = items.filter(i => i.status === "done").length;
@@ -496,6 +525,7 @@
           item.status = "done";
           item.doneAt = new Date().toISOString();
           await chrome.storage.local.set({ migrationChecklist: checklist });
+          await clearMigratingFlag(item.name, item.email);
           renderChecklist(checklist);
         });
         actions.appendChild(markBtn);
@@ -523,12 +553,14 @@
           // Look up actual service params from storage
           let svcLength = settings.defaultLength;
           let svcSymbols = settings.defaultSymbols;
-          let svcSalt = "";
+          let svcSite = item.name;
+          let svcCounter = 1;
           try {
             const data = await chrome.storage.local.get("services");
             if (data.services && data.services.version === 2) {
               const enc = new TextEncoder();
-              const storageKey = await hmacSHA256(enc.encode(secret), enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+              const strengthened = await strengthenSecret(secret, email);
+              const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
               try {
                 const iv = base64ToArrayBuffer(data.services.iv);
                 const ct = base64ToArrayBuffer(data.services.ciphertext);
@@ -538,11 +570,11 @@
                 const parsed = JSON.parse(new TextDecoder().decode(decrypted));
                 const svcs = parsed.services || parsed;
                 const match = svcs.find(s => s.name.toLowerCase() === item.name.toLowerCase() && s.email.toLowerCase() === item.email.toLowerCase());
-                if (match) { svcLength = match.length || svcLength; svcSymbols = match.symbols || svcSymbols; svcSalt = match.salt || ""; }
+                if (match) { svcLength = match.length || svcLength; svcSymbols = match.symbols || svcSymbols; svcSite = match.site || match.name; svcCounter = match.counter || 1; }
               } finally { storageKey.fill(0); }
             }
           } catch { /* use defaults */ }
-          const pw = await derivePassword(secret, item.email, svcLength, svcSymbols, svcSalt);
+          const pw = await derivePassword(secret, item.email, {site: svcSite, length: svcLength, symbols: svcSymbols, counter: svcCounter});
           await navigator.clipboard.writeText(pw);
           copyBtn.textContent = "Copied!";
           setTimeout(() => { copyBtn.textContent = "Copy new password"; }, 2000);

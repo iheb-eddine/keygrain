@@ -29,13 +29,12 @@
         return new Uint8Array(sig);
     }
 
-    async function buildStream(secret, email, length, salt) {
+    async function buildStream(secret, message, needed) {
         const enc = new TextEncoder();
-        const message = enc.encode(email + ":" + length + ":" + salt);
         const key = await hmacSHA256(enc.encode(secret), message);
         let stream = new Uint8Array(key);
         let counter = 1;
-        while (stream.length < length * 2) {
+        while (stream.length < needed) {
             const ext = await hmacSHA256(key, new Uint8Array([counter]));
             const combined = new Uint8Array(stream.length + ext.length);
             combined.set(stream);
@@ -46,10 +45,11 @@
         return stream;
     }
 
-    async function derivePassword(secret, email, length, symbols, salt) {
-        email = email.toLowerCase();
+    async function derivePassword(secret, email, site, length, symbols, salt, counter) {
+        const enc = new TextEncoder();
+        const message = enc.encode(site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + salt + ":" + counter);
+        const stream = await buildStream(secret, message, length * 2);
         const fullCharset = UPPER + LOWER + DIGITS + symbols;
-        const stream = await buildStream(secret, email, length, salt);
         let pos = 0;
         const nextByte = () => stream[pos++];
 
@@ -70,14 +70,16 @@
     }
 
     const VECTORS = [
-        { secret: "my-master-secret", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", expected: "jU8D8b@epA_=X$4CN7&4" },
-        { secret: "my-master-secret", email: "test@outlook.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", expected: "FQ9a3aV2bY2Wdf75$Y4X" },
-        { secret: "my-master-secret", email: "TEST@Gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", expected: "jU8D8b@epA_=X$4CN7&4" },
-        { secret: "my-master-secret", email: "user@custom.org", length: 16, symbols: "!@#$%&*-_=+?", salt: "", expected: "uktU-g7kXY&zPQ7k" },
-        { secret: "my-master-secret", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_", salt: "", expected: "rX8K@m%esG_AX*4FR*&4" },
-        { secret: "my-master-secret", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "2024", expected: "NUWrnAkPf8Xb@R7WV66$" },
-        { secret: "different-secret", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", expected: "c$RV9KGJppwJeUp_c3Y8" },
-        { secret: "my-master-secret", email: "test@gmail.com", length: 32, symbols: "!@#$%&*-_=+?", salt: "", expected: "kPYHb2dYUk$qP6bjbzLAV5A%p3j6T5U_" },
+        { secret: "my-master-secret", site: "github.com", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", counter: 1, expected: "KujJv2ExLBw8ffyHq*sh" },
+        { secret: "my-master-secret", site: "google.com", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", counter: 1, expected: "+m_VEJe6WNzMS5EC48KL" },
+        { secret: "my-master-secret", site: "GitHub.com", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", counter: 1, expected: "KujJv2ExLBw8ffyHq*sh" },
+        { secret: "my-master-secret", site: "github.com", email: "TEST@Gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", counter: 1, expected: "KujJv2ExLBw8ffyHq*sh" },
+        { secret: "my-master-secret", site: "github.com", email: "test@gmail.com", length: 16, symbols: "!@#$%&*-_=+?", salt: "", counter: 1, expected: "%p=p7JztpZFg=&5R" },
+        { secret: "my-master-secret", site: "github.com", email: "test@gmail.com", length: 20, symbols: "!@#$%&", salt: "", counter: 1, expected: "R%jJ92LBeP!Eu2#Pw!6w" },
+        { secret: "my-master-secret", site: "github.com", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "2024", counter: 1, expected: "GWX93CFV7h9#t9x2fY86" },
+        { secret: "my-master-secret", site: "github.com", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", counter: 2, expected: "L#d-TVKKQ4Ag56E#L9xD" },
+        { secret: "different-secret", site: "github.com", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", counter: 1, expected: "kvNCRWH9St+ybaj=v*sT" },
+        { secret: "my-master-secret", site: "home-wifi", email: "test@gmail.com", length: 20, symbols: "!@#$%&*-_=+?", salt: "", counter: 1, expected: "ae-vwmGH9qT!H-wRJ4Tm" },
     ];
 
     async function runTests() {
@@ -86,14 +88,14 @@
         let passed = 0;
         for (let i = 0; i < VECTORS.length; i++) {
             const v = VECTORS[i];
-            const actual = await derivePassword(v.secret, v.email, v.length, v.symbols, v.salt);
+            const actual = await derivePassword(v.secret, v.email, v.site, v.length, v.symbols, v.salt, v.counter);
             const ok = actual === v.expected;
             if (ok) passed++;
             const div = document.createElement("div");
             div.className = "vector " + (ok ? "pass" : "fail");
             div.innerHTML = ok
-                ? `&#x2705; Vector ${i + 1}: <code>${v.email}</code> len=${v.length} salt="${v.salt}"`
-                : `&#x274C; Vector ${i + 1}: <code>${v.email}</code> len=${v.length} salt="${v.salt}"<br>Expected: <code>${v.expected}</code><br>Got: <code>${actual}</code>`;
+                ? `&#x2705; Vector ${i + 1}: <code>${v.site}</code> ${v.email} len=${v.length} salt="${v.salt}" counter=${v.counter}`
+                : `&#x274C; Vector ${i + 1}: <code>${v.site}</code> ${v.email} len=${v.length} salt="${v.salt}" counter=${v.counter}<br>Expected: <code>${v.expected}</code><br>Got: <code>${actual}</code>`;
             results.appendChild(div);
         }
         summary.className = passed === VECTORS.length ? "pass" : "fail";

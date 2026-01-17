@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Deterministic password derivation from master secret + email"
 requires-python = ">=3.10"
 license = "MIT"
-dependencies = ["argon2-cffi>=23.1.0"]
+dependencies = ["argon2-cffi>=23.1.0", "cryptography>=42.0.0"]
 
 [project.scripts]
 keygrain = "keygrain.cli:main"

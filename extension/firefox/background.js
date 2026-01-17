@@ -40,7 +40,8 @@ async function updateBadge(tabId) {
   if (!host) { browser.browserAction.setBadgeText({text: "", tabId}); return; }
 
   const enc = new TextEncoder();
-  const storageKey = await hmacSHA256(enc.encode(sessionSecret), enc.encode(sessionEmail.toLowerCase() + ":keygrain-local-storage"));
+  const strengthened = await strengthenSecret(sessionSecret, sessionEmail);
+  const storageKey = await hmacSHA256(strengthened, enc.encode(sessionEmail.toLowerCase() + ":keygrain-local-storage"));
   try {
     const iv = base64ToArrayBuffer(data.services.iv);
     const ciphertext = base64ToArrayBuffer(data.services.ciphertext);
@@ -68,12 +69,40 @@ async function resetAutoLock() {
   browser.alarms.create("autoLock", {delayInMinutes: minutes});
 }
 
+async function backgroundSync() {
+  if (!sessionSecret || !sessionEmail) return;
+  const enc = new TextEncoder();
+  const strengthened = await strengthenSecret(sessionSecret, sessionEmail);
+  const storageKey = await hmacSHA256(strengthened, enc.encode(sessionEmail.toLowerCase() + ":keygrain-local-storage"));
+  try {
+    const data = await browser.storage.local.get("services");
+    if (!data.services || data.services.version !== 2) return;
+    const iv = base64ToArrayBuffer(data.services.iv);
+    const ciphertext = base64ToArrayBuffer(data.services.ciphertext);
+    const aad = enc.encode(sessionEmail.toLowerCase());
+    const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["decrypt"]);
+    const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
+    const localServices = JSON.parse(new TextDecoder().decode(decrypted)).services || [];
+    const result = await syncWithServer(sessionSecret, sessionEmail, localServices);
+    await setKnownUUIDs(result.knownUUIDs);
+    const newPlaintext = enc.encode(JSON.stringify({version: 1, services: result.services}));
+    const newIv = crypto.getRandomValues(new Uint8Array(12));
+    const newKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["encrypt"]);
+    const newCiphertext = await crypto.subtle.encrypt({name: "AES-GCM", iv: newIv, additionalData: aad}, newKey, newPlaintext);
+    await browser.storage.local.set({services: {version: 2, iv: arrayBufferToBase64(newIv), ciphertext: arrayBufferToBase64(newCiphertext)}, lastSyncTime: Date.now(), lastSyncError: null});
+  } catch {}
+}
+
 browser.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "autoLock") {
+    browser.alarms.clear("syncAlarm");
     sessionSecret = null;
     sessionEmail = null;
     const [tab] = await browser.tabs.query({active: true, currentWindow: true});
     if (tab) browser.browserAction.setBadgeText({text: "", tabId: tab.id});
+  }
+  if (alarm.name === "syncAlarm") {
+    backgroundSync();
   }
 });
 
@@ -84,6 +113,7 @@ browser.runtime.onMessage.addListener((msg) => {
   if (msg.action === "setSecret") {
     sessionSecret = msg.secret;
     resetAutoLock();
+    browser.alarms.create("syncAlarm", {periodInMinutes: 5});
     return Promise.resolve({ok: true});
   }
   if (msg.action === "heartbeat") {
@@ -93,6 +123,7 @@ browser.runtime.onMessage.addListener((msg) => {
   if (msg.action === "clearSecret") {
     sessionSecret = null;
     browser.alarms.clear("autoLock");
+    browser.alarms.clear("syncAlarm");
     browser.tabs.query({active: true, currentWindow: true}).then(([tab]) => {
       if (tab) browser.browserAction.setBadgeText({text: "", tabId: tab.id});
     });
@@ -117,6 +148,51 @@ browser.runtime.onMessage.addListener((msg) => {
   }
 });
 
+// === Keyboard Shortcut ===
+browser.commands.onCommand.addListener(async (command) => {
+  if (command !== "fill_credentials") return;
+  if (!sessionSecret || !sessionEmail) {
+    try { browser.browserAction.openPopup(); } catch {}
+    return;
+  }
+  const [tab] = await browser.tabs.query({active: true, currentWindow: true});
+  if (!tab?.url) return;
+  let host;
+  try { host = new URL(tab.url).hostname.replace(/^www\./, "").toLowerCase(); } catch { return; }
+  if (!host) return;
+
+  const data = await browser.storage.local.get("services");
+  if (!data.services || data.services.version !== 2) {
+    try { browser.browserAction.openPopup(); } catch {}
+    return;
+  }
+  const enc = new TextEncoder();
+  const strengthened = await strengthenSecret(sessionSecret, sessionEmail);
+  const storageKey = await hmacSHA256(strengthened, enc.encode(sessionEmail.toLowerCase() + ":keygrain-local-storage"));
+  try {
+    const iv = base64ToArrayBuffer(data.services.iv);
+    const ciphertext = base64ToArrayBuffer(data.services.ciphertext);
+    const aad = enc.encode(sessionEmail.toLowerCase());
+    const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["decrypt"]);
+    const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
+    const services = JSON.parse(new TextDecoder().decode(decrypted)).services || [];
+    const matches = services.filter(s => {
+      const name = s.name.toLowerCase();
+      return name.includes(host) || host.includes(name);
+    });
+    if (matches.length !== 1) {
+      try { browser.browserAction.openPopup(); } catch {}
+      return;
+    }
+    const match = matches[0];
+    const password = await derivePassword(sessionSecret, match.email, {site: match.site || match.name, length: match.length || 20, symbols: match.symbols || "!@#$%&*-_=+?", counter: match.counter || 1});
+    await browser.tabs.executeScript(tab.id, {file: "content.js"});
+    browser.tabs.sendMessage(tab.id, {action: "fill", password, email: match.email});
+  } catch {
+    try { browser.browserAction.openPopup(); } catch {}
+  }
+});
+
 // === Context Menu ===
 browser.runtime.onInstalled.addListener(() => {
   browser.contextMenus.create({id: "keygrain-fill", title: "Fill with Keygrain", contexts: ["editable"]});
@@ -135,7 +211,8 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   const data = await browser.storage.local.get("services");
   if (!data.services || data.services.version !== 2) return;
   const enc = new TextEncoder();
-  const storageKey = await hmacSHA256(enc.encode(sessionSecret), enc.encode(sessionEmail.toLowerCase() + ":keygrain-local-storage"));
+  const strengthened = await strengthenSecret(sessionSecret, sessionEmail);
+  const storageKey = await hmacSHA256(strengthened, enc.encode(sessionEmail.toLowerCase() + ":keygrain-local-storage"));
   try {
     const iv = base64ToArrayBuffer(data.services.iv);
     const ciphertext = base64ToArrayBuffer(data.services.ciphertext);
@@ -148,8 +225,8 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
       return name.includes(host) || host.includes(name);
     });
     if (!match) return;
-    const password = await derivePassword(sessionSecret, match.email, match.length || 20, match.symbols || "!@#$%&*-_=+?", match.salt || "");
+    const password = await derivePassword(sessionSecret, match.email, {site: match.site || match.name, length: match.length || 20, symbols: match.symbols || "!@#$%&*-_=+?", counter: match.counter || 1});
     await browser.tabs.executeScript(tab.id, {file: "content.js"});
-    browser.tabs.sendMessage(tab.id, {action: "fillContextMenu", password});
+    browser.tabs.sendMessage(tab.id, {action: "fillContextMenu", password, email: match.email});
   } catch {}
 });

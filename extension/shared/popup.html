@@ -8,33 +8,67 @@
 <body>
   <!-- Lock Screen -->
   <div id="lock-screen">
-    <h1>🔑 Keygrain</h1>
+    <h1><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 0a5.5 5.5 0 0 0-4.88 8.01L0 13.63V16h2.38l.74-.74v-1.51h1.51l.74-.74v-1.51h1.51l1.11-1.11A5.5 5.5 0 1 0 10.5 0zm1.25 4a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5z"/></svg> Keygrain</h1>
+    <p class="lock-explanation">Keygrain derives unique passwords from your secret — nothing is stored.</p>
     <label for="email">Email</label>
     <input type="email" id="email" autocomplete="email" required>
     <label for="secret">Master Secret</label>
     <input type="password" id="secret" autocomplete="off" required>
     <div id="fingerprint" aria-label="Secret fingerprint"></div>
+    <p class="fingerprint-explanation">Visual fingerprint — same colors confirm same secret.</p>
+    <div id="confirm-secret-group" class="hidden">
+      <label for="confirm-secret">Confirm Master Secret</label>
+      <input type="password" id="confirm-secret" autocomplete="off" required>
+      <div id="confirm-fingerprint" aria-label="Confirm secret fingerprint"></div>
+    </div>
     <button id="unlock-btn" disabled>Unlock</button>
+    <a href="#" id="try-demo" class="demo-link">Try Demo</a>
+  </div>
+
+  <!-- PIN Unlock Screen -->
+  <div id="pin-screen" class="hidden">
+    <h1><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 0a5.5 5.5 0 0 0-4.88 8.01L0 13.63V16h2.38l.74-.74v-1.51h1.51l.74-.74v-1.51h1.51l1.11-1.11A5.5 5.5 0 1 0 10.5 0zm1.25 4a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5z"/></svg> Keygrain</h1>
+    <label for="pin-input">Enter PIN</label>
+    <input type="password" id="pin-input" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="6" autocomplete="off" required>
+    <button id="pin-unlock-btn" disabled>Unlock</button>
+    <p id="pin-error" class="pin-error hidden" aria-live="polite"></p>
+    <a href="#" id="pin-use-secret" class="pin-link">Use master secret instead</a>
   </div>
 
   <!-- Main Screen -->
   <div id="main-screen" class="hidden">
+    <div id="demo-banner" class="hidden" role="status" aria-live="polite">Demo mode — using example data. Your real passwords are not affected.</div>
     <div class="header">
-      <h1>🔑 Keygrain</h1>
+      <h1><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 0a5.5 5.5 0 0 0-4.88 8.01L0 13.63V16h2.38l.74-.74v-1.51h1.51l.74-.74v-1.51h1.51l1.11-1.11A5.5 5.5 0 1 0 10.5 0zm1.25 4a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5z"/></svg> Keygrain</h1>
       <div class="header-actions">
-        <button id="menu-btn" title="Menu">☰</button>
-        <button id="settings-btn" title="Settings">⚙</button>
-        <button id="lock-btn" title="Lock">🔒</button>
+        <button id="menu-btn" title="Menu" aria-label="Menu" aria-haspopup="true" aria-expanded="false" aria-controls="menu-dropdown"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h14v1.5H1zm0 4.25h14v1.5H1zm0 4.25h14v1.5H1z"/></svg></button>
+        <button id="settings-btn" title="Settings" aria-label="Settings"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6.32-1.9l-1.09-.63a5.4 5.4 0 0 0 0-1.94l1.09-.63a.5.5 0 0 0 .18-.68l-1-1.73a.5.5 0 0 0-.68-.18l-1.09.63a5.3 5.3 0 0 0-1.68-.97V1.5a.5.5 0 0 0-.5-.5h-2a.5.5 0 0 0-.5.5v1.26a5.3 5.3 0 0 0-1.68.97L4.28 3.1a.5.5 0 0 0-.68.18l-1 1.73a.5.5 0 0 0 .18.68l1.09.63a5.4 5.4 0 0 0 0 1.94l-1.09.63a.5.5 0 0 0-.18.68l1 1.73a.5.5 0 0 0 .68.18l1.09-.63c.5.42 1.07.74 1.68.97v1.26a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .5-.5v-1.26a5.3 5.3 0 0 0 1.68-.97l1.09.63a.5.5 0 0 0 .68-.18l1-1.73a.5.5 0 0 0-.18-.68z"/></svg></button>
+        <button id="lock-btn" title="Lock" aria-label="Lock"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M12 7V5a4 4 0 0 0-8 0v2a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zM8 12a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM5.5 7V5a2.5 2.5 0 0 1 5 0v2h-5z"/></svg></button>
       </div>
     </div>
 
-    <div id="menu-dropdown" class="hidden">
-      <button id="backup-btn">Backup to server</button>
-      <button id="restore-btn">Restore from server</button>
+    <div id="autolock-warning" class="hidden" role="alert" aria-live="assertive">
+      <span>Locking in 60s</span>
+      <button id="autolock-extend">Extend</button>
+    </div>
+
+    <!-- Set PIN Banner -->
+    <div id="pin-setup-banner" class="hidden" role="region" aria-label="Set up PIN">
+      <p>Set a PIN for quick unlock?</p>
+      <input type="password" id="pin-set-input" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="6" placeholder="4-6 digit PIN" autocomplete="off">
+      <div class="pin-setup-actions">
+        <button id="pin-skip-btn">Skip</button>
+        <button id="pin-save-btn">Set PIN</button>
+      </div>
+    </div>
+
+    <div id="menu-dropdown" class="hidden" role="menu">
+      <button id="export-btn" role="menuitem">Export to file</button>
+      <button id="import-btn" role="menuitem">Import from file</button>
+      <button id="migrate-btn" role="menuitem">Migrate from another manager</button>
       <hr>
-      <button id="export-btn">Export to file</button>
-      <button id="import-btn">Import from file</button>
-      <button id="migrate-btn">Migrate from another manager</button>
+      <button id="help-btn" role="menuitem">Help</button>
+      <button id="wallet-btn" role="menuitem">Wallet</button>
     </div>
 
     <input type="text" id="search" placeholder="Search services..." autocomplete="off">
@@ -47,26 +81,53 @@
 
     <div id="service-list"></div>
 
-    <button id="add-btn" title="Add service">＋</button>
+    <div id="sync-indicator" class="hidden">
+      <span id="sync-time"></span>
+      <span id="sync-error" class="hidden" title="Click for details"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> Sync failed</span>
+    </div>
+
+    <button id="add-btn" title="Add service" aria-label="Add service"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm3.5 7.75h-2.75v2.75h-1.5V8.75H4.5v-1.5h2.75V4.5h1.5v2.75h2.75v1.5z"/></svg> Add service</button>
   </div>
 
   <!-- Add Service Dialog -->
-  <div id="add-dialog" class="dialog hidden">
-    <h2>Add Service</h2>
+  <div id="add-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="add-dialog-title">
+    <h2 id="add-dialog-title">Add Service</h2>
     <label for="add-name">Service name</label>
     <input type="text" id="add-name" required>
     <div id="add-rule-indicator" class="hidden" aria-live="polite"></div>
+    <label for="add-site">Site</label>
+    <input type="text" id="add-site" required>
     <label for="add-email">Email</label>
     <input type="email" id="add-email" required>
     <details id="add-options">
-      <summary>⚙️ Options</summary>
+      <summary><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6.32-1.9l-1.09-.63a5.4 5.4 0 0 0 0-1.94l1.09-.63a.5.5 0 0 0 .18-.68l-1-1.73a.5.5 0 0 0-.68-.18l-1.09.63a5.3 5.3 0 0 0-1.68-.97V1.5a.5.5 0 0 0-.5-.5h-2a.5.5 0 0 0-.5.5v1.26a5.3 5.3 0 0 0-1.68.97L4.28 3.1a.5.5 0 0 0-.68.18l-1 1.73a.5.5 0 0 0 .18.68l1.09.63a5.4 5.4 0 0 0 0 1.94l-1.09.63a.5.5 0 0 0-.18.68l1 1.73a.5.5 0 0 0 .68.18l1.09-.63c.5.42 1.07.74 1.68.97v1.26a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .5-.5v-1.26a5.3 5.3 0 0 0 1.68-.97l1.09.63a.5.5 0 0 0 .68-.18l1-1.73a.5.5 0 0 0-.18-.68z"/></svg> Options</summary>
       <label for="add-length">Length</label>
       <input type="number" id="add-length" min="8" value="20">
       <label for="add-symbols">Symbols</label>
       <input type="text" id="add-symbols" value="!@#$%&*-_=+?">
-      <label for="add-salt">Salt</label>
-      <input type="text" id="add-salt">
-      <div id="add-pw-warning" class="hidden" aria-live="polite">⚠️ Changing these options will change your generated password.</div>
+      <div id="add-pw-warning" class="hidden" aria-live="polite"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> Changing these options will change your generated password.</div>
+    </details>
+    <div id="rotate-section" class="hidden">
+      <button id="rotate-btn" type="button"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13.65 2.35A7.96 7.96 0 0 0 8 0C3.58 0 0 3.58 0 8s3.58 8 8 8a7.99 7.99 0 0 0 7.56-5.34h-2.03A6 6 0 1 1 8 2a5.98 5.98 0 0 1 4.24 1.76L9 7h7V0l-2.35 2.35z"/></svg> Rotate password</button>
+      <button id="mark-rotated-btn" type="button" class="hidden"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.35 6.35l-4 4a.5.5 0 0 1-.7 0l-2-2a.5.5 0 1 1 .7-.7L7 9.29l3.65-3.64a.5.5 0 1 1 .7.7z"/></svg> Mark as rotated</button>
+    </div>
+    <details id="add-totp-section">
+      <summary>🔑 TOTP (Authenticator)</summary>
+      <label for="add-totp-mode">Mode</label>
+      <select id="add-totp-mode">
+        <option value="">None</option>
+        <option value="stored">Stored (paste seed/URI)</option>
+        <option value="derived">Derived (from master secret)</option>
+      </select>
+      <div id="add-totp-seed-group">
+        <label for="add-totp-seed">Seed / otpauth:// URI</label>
+        <input type="text" id="add-totp-seed" placeholder="Base32, hex, or otpauth:// URI">
+      </div>
+    </details>
+    <details id="add-ssh-section">
+      <summary>🔐 SSH Key</summary>
+      <label for="add-ssh-keyname">Key name</label>
+      <input type="text" id="add-ssh-keyname" placeholder="e.g. github, work-servers">
     </details>
     <div class="dialog-actions">
       <button id="add-cancel">Cancel</button>
@@ -75,8 +136,8 @@
   </div>
 
   <!-- Delete Confirmation Dialog -->
-  <div id="delete-dialog" class="dialog hidden">
-    <h2>Delete <span id="delete-service-name"></span>?</h2>
+  <div id="delete-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
+    <h2 id="delete-dialog-title">Delete <span id="delete-service-name"></span>?</h2>
     <p>This cannot be undone.</p>
     <div class="dialog-actions">
       <button id="delete-cancel">Cancel</button>
@@ -85,8 +146,8 @@
   </div>
 
   <!-- Settings Panel -->
-  <div id="settings-panel" class="dialog hidden">
-    <h2>Settings</h2>
+  <div id="settings-panel" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title">
+    <h2 id="settings-dialog-title">Settings</h2>
     <label for="set-lock-timeout">Auto-lock timeout (minutes)</label>
     <input type="number" id="set-lock-timeout" min="1" value="15">
     <label for="set-length">Default password length</label>
@@ -103,7 +164,11 @@
 
   <div id="status" aria-live="polite"></div>
 
+  <script src="lib/hash-wasm-argon2.js"></script>
+  <script src="lib/tweetnacl.js"></script>
   <script src="keygrain.js"></script>
+  <script src="totp.js"></script>
+  <script src="ssh.js"></script>
   <script src="sync.js"></script>
   <script src="popup.js"></script>
 </body>

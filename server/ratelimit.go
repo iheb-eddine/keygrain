@@ -153,7 +153,7 @@ func (rl *rateLimitMiddleware) extractIP(r *http.Request) string {
 }
 
 func extractLookupID(path string) string {
-	const prefix = "/api/backup/"
+	const prefix = "/api/sync/"
 	if !strings.HasPrefix(path, prefix) {
 		return ""
 	}

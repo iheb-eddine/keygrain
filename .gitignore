@@ -8,3 +8,4 @@ build/
 local.properties
 *.apk
 .env
+server/tools/rules-signing.key

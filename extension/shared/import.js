@@ -42,6 +42,7 @@
       const decrypted = await decryptBlob(encKey, blob);
       const data = JSON.parse(new TextDecoder().decode(decrypted));
       parsedServices = data.services || data;
+      parsedServices = parsedServices.map(s => ({...s, site: normalizeSite(s.site || s.name)}));
       confirmMsg.textContent = "Replace local services with " + parsedServices.length + " from file?";
       confirmSection.style.display = "block";
       showStatus("");
@@ -58,7 +59,8 @@
     if (!parsedServices) return;
     // Encrypt with local storage key before saving
     const enc = new TextEncoder();
-    const storageKey = await hmacSHA256(enc.encode(secret), enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+    const strengthened = await strengthenSecret(secret, email);
+    const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
     try {
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const aad = enc.encode(email.toLowerCase());

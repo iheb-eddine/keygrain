@@ -77,4 +77,7 @@ dependencies {
 
     // Testing
     testImplementation("junit:junit:4.13.2")
+
+    // Argon2id (BouncyCastle)
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
 }

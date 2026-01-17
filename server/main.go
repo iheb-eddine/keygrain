@@ -24,12 +24,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	backup := newBackupServer(dataDir)
+	syncSrv := newSyncServer(dataDir)
 	rl := newRateLimitMiddleware(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/api/backup/", rl.Wrap(backup.backupHandler))
+	mux.HandleFunc("/api/sync/", rl.Wrap(syncSrv.syncHandler))
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 
 	log.Printf("keygrain server listening on :%s", port)
