@@ -16,7 +16,8 @@ data class ServiceEntry(
     val id: String? = null,
     val updatedAt: Long = System.currentTimeMillis(),
     val totp: JSONObject? = null,
-    val ssh: JSONObject? = null
+    val ssh: JSONObject? = null,
+    val frecency: Double = 0.0
 ) {
     /** Serialize all content fields (everything except sync metadata id/updated_at). */
     fun toJsonContent(): JSONObject = JSONObject().apply {
@@ -28,6 +29,7 @@ data class ServiceEntry(
         put("counter", counter)
         if (totp != null) put("totp", totp)
         if (ssh != null) put("ssh", ssh)
+        if (frecency != 0.0) put("frecency", frecency)
     }
 }
 
@@ -69,7 +71,8 @@ class ServiceManager(context: Context) {
                     id = if (obj.has("id") && !obj.isNull("id")) obj.getString("id") else null,
                     updatedAt = obj.optLong("updated_at", System.currentTimeMillis()),
                     totp = if (obj.has("totp") && !obj.isNull("totp")) obj.getJSONObject("totp") else null,
-                    ssh = if (obj.has("ssh") && !obj.isNull("ssh")) obj.getJSONObject("ssh") else null
+                    ssh = if (obj.has("ssh") && !obj.isNull("ssh")) obj.getJSONObject("ssh") else null,
+                    frecency = obj.optDouble("frecency", 0.0)
                 )
             } catch (_: Exception) {
                 null
@@ -100,6 +103,14 @@ class ServiceManager(context: Context) {
         save(services.map { it.copy(site = normalizeSite(it.site)) })
     }
 
+    fun updateFrecency(name: String) {
+        val services = getServices().map {
+            if (it.name == name) it.copy(frecency = it.frecency * 0.95 + 1)
+            else it
+        }
+        save(services)
+    }
+
     fun exportJson(): String {
         val arr = JSONArray()
         getServices().forEach { s ->
@@ -114,6 +125,7 @@ class ServiceManager(context: Context) {
                 put("updated_at", s.updatedAt)
                 if (s.totp != null) put("totp", s.totp)
                 if (s.ssh != null) put("ssh", s.ssh)
+                if (s.frecency != 0.0) put("frecency", s.frecency)
             })
         }
         return JSONObject().apply {
@@ -145,7 +157,8 @@ class ServiceManager(context: Context) {
                     id = if (obj.has("id") && !obj.isNull("id")) obj.getString("id") else null,
                     updatedAt = obj.optLong("updated_at", System.currentTimeMillis()),
                     totp = if (obj.has("totp") && !obj.isNull("totp")) obj.getJSONObject("totp") else null,
-                    ssh = if (obj.has("ssh") && !obj.isNull("ssh")) obj.getJSONObject("ssh") else null
+                    ssh = if (obj.has("ssh") && !obj.isNull("ssh")) obj.getJSONObject("ssh") else null,
+                    frecency = obj.optDouble("frecency", 0.0)
                 )
             } catch (_: Exception) {
                 null
@@ -167,6 +180,7 @@ class ServiceManager(context: Context) {
                 put("updated_at", s.updatedAt)
                 if (s.totp != null) put("totp", s.totp)
                 if (s.ssh != null) put("ssh", s.ssh)
+                if (s.frecency != 0.0) put("frecency", s.frecency)
             })
         }
         prefs.edit().putString("services", arr.toString()).apply()

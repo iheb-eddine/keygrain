@@ -119,3 +119,11 @@ button {
   color: var(--text-secondary);
 }
 .error { color: var(--error); margin-top: 8px; }
+
+/* Wallet list */
+#wallet-list-section { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px; }
+#wallet-list-section h2 { font-size: 1rem; margin-bottom: 8px; }
+.wallet-list-empty { font-size: 0.85rem; color: var(--text-secondary); }
+.wallet-list-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.wallet-list-table th, .wallet-list-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+.wallet-list-table th { font-weight: 600; color: var(--text-secondary); }

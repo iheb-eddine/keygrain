@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -27,10 +28,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.badrani.keygrain.data.Keygrain
@@ -63,6 +66,7 @@ fun MainScreen() {
     }
     var unlocked by remember { mutableStateOf(false) }
     var masterSecret by remember { mutableStateOf("") }
+    var isDemoMode by remember { mutableStateOf(false) }
 
     when {
         !onboardingCompleted && !secretManager.hasSecret() -> {
@@ -75,6 +79,7 @@ fun MainScreen() {
                     if (secret != null) {
                         masterSecret = secret
                         unlocked = true
+                        SecretManager.sessionActive = true
                     }
                 }
             )
@@ -86,6 +91,12 @@ fun MainScreen() {
                 onUnlocked = { secret ->
                     masterSecret = secret
                     unlocked = true
+                    SecretManager.sessionActive = true
+                },
+                onDemo = {
+                    isDemoMode = true
+                    masterSecret = "demo-secret-keygrain"
+                    unlocked = true
                 }
             )
         }
@@ -93,9 +104,12 @@ fun MainScreen() {
             ServiceListScreen(
                 masterSecret = masterSecret,
                 serviceManager = serviceManager,
+                isDemoMode = isDemoMode,
                 onLock = {
                     unlocked = false
                     masterSecret = ""
+                    isDemoMode = false
+                    SecretManager.sessionActive = false
                     Keygrain.clearStrengthenCache()
                 }
             )
@@ -108,7 +122,8 @@ fun MainScreen() {
 private fun UnlockScreen(
     secretManager: SecretManager,
     showSubtitle: Boolean = false,
-    onUnlocked: (String) -> Unit
+    onUnlocked: (String) -> Unit,
+    onDemo: () -> Unit
 ) {
     val context = LocalContext.current
     var secret by remember { mutableStateOf("") }
@@ -188,6 +203,22 @@ private fun UnlockScreen(
                     }
                 }
             )
+            if (secret.isNotEmpty()) {
+                val bits = Keygrain.estimateEntropy(secret)
+                val (label, _) = Keygrain.entropyLabel(bits)
+                val color = when {
+                    bits >= 80 -> MaterialTheme.colorScheme.primary
+                    bits >= 60 -> MaterialTheme.colorScheme.tertiary
+                    bits >= 40 -> MaterialTheme.colorScheme.secondary
+                    else -> MaterialTheme.colorScheme.error
+                }
+                Text(
+                    "$label (${bits.toInt()} bits)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = color,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
             if (fingerprintIndices.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.CenterHorizontally)) {
@@ -209,6 +240,10 @@ private fun UnlockScreen(
             ) {
                 Text("Unlock")
             }
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = onDemo) {
+                Text("Try Demo")
+            }
         }
     }
 }
@@ -218,17 +253,26 @@ private fun UnlockScreen(
 private fun ServiceListScreen(
     masterSecret: String,
     serviceManager: ServiceManager,
+    isDemoMode: Boolean = false,
     onLock: () -> Unit
 ) {
     val context = LocalContext.current
-    var services by remember { mutableStateOf(serviceManager.getServices()) }
+    val demoServices = remember { listOf(
+        ServiceEntry(name = "GitHub", site = "github.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 1),
+        ServiceEntry(name = "Google", site = "google.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 2),
+        ServiceEntry(name = "Netflix", site = "netflix.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 3),
+        ServiceEntry(name = "Amazon", site = "amazon.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 4),
+        ServiceEntry(name = "Twitter", site = "twitter.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 5),
+    ) }
+    var services by remember { mutableStateOf(if (isDemoMode) demoServices else serviceManager.getServices()) }
     var searchQuery by remember { mutableStateOf("") }
     val filteredServices = remember(services, searchQuery) {
-        if (searchQuery.isBlank()) services
-        else services.filter {
-            it.name.contains(searchQuery, ignoreCase = true) ||
-                it.email.contains(searchQuery, ignoreCase = true)
-        }
+        if (searchQuery.isBlank()) services.sortedByDescending { it.frecency }
+        else services.mapNotNull { svc ->
+            val score = maxOf(fuzzyScore(searchQuery, svc.name), fuzzyScore(searchQuery, svc.email))
+            if (score > 0) Pair(svc, score) else null
+        }.sortedByDescending { (svc, score) -> score * (1 + svc.frecency) }
+            .map { it.first }
     }
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
@@ -242,6 +286,73 @@ private fun ServiceListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val syncManager = remember { SyncManager() }
+
+    // Auto-sync state
+    var syncGeneration by remember { mutableIntStateOf(0) }
+    var skipNextDebounce by remember { mutableStateOf(false) }
+    var lastSyncTime by remember { mutableLongStateOf(0L) }
+
+    fun getMostCommonEmail(): String =
+        services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: ""
+
+    fun performAutoSync() {
+        if (isDemoMode || isSyncing) return
+        val email = getMostCommonEmail()
+        if (email.isBlank()) return
+        isSyncing = true
+        val gen = syncGeneration
+        scope.launch {
+            try {
+                val secretBytes = masterSecret.toByteArray()
+                try {
+                    when (val r = syncManager.sync(secretBytes, email, serviceManager, context)) {
+                        is SyncResult.Success -> {
+                            if (syncGeneration != gen) return@launch
+                            skipNextDebounce = true
+                            services = serviceManager.getServices()
+                            lastSyncTime = System.currentTimeMillis()
+                        }
+                        else -> { /* silent failure for auto-sync */ }
+                    }
+                } finally { secretBytes.fill(0) }
+            } catch (_: Exception) { }
+            finally { isSyncing = false }
+        }
+    }
+
+    fun triggerDebouncedSync() {
+        if (skipNextDebounce) { skipNextDebounce = false; return }
+        syncGeneration++
+        val gen = syncGeneration
+        scope.launch {
+            delay(5000)
+            if (syncGeneration == gen) performAutoSync()
+        }
+    }
+
+    // Auto-sync on unlock (initial load)
+    LaunchedEffect(Unit) { performAutoSync() }
+
+    // Auto-lock timer (15 min)
+    var lockSecondsRemaining by remember { mutableIntStateOf(15 * 60) }
+    var showLockWarning by remember { mutableStateOf(false) }
+    val lockTimerReset = remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(lockTimerReset.longValue) {
+        lockSecondsRemaining = 15 * 60
+        showLockWarning = false
+        while (lockSecondsRemaining > 0) {
+            delay(1000)
+            lockSecondsRemaining--
+            showLockWarning = lockSecondsRemaining <= 60
+        }
+        onLock()
+    }
+
+    // Reset auto-lock on keyboard input (searchQuery changes)
+    LaunchedEffect(searchQuery) {
+        lockTimerReset.longValue = System.currentTimeMillis()
+    }
 
     // Export/Import state
     var fileAction by remember { mutableStateOf<String?>(null) } // "export" or "import"
@@ -381,56 +492,120 @@ private fun ServiceListScreen(
             }
         }
     ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                    lockTimerReset.longValue = System.currentTimeMillis()
+                }
+            }
+        }) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+        // Auto-lock warning banner
+        AnimatedVisibility(visible = showLockWarning) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Locking in ${lockSecondsRemaining}s",
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    TextButton(onClick = { lockTimerReset.longValue = System.currentTimeMillis() }) {
+                        Text("Extend")
+                    }
+                }
+            }
+        }
+        // Demo mode banner
+        if (isDemoMode) {
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Demo Mode — nothing is saved",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
         if (services.isEmpty()) {
             Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
                 Text("No services yet. Tap + to add one.")
             }
         } else {
-            Column(modifier = Modifier.padding(padding)) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    placeholder = { Text("Search services...") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    singleLine = true,
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = "Clear")
-                            }
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                placeholder = { Text("Search services...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                singleLine = true,
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear")
                         }
                     }
+                }
+            )
+            if (lastSyncTime > 0L) {
+                Text(
+                    text = "Last synced: ${formatRelativeTime(lastSyncTime)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
-                if (filteredServices.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("No matching services")
-                    }
-                } else {
-                    LazyColumn(
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(filteredServices, key = { it.name }) { service ->
-                            ServiceCard(
-                                service = service,
-                                masterSecret = masterSecret,
-                                onDelete = { showDeleteDialog = service.name },
-                                onEdit = { showEditDialog = service },
-                                context = context
-                            )
-                        }
+            }
+            if (filteredServices.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No matching services")
+                }
+            } else {
+                LazyColumn(
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filteredServices, key = { it.name }) { service ->
+                        ServiceCard(
+                            service = service,
+                            masterSecret = masterSecret,
+                            onDelete = { showDeleteDialog = service.name },
+                            onEdit = { showEditDialog = service },
+                            onCopy = {
+                                if (isDemoMode) {
+                                    services = services.map {
+                                        if (it.name == service.name) it.copy(frecency = it.frecency * 0.95 + 1)
+                                        else it
+                                    }
+                                } else {
+                                    serviceManager.updateFrecency(service.name)
+                                    services = serviceManager.getServices()
+                                    triggerDebouncedSync()
+                                }
+                            },
+                            context = context
+                        )
                     }
                 }
             }
         }
-    }
+        } // Column
+        } // Box
+    } // Scaffold
 
     // Sync email prompt dialog
     if (showSyncEmailDialog) {
@@ -460,7 +635,9 @@ private fun ServiceListScreen(
                             val msg = try {
                                 when (val r = syncManager.sync(secretBytes, syncEmail, serviceManager, context)) {
                                     is SyncResult.Success -> {
+                                        skipNextDebounce = true
                                         services = serviceManager.getServices()
+                                        lastSyncTime = System.currentTimeMillis()
                                         UserMessages.syncSuccess(r.services.size)
                                     }
                                     is SyncResult.AuthError -> UserMessages.AUTH_ERROR
@@ -568,8 +745,13 @@ private fun ServiceListScreen(
         AddServiceDialog(
             onDismiss = { showAddDialog = false },
             onAdd = { entry ->
-                serviceManager.addService(entry)
-                services = serviceManager.getServices()
+                if (isDemoMode) {
+                    services = services + entry
+                } else {
+                    serviceManager.addService(entry)
+                    services = serviceManager.getServices()
+                    triggerDebouncedSync()
+                }
                 showAddDialog = false
             }
         )
@@ -579,8 +761,13 @@ private fun ServiceListScreen(
         AddServiceDialog(
             onDismiss = { showEditDialog = null },
             onAdd = { entry ->
-                serviceManager.updateService(editEntry.name, entry)
-                services = serviceManager.getServices()
+                if (isDemoMode) {
+                    services = services.map { if (it.name == editEntry.name) entry else it }
+                } else {
+                    serviceManager.updateService(editEntry.name, entry)
+                    services = serviceManager.getServices()
+                    triggerDebouncedSync()
+                }
                 showEditDialog = null
             },
             initialEntry = editEntry
@@ -593,8 +780,13 @@ private fun ServiceListScreen(
             title = { Text("Delete $name?") },
             confirmButton = {
                 TextButton(onClick = {
-                    serviceManager.deleteService(name)
-                    services = serviceManager.getServices()
+                    if (isDemoMode) {
+                        services = services.filter { it.name != name }
+                    } else {
+                        serviceManager.deleteService(name)
+                        services = serviceManager.getServices()
+                        triggerDebouncedSync()
+                    }
                     showDeleteDialog = null
                 }) { Text("Delete") }
             },
@@ -611,8 +803,10 @@ private fun ServiceCard(
     masterSecret: String,
     onDelete: () -> Unit,
     onEdit: () -> Unit,
+    onCopy: () -> Unit,
     context: Context
 ) {
+    val scope = rememberCoroutineScope()
     val password = remember(service, masterSecret) {
         Keygrain.derivePassword(
             secret = masterSecret.toByteArray(),
@@ -624,6 +818,17 @@ private fun ServiceCard(
         )
     }
     var visible by remember { mutableStateOf(false) }
+
+    fun copyAndClear(label: String, text: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            scope.launch {
+                delay(30_000)
+                clipboard.clearPrimaryClip()
+            }
+        }
+    }
 
     // TOTP state
     var totpCode by remember { mutableStateOf("") }
@@ -655,7 +860,11 @@ private fun ServiceCard(
         }
     }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -684,9 +893,9 @@ private fun ServiceCard(
                     )
                 }
                 IconButton(onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("password", password))
+                    copyAndClear("password", password)
                     Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                    onCopy()
                 }) {
                     Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
                 }
@@ -711,9 +920,9 @@ private fun ServiceCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     IconButton(onClick = {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("totp", totpCode))
+                        copyAndClear("totp", totpCode)
                         Toast.makeText(context, "TOTP copied", Toast.LENGTH_SHORT).show()
+                        onCopy()
                     }) {
                         Icon(Icons.Default.ContentCopy, contentDescription = "Copy TOTP")
                     }
@@ -753,8 +962,7 @@ private fun ServiceCard(
                                 val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
                                 val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
                                 val line = SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("ssh-pubkey", line))
+                                copyAndClear("ssh-pubkey", line)
                                 Toast.makeText(context, "SSH public key copied", Toast.LENGTH_SHORT).show()
                             } catch (e: Exception) {
                                 Toast.makeText(context, "SSH error: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -803,6 +1011,13 @@ private fun AddServiceDialog(
 
     // SSH state
     var sshKeyName by remember { mutableStateOf(initialEntry?.ssh?.optString("key_name", "") ?: "") }
+
+    // QR Scanner state
+    var showQrScanner by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) showQrScanner = true }
 
     // Auto-fill site from name if it looks like a domain
     LaunchedEffect(name) {
@@ -903,6 +1118,20 @@ private fun AddServiceDialog(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth()
                             )
+                            OutlinedButton(
+                                onClick = {
+                                    if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        showQrScanner = true
+                                    } else {
+                                        cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Scan QR")
+                            }
                         }
                         // SSH section
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
@@ -973,12 +1202,114 @@ private fun AddServiceDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+
+    if (showQrScanner) {
+        QrScannerDialog(
+            onResult = { uri ->
+                showQrScanner = false
+                if (uri != null) totpSeed = uri
+            },
+            onDismiss = { showQrScanner = false }
+        )
+    }
 }
 
+@Composable
+private fun QrScannerDialog(onResult: (String?) -> Unit, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    var detected by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Scan QR Code") },
+        text = {
+            AndroidView(
+                factory = { ctx ->
+                    val previewView = androidx.camera.view.PreviewView(ctx)
+                    val cameraProviderFuture = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(ctx)
+                    cameraProviderFuture.addListener({
+                        val cameraProvider = cameraProviderFuture.get()
+                        val preview = androidx.camera.core.Preview.Builder().build().also {
+                            it.setSurfaceProvider(previewView.surfaceProvider)
+                        }
+                        val analyzer = androidx.camera.core.ImageAnalysis.Builder()
+                            .setBackpressureStrategy(androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .build()
+                        analyzer.setAnalyzer(ContextCompat.getMainExecutor(ctx)) { imageProxy ->
+                            @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
+                            val mediaImage = imageProxy.image
+                            if (mediaImage != null && !detected) {
+                                val inputImage = com.google.mlkit.vision.common.InputImage.fromMediaImage(
+                                    mediaImage, imageProxy.imageInfo.rotationDegrees
+                                )
+                                com.google.mlkit.vision.barcode.BarcodeScanning.getClient()
+                                    .process(inputImage)
+                                    .addOnSuccessListener { barcodes ->
+                                        for (barcode in barcodes) {
+                                            val value = barcode.rawValue
+                                            if (value != null && value.startsWith("otpauth://")) {
+                                                detected = true
+                                                onResult(value)
+                                                return@addOnSuccessListener
+                                            }
+                                        }
+                                    }
+                                    .addOnCompleteListener { imageProxy.close() }
+                            } else {
+                                imageProxy.close()
+                            }
+                        }
+                        try {
+                            cameraProvider.unbindAll()
+                            cameraProvider.bindToLifecycle(
+                                lifecycleOwner,
+                                androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA,
+                                preview, analyzer
+                            )
+                        } catch (_: Exception) {}
+                    }, ContextCompat.getMainExecutor(ctx))
+                    previewView
+                },
+                modifier = Modifier.fillMaxWidth().height(300.dp)
+            )
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
 private fun canUseBiometric(context: Context): Boolean {
     return BiometricManager.from(context)
         .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
         BiometricManager.BIOMETRIC_SUCCESS
+}
+
+private fun fuzzyScore(query: String, text: String): Int {
+    val q = query.lowercase()
+    val t = text.lowercase()
+    var qi = 0; var score = 0; var consecutive = 0; var prevIdx = -2
+    for (ti in t.indices) {
+        if (qi >= q.length) break
+        if (t[ti] == q[qi]) {
+            score++
+            if (ti == prevIdx + 1) { consecutive++; score += consecutive }
+            else consecutive = 0
+            if (ti == 0) score += 2
+            if (ti > 0 && t[ti - 1].let { it == ' ' || it == '-' || it == '_' || it == '.' }) score += 2
+            prevIdx = ti
+            qi++
+        }
+    }
+    return if (qi == q.length) score else 0
+}
+
+private fun formatRelativeTime(ts: Long): String {
+    val diff = (System.currentTimeMillis() - ts) / 1000
+    return when {
+        diff < 60 -> "just now"
+        diff < 3600 -> "${diff / 60}m ago"
+        else -> "${diff / 3600}h ago"
+    }
 }
 
 private fun showBiometric(context: Context, onSuccess: () -> Unit) {

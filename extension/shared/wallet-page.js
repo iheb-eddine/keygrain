@@ -40,6 +40,39 @@
   const emailInput = document.getElementById("wallet-email");
   if (email) emailInput.value = email;
 
+  // Load and display saved wallets
+  async function loadWalletList() {
+    const listBody = document.getElementById("wallet-list-body");
+    const listTable = document.getElementById("wallet-list-table");
+    const listEmpty = document.getElementById("wallet-list-empty");
+    if (!email) return;
+    try {
+      const key = await deriveStorageKey(secret, email);
+      const data = await chrome.storage.local.get("services");
+      const stored = data.services;
+      if (stored && stored.version === 2) {
+        const iv = base64ToArrayBuffer(stored.iv);
+        const ciphertext = base64ToArrayBuffer(stored.ciphertext);
+        const aad = new TextEncoder().encode(email.toLowerCase());
+        const cryptoKey = await crypto.subtle.importKey("raw", key, {name: "AES-GCM"}, false, ["decrypt"]);
+        const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
+        const parsed = JSON.parse(new TextDecoder().decode(decrypted));
+        const walletsList = parsed.wallets || [];
+        if (walletsList.length > 0) {
+          listEmpty.classList.add("hidden");
+          listTable.classList.remove("hidden");
+          listBody.innerHTML = "";
+          walletsList.forEach(w => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = "<td>" + (w.wallet_name || "") + "</td><td>" + (w.chain || "") + "</td><td>" + (w.counter || 1) + "</td><td>" + (w.created_at ? new Date(w.created_at).toLocaleDateString() : "—") + "</td>";
+            listBody.appendChild(tr);
+          });
+        }
+      }
+    } catch { /* ignore decryption errors */ }
+  }
+  loadWalletList();
+
   const nameInput = document.getElementById("wallet-name");
   const chainSelect = document.getElementById("wallet-chain");
   const counterInput = document.getElementById("wallet-counter");

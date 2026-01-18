@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -269,6 +270,39 @@ fun WalletScreen(
 
                 OutlinedButton(onClick = { mnemonic = null }, modifier = Modifier.fillMaxWidth()) {
                     Text("Clear")
+                }
+            }
+
+            // Previously derived wallets list
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(12.dp))
+            Text("Previously Derived Wallets", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(8.dp))
+
+            val syncMgr = remember { SyncManager() }
+            val savedWallets = remember { mutableStateOf(emptyList<WalletEntry>()) }
+            LaunchedEffect(mnemonic) {
+                savedWallets.value = syncMgr.getWallets(context)
+            }
+
+            if (savedWallets.value.isEmpty()) {
+                Text("No wallets derived yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                savedWallets.value.forEach { w ->
+                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column {
+                                Text(w.walletName, style = MaterialTheme.typography.bodyMedium)
+                                Text("${w.chain} • counter ${w.counter}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text(
+                                w.createdAt.take(10),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
         }

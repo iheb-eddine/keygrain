@@ -5,9 +5,6 @@
   const emailInput = document.getElementById("email");
   const secretInput = document.getElementById("secret");
   const fpContainer = document.getElementById("fingerprint");
-  const confirmSecretGroup = document.getElementById("confirm-secret-group");
-  const confirmSecretInput = document.getElementById("confirm-secret");
-  const confirmFpContainer = document.getElementById("confirm-fingerprint");
   const unlockBtn = document.getElementById("unlock-btn");
   const lockBtn = document.getElementById("lock-btn");
   const menuBtn = document.getElementById("menu-btn");
@@ -81,12 +78,10 @@
   let editIndex = null;
   let clearTimer = null;
   let fpTimer = null;
-  let confirmFpTimer = null;
   let statusTimer = null;
   let currentHostname = null;
   let focusedIndex = -1;
   let settings = {autoLockMinutes: 15, defaultLength: 20, defaultSymbols: "!@#$%&*-_=+?", serverUrl: "https://keygrain.secbytech.com"};
-  let isFirstTime = false;
   let isDemoMode = false;
   let siteRules = null;
   const RULES_PUBLIC_KEY = "nFoyzMF0v9XyAiRzBd5DVvfPJsiNmuDPB9e5Lxld5I0=";
@@ -500,23 +495,15 @@
     }
 
     if (stored.version === 2) {
-      // Try current key (Argon2id-strengthened)
       const key = await deriveStorageKey(currentSecret, currentEmail);
       try {
         services = await decryptServices(key, currentEmail, stored);
         return true;
       } catch {
-        // Fall back to legacy key (pre-Argon2id: plain HMAC)
-        try {
-          const enc = new TextEncoder();
-          const legacyKey = await hmacSHA256(enc.encode(currentSecret), enc.encode(currentEmail.toLowerCase() + ":keygrain-local-storage"));
-          services = await decryptServices(legacyKey, currentEmail, stored);
-          // Re-encrypt with new key
-          await saveServices();
-          return true;
-        } catch {
-          return false;
-        }
+        // Decryption failed — stale data from old algorithm. Clear and start fresh.
+        await chrome.storage.local.remove("services");
+        services = [];
+        return true;
       } finally {
         key.fill(0);
       }
@@ -626,10 +613,9 @@
     mainScreen.classList.add("hidden");
     pinScreen.classList.add("hidden");
     secretInput.value = "";
-    confirmSecretInput.value = "";
     fpContainer.textContent = "";
-    confirmFpContainer.textContent = "";
     unlockBtn.disabled = true;
+    document.body.style.height = "auto";
     emailInput.focus();
   }
 
@@ -647,6 +633,8 @@
     lockScreen.classList.add("hidden");
     pinScreen.classList.add("hidden");
     mainScreen.classList.remove("hidden");
+    // Force popup resize
+    document.body.style.height = "auto";
     startAutolockWarning();
     searchInput.setAttribute("role", "combobox");
     searchInput.setAttribute("aria-controls", "service-list");
@@ -669,7 +657,7 @@
       filtered = services.slice().sort((a, b) => (b.frecency || 0) - (a.frecency || 0));
     } else {
       filtered = services.map(s => {
-        const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email));
+        const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email), fuzzyScore(filter, s.site));
         return {svc: s, score};
       }).filter(x => x.score > 0)
         .sort((a, b) => {
@@ -898,12 +886,16 @@
     } catch { return; }
     if (!currentHostname) return;
     const host = currentHostname.toLowerCase();
+    // Extract base domain (e.g., google.com from calendar.google.com)
+    const parts = host.split(".");
+    const baseDomain = parts.length > 2 ? parts.slice(-2).join(".") : host;
     const matches = services.filter(s => {
+      const site = (s.site || "").toLowerCase();
       const name = s.name.toLowerCase();
-      return name.includes(host) || host.includes(name);
+      return site === host || site === baseDomain || host.includes(site) || site.includes(host) || name.includes(baseDomain);
     });
     if (matches.length > 0) {
-      searchInput.value = currentHostname;
+      searchInput.value = matches.length === 1 ? matches[0].name : currentHostname;
       renderServiceList();
       if (matches.length === 1) {
         const btn = document.createElement("button");
@@ -944,54 +936,55 @@
 
   // === Event handlers ===
   function updateUnlockBtn() {
-    unlockBtn.disabled = !emailInput.value.trim() || !secretInput.value || (isFirstTime && !confirmSecretInput.value);
+    unlockBtn.disabled = !emailInput.value.trim() || !secretInput.value;
   }
 
   emailInput.addEventListener("input", () => {
     updateUnlockBtn();
     if (fpTimer) clearTimeout(fpTimer);
     if (!secretInput.value || !emailInput.value.trim()) { fpContainer.textContent = ""; return; }
+    fpContainer.textContent = "⏳";
     fpTimer = setTimeout(async () => {
-      const indices = await secretFingerprint(secretInput.value, emailInput.value.trim());
-      fpContainer.textContent = "";
-      indices.forEach(i => {
-        const dot = document.createElement("span");
-        dot.className = "fp-dot";
-        dot.style.background = WONG_PALETTE[i];
-        fpContainer.appendChild(dot);
-      });
+      try {
+        const indices = await secretFingerprint(secretInput.value, emailInput.value.trim());
+        fpContainer.textContent = "";
+        indices.forEach(i => {
+          const dot = document.createElement("span");
+          dot.className = "fp-dot";
+          dot.style.background = WONG_PALETTE[i];
+          fpContainer.appendChild(dot);
+        });
+      } catch (e) { fpContainer.textContent = ""; console.error("fingerprint error:", e); }
     }, 500);
   });
 
   secretInput.addEventListener("input", () => {
     updateUnlockBtn();
+    // Strength meter
+    const strengthMeter = document.getElementById("strength-meter");
+    if (secretInput.value) {
+      const bits = estimateEntropy(secretInput.value);
+      const { label, cls } = entropyLabel(bits);
+      strengthMeter.textContent = label + " (" + Math.round(bits) + " bits)";
+      strengthMeter.className = "strength-meter " + cls;
+    } else {
+      strengthMeter.textContent = "";
+      strengthMeter.className = "strength-meter";
+    }
     if (fpTimer) clearTimeout(fpTimer);
     if (!secretInput.value || !emailInput.value.trim()) { fpContainer.textContent = ""; return; }
+    fpContainer.textContent = "⏳";
     fpTimer = setTimeout(async () => {
-      const indices = await secretFingerprint(secretInput.value, emailInput.value.trim());
-      fpContainer.textContent = "";
-      indices.forEach(i => {
-        const dot = document.createElement("span");
-        dot.className = "fp-dot";
-        dot.style.background = WONG_PALETTE[i];
-        fpContainer.appendChild(dot);
-      });
-    }, 500);
-  });
-
-  confirmSecretInput.addEventListener("input", () => {
-    updateUnlockBtn();
-    if (confirmFpTimer) clearTimeout(confirmFpTimer);
-    if (!confirmSecretInput.value || !emailInput.value.trim()) { confirmFpContainer.textContent = ""; return; }
-    confirmFpTimer = setTimeout(async () => {
-      const indices = await secretFingerprint(confirmSecretInput.value, emailInput.value.trim());
-      confirmFpContainer.textContent = "";
-      indices.forEach(i => {
-        const dot = document.createElement("span");
-        dot.className = "fp-dot";
-        dot.style.background = WONG_PALETTE[i];
-        confirmFpContainer.appendChild(dot);
-      });
+      try {
+        const indices = await secretFingerprint(secretInput.value, emailInput.value.trim());
+        fpContainer.textContent = "";
+        indices.forEach(i => {
+          const dot = document.createElement("span");
+          dot.className = "fp-dot";
+          dot.style.background = WONG_PALETTE[i];
+          fpContainer.appendChild(dot);
+        });
+      } catch (e) { fpContainer.textContent = ""; console.error("fingerprint error:", e); }
     }, 500);
   });
 
@@ -999,10 +992,6 @@
     const s = secretInput.value;
     const e = emailInput.value.trim().toLowerCase();
     if (!s || !e) return;
-    if (isFirstTime && s !== confirmSecretInput.value) {
-      showStatus("Secrets do not match. Please try again.");
-      return;
-    }
     currentSecret = s;
     currentEmail = e;
     let ok;
@@ -1012,6 +1001,55 @@
       currentSecret = null;
       currentEmail = null;
       return;
+    }
+    // If no local services, try fetching from server (returning user on new device?)
+    if (services.length === 0) {
+      try {
+        showStatus("Checking server...");
+        const result = await syncWithServer(s, e, services);
+        if (result.services.length > 0) {
+          // Server had data — returning user
+          services = result.services;
+          await saveServices();
+          await setKnownUUIDs(result.knownUUIDs);
+        }
+      } catch { /* server unreachable or 404 — new user */ }
+    }
+    // If still no services (new user), ask to confirm secret
+    if (services.length === 0) {
+      showStatus("");
+      const confirmResult = await new Promise(resolve => {
+        const dialog = document.createElement("div");
+        dialog.className = "dialog";
+        dialog.setAttribute("role", "dialog");
+        dialog.setAttribute("aria-modal", "true");
+        dialog.innerHTML = `
+          <h2>Confirm your master secret</h2>
+          <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:12px;">You're setting up Keygrain for the first time. Re-type your secret to make sure you didn't mistype it.</p>
+          <input type="password" id="confirm-new-secret" autocomplete="off" placeholder="Re-type your secret" style="margin-bottom:12px;">
+          <div class="dialog-actions">
+            <button id="confirm-cancel">Cancel</button>
+            <button id="confirm-ok">Confirm</button>
+          </div>
+        `;
+        document.body.appendChild(dialog);
+        const input = dialog.querySelector("#confirm-new-secret");
+        input.focus();
+        dialog.querySelector("#confirm-ok").addEventListener("click", () => {
+          document.body.removeChild(dialog);
+          resolve(input.value);
+        });
+        dialog.querySelector("#confirm-cancel").addEventListener("click", () => {
+          document.body.removeChild(dialog);
+          resolve(null);
+        });
+      });
+      if (confirmResult === null || confirmResult !== s) {
+        showStatus(confirmResult === null ? "" : "Secrets don't match. Try again.");
+        currentSecret = null;
+        currentEmail = null;
+        return;
+      }
     }
     await setSecret(s);
     await setEmail(e);
@@ -1411,7 +1449,7 @@
     const filter = searchInput.value.trim();
     if (!filter) return services.slice().sort((a, b) => (b.frecency || 0) - (a.frecency || 0));
     return services.map(s => {
-      const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email));
+      const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email), fuzzyScore(filter, s.site));
       return {svc: s, score};
     }).filter(x => x.score > 0)
       .sort((a, b) => {
@@ -1556,6 +1594,13 @@
   document.addEventListener("keydown", () => sendMsg({action: "heartbeat"}));
 
   // === Init ===
+  // One-time migration: clear stale data from pre-Argon2id algorithm
+  const migCheck = await chrome.storage.local.get("v2_migrated");
+  if (!migCheck.v2_migrated) {
+    await chrome.storage.local.clear();
+    await chrome.storage.local.set({v2_migrated: true});
+  }
+
   await loadSettings();
   currentSecret = await getSecret();
   currentEmail = await getEmail();
@@ -1582,7 +1627,7 @@
     }
   } else {
     // Pre-fill email from lastEmail
-    const data = await chrome.storage.local.get(["lastEmail", "pinData"]);
+    const data = await chrome.storage.local.get(["lastEmail", "pinData", "onboardingDone"]);
     if (data.pinData && data.lastEmail) {
       showPinScreen();
     } else if (data.lastEmail) {
@@ -1590,10 +1635,23 @@
       updateUnlockBtn();
       showLockScreen();
     } else {
-      isFirstTime = true;
-      confirmSecretGroup.classList.remove("hidden");
-      updateUnlockBtn();
       showLockScreen();
+      // Show onboarding overlay on first install
+      if (!data.onboardingDone) {
+        const overlay = document.getElementById("onboarding-overlay");
+        overlay.classList.remove("hidden");
+        let step = 1;
+        overlay.addEventListener("click", () => {
+          document.getElementById("onboarding-step-" + step).classList.add("hidden");
+          step++;
+          if (step <= 3) {
+            document.getElementById("onboarding-step-" + step).classList.remove("hidden");
+          } else {
+            overlay.classList.add("hidden");
+            chrome.storage.local.set({ onboardingDone: true });
+          }
+        });
+      }
     }
   }
 })();
