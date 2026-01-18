@@ -4,6 +4,33 @@ All notable changes to Keygrain are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-05-10
+
+### Added
+
+- TOTP support (RFC 6238): Model A (stored seeds) + Model B (deterministic derivation), all platforms
+- SSH key derivation (Ed25519, CLI `--agent` flag), all platforms
+- HD wallet derivation (BIP-39 mnemonics, BIP-85 child seeds, 9 chains), all platforms
+- QR code scanning for TOTP setup (Android, ML Kit barcode scanning)
+- Secret strength meter (extension)
+- Extension onboarding (3-step overlay for first-time users)
+- Wallet saved list + audit log UI
+- In-app help (extension: 10 FAQ sections; Android: 9 FAQ sections)
+- Modern UI redesign (extension: design tokens, SVG icons, card layout, gradient buttons)
+- CI pipeline (Python tests, JS tests, extension build, mobile build)
+- JS test suite (83 tests)
+- Kotlin test suite (42 tests)
+- SPEC.md §11–14 (TOTP Seed Derivation, SSH Key Derivation, HD Wallet Derivation, Domain Separation)
+
+### Fixed
+
+- Web generator: added Argon2id key strengthening, removed salt field
+- Legacy storage key fallback for pre-Argon2id encrypted local data
+
+### Security
+
+- Argon2id rate limiting (2s client-side throttle on strengthen calls)
+
 ## [1.1.0] - 2026-05-09
 
 ### Added

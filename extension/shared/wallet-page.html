@@ -68,6 +68,15 @@ RECOMMENDED USAGE:
       <div class="mnemonic-grid" id="mnemonic-grid"></div>
       <div class="auto-clear-notice">Mnemonic will auto-clear in <span id="clear-countdown">60</span>s</div>
     </div>
+
+    <div id="wallet-list-section">
+      <h2>Previously Derived Wallets</h2>
+      <div id="wallet-list-empty" class="wallet-list-empty">No wallets derived yet.</div>
+      <table id="wallet-list-table" class="wallet-list-table hidden">
+        <thead><tr><th>Name</th><th>Chain</th><th>Counter</th><th>Last Derived</th></tr></thead>
+        <tbody id="wallet-list-body"></tbody>
+      </table>
+    </div>
   </div>
 
   <script src="lib/hash-wasm-argon2.js"></script>

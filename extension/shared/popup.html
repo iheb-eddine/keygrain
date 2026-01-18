@@ -14,13 +14,9 @@
     <input type="email" id="email" autocomplete="email" required>
     <label for="secret">Master Secret</label>
     <input type="password" id="secret" autocomplete="off" required>
+    <div id="strength-meter" class="strength-meter" aria-live="polite"></div>
     <div id="fingerprint" aria-label="Secret fingerprint"></div>
     <p class="fingerprint-explanation">Visual fingerprint — same colors confirm same secret.</p>
-    <div id="confirm-secret-group" class="hidden">
-      <label for="confirm-secret">Confirm Master Secret</label>
-      <input type="password" id="confirm-secret" autocomplete="off" required>
-      <div id="confirm-fingerprint" aria-label="Confirm secret fingerprint"></div>
-    </div>
     <button id="unlock-btn" disabled>Unlock</button>
     <a href="#" id="try-demo" class="demo-link">Try Demo</a>
   </div>
@@ -159,6 +155,25 @@
     <div class="dialog-actions">
       <button id="settings-cancel">Cancel</button>
       <button id="settings-save">Save</button>
+    </div>
+  </div>
+
+  <!-- Onboarding Overlay -->
+  <div id="onboarding-overlay" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-label="Welcome to Keygrain">
+    <div class="onboarding-content">
+      <div class="onboarding-step" id="onboarding-step-1">
+        <h2>1. Enter your master secret</h2>
+        <p>One passphrase to derive all your passwords.</p>
+      </div>
+      <div class="onboarding-step hidden" id="onboarding-step-2">
+        <h2>2. Add services</h2>
+        <p>Add the sites you use — passwords are generated on the fly.</p>
+      </div>
+      <div class="onboarding-step hidden" id="onboarding-step-3">
+        <h2>3. Nothing is stored</h2>
+        <p>Passwords are derived, never stored. Your secret never leaves your device.</p>
+      </div>
+      <p class="onboarding-hint">Click anywhere to continue</p>
     </div>
   </div>
 

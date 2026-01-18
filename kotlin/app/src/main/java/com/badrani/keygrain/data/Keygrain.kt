@@ -127,4 +127,21 @@ object Keygrain {
         mac.init(SecretKeySpec(key, "HmacSHA256"))
         return mac.doFinal(data)
     }
+
+    fun estimateEntropy(secret: String): Double {
+        if (secret.isEmpty()) return 0.0
+        var charsetSize = 0
+        if (secret.any { it in 'a'..'z' }) charsetSize += 26
+        if (secret.any { it in 'A'..'Z' }) charsetSize += 26
+        if (secret.any { it.isDigit() }) charsetSize += 10
+        if (secret.any { !it.isLetterOrDigit() }) charsetSize += 32
+        return if (charsetSize > 0) secret.length * kotlin.math.ln(charsetSize.toDouble()) / kotlin.math.ln(2.0) else 0.0
+    }
+
+    fun entropyLabel(bits: Double): Pair<String, String> = when {
+        bits >= 80 -> "Strong" to "strong"
+        bits >= 60 -> "Good" to "good"
+        bits >= 40 -> "Fair" to "fair"
+        else -> "Weak" to "weak"
+    }
 }

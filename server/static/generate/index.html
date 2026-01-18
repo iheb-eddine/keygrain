@@ -14,6 +14,7 @@
         button { padding: 10px 20px; font-size: 1rem; border: none; border-radius: 3px; cursor: pointer; }
         #generate { margin-top: 1.5rem; background: #333; color: #fff; }
         #generate:hover { background: #555; }
+        #generate:disabled { background: #999; cursor: wait; }
         .output-row { display: flex; gap: 8px; margin-top: 1.5rem; align-items: center; }
         .output-row input { flex: 1; font-family: monospace; background: #f4f4f4; }
         #copy { background: #f4f4f4; border: 1px solid #ccc; font-size: 1.2rem; padding: 8px 12px; }
@@ -46,8 +47,6 @@
                 <input type="number" id="length" min="8" value="20">
                 <label for="symbols">Symbols</label>
                 <input type="text" id="symbols" value="!@#$%&*-_=+?">
-                <label for="salt">Salt</label>
-                <input type="text" id="salt" autocomplete="off">
                 <label for="counter">Counter</label>
                 <input type="number" id="counter" min="1" value="1">
             </div></div>
@@ -59,6 +58,7 @@
         <button type="button" id="copy" title="Copy to clipboard">&#x1F4CB;</button>
     </div>
     <div id="status" aria-live="polite"></div>
+    <script src="./hash-wasm-argon2.js"></script>
     <script>
     const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
     const LOWER = "abcdefghjkmnpqrstuvwxyz";
@@ -77,9 +77,22 @@
         return new Uint8Array(sig);
     }
 
-    async function buildStream(secret, message, needed) {
+    async function strengthen(secret, email) {
         const enc = new TextEncoder();
-        const key = await hmacSHA256(enc.encode(secret), message);
+        const result = await hashwasm.argon2id({
+            password: enc.encode(secret),
+            salt: enc.encode("keygrain-strengthen:" + email.toLowerCase()),
+            parallelism: 1,
+            iterations: 3,
+            memorySize: 65536,
+            hashLength: 32,
+            outputType: "binary",
+        });
+        return new Uint8Array(result);
+    }
+
+    async function buildStream(strengthened, message, needed) {
+        const key = await hmacSHA256(strengthened, message);
         let stream = new Uint8Array(key);
         let counter = 1;
         while (stream.length < needed) {
@@ -93,10 +106,11 @@
         return stream;
     }
 
-    async function derivePassword(secret, email, site, length, symbols, salt, counter) {
+    async function derivePassword(secret, email, site, length, symbols, counter) {
         const enc = new TextEncoder();
-        const message = enc.encode(site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + salt + ":" + counter);
-        const stream = await buildStream(secret, message, length * 2);
+        const strengthened = await strengthen(secret, email);
+        const message = enc.encode(site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + counter);
+        const stream = await buildStream(strengthened, message, length * 2);
         const fullCharset = UPPER + LOWER + DIGITS + symbols;
         let pos = 0;
         const nextByte = () => stream[pos++];
@@ -132,21 +146,26 @@
 
     const WONG_PALETTE = ["#000000","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00","#CC79A7"];
 
-    async function secretFingerprint(secret) {
+    async function secretFingerprint(secret, email) {
       const enc = new TextEncoder();
-      const hash = await hmacSHA256(enc.encode(secret), enc.encode("keygrain-fingerprint"));
+      const strengthened = await strengthen(secret, email);
+      const hash = await hmacSHA256(strengthened, enc.encode("keygrain-fingerprint"));
       return Array.from(hash.slice(0, 4), b => b % 8);
     }
 
     let fpTimer = null;
-    secretInput.addEventListener("input", () => {
+    function triggerFingerprint() {
       if (fpTimer) clearTimeout(fpTimer);
-      if (!secretInput.value) { fpContainer.innerHTML = ""; return; }
+      const secret = secretInput.value;
+      const email = document.getElementById("email").value;
+      if (!secret || !email) { fpContainer.innerHTML = ""; return; }
       fpTimer = setTimeout(async () => {
-        const indices = await secretFingerprint(secretInput.value);
+        const indices = await secretFingerprint(secret, email);
         fpContainer.innerHTML = indices.map(i => `<span class="fp-dot" style="background:${WONG_PALETTE[i]}"></span>`).join("");
       }, 500);
-    });
+    }
+    secretInput.addEventListener("input", triggerFingerprint);
+    document.getElementById("email").addEventListener("input", triggerFingerprint);
 
     function normalizeSite(site) {
       return site.replace(/^https?:\/\//i, '').split('/')[0].split('?')[0].split('#')[0].replace(/\/$/, '').toLowerCase().replace(/^www\./, '');
@@ -159,13 +178,21 @@
         const email = document.getElementById("email").value;
         const length = parseInt(document.getElementById("length").value, 10);
         const symbols = document.getElementById("symbols").value;
-        const salt = document.getElementById("salt").value;
         const counter = parseInt(document.getElementById("counter").value, 10) || 1;
         if (!site) { status.textContent = "Site is required."; return; }
         if (length < 8) { status.textContent = MESSAGES.LENGTH_MIN; return; }
         if (!symbols) { status.textContent = MESSAGES.SYMBOLS_REQUIRED; return; }
-        output.value = await derivePassword(secret, email, site, length, symbols, salt, counter);
-        status.textContent = "";
+        const btn = document.getElementById("generate");
+        btn.disabled = true;
+        status.textContent = "Strengthening key…";
+        try {
+            output.value = await derivePassword(secret, email, site, length, symbols, counter);
+            status.textContent = "";
+        } catch (err) {
+            status.textContent = "Error: " + err.message;
+        } finally {
+            btn.disabled = false;
+        }
     });
 
     copyBtn.addEventListener("click", async () => {

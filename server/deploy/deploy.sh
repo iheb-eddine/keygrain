@@ -25,6 +25,7 @@ if [ -f "${APP_DIR}/docker-compose.yml" ]; then
 fi
 
 # Deploy new files (preserve .env and data volume)
+rm -f "${APP_DIR}"/*.go
 cp -r "${DEPLOY_DIR}"/app/* "${APP_DIR}/"
 
 # Build and start

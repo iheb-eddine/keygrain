@@ -1,4 +1,5 @@
 stages:
+  - test
   - build
   - build-mobile
   - deploy
@@ -6,6 +7,41 @@ stages:
 variables:
   APP_NAME: keygrain
   PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${APP_NAME}/${CI_COMMIT_REF_SLUG}"
+
+test-python:
+  stage: test
+  image: python:3.11-slim
+  script:
+    - cd python
+    - pip install -e .
+    - pip install pytest
+    - pytest
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+test-js:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd extension/tests
+    - node test.mjs
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+build-extension:
+  stage: build
+  image: alpine:3.19
+  script:
+    - apk add --no-cache bash zip
+    - cd extension
+    - bash build.sh
+  artifacts:
+    paths:
+      - extension/dist/keygrain-chrome.zip
+      - extension/dist/keygrain-firefox.zip
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH
 
 build-package:
   stage: build

@@ -5,12 +5,26 @@ const DIGITS = "23456789";
 
 // Argon2id strengthen cache (single entry — one active session)
 let _strengthenCache = null;
+let _lastStrengthenTime = 0;
+let _strengthenQueue = null;
 
 async function strengthenSecret(secret, email) {
   const emailLower = email.toLowerCase();
   if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
     return _strengthenCache.result;
   }
+  // Throttle: max 1 call per 2 seconds
+  const now = Date.now();
+  const elapsed = now - _lastStrengthenTime;
+  if (elapsed < 2000 && _lastStrengthenTime > 0) {
+    if (_strengthenQueue) return _strengthenQueue;
+    _strengthenQueue = new Promise(resolve => setTimeout(() => {
+      _strengthenQueue = null;
+      resolve(strengthenSecret(secret, email));
+    }, 2000 - elapsed));
+    return _strengthenQueue;
+  }
+  _lastStrengthenTime = Date.now();
   const enc = new TextEncoder();
   const salt = enc.encode("keygrain-strengthen:" + emailLower);
   const secretBytes = enc.encode(secret);
@@ -94,6 +108,23 @@ const WONG_PALETTE = ["#000000","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2
 
 function normalizeSite(site) {
   return site.replace(/^https?:\/\//i, '').split('/')[0].split('?')[0].split('#')[0].replace(/\/$/, '').toLowerCase().replace(/^www\./, '');
+}
+
+function estimateEntropy(secret) {
+  if (!secret) return 0;
+  let charsetSize = 0;
+  if (/[a-z]/.test(secret)) charsetSize += 26;
+  if (/[A-Z]/.test(secret)) charsetSize += 26;
+  if (/[0-9]/.test(secret)) charsetSize += 10;
+  if (/[^a-zA-Z0-9]/.test(secret)) charsetSize += 32;
+  return charsetSize > 0 ? secret.length * Math.log2(charsetSize) : 0;
+}
+
+function entropyLabel(bits) {
+  if (bits >= 80) return { label: "Strong", cls: "strength-strong" };
+  if (bits >= 60) return { label: "Good", cls: "strength-good" };
+  if (bits >= 40) return { label: "Fair", cls: "strength-fair" };
+  return { label: "Weak", cls: "strength-weak" };
 }
 
 async function secretFingerprint(secret, email) {
