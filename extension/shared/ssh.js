@@ -4,6 +4,7 @@ async function deriveSshKeypair(secret, email, { keyName, counter = 1 }) {
   if (!keyName) throw new Error("keyName must not be empty");
   if (/\s/.test(keyName)) throw new Error("keyName must not contain whitespace");
   if (counter < 1) throw new Error("counter must be >= 1");
+  if (/[\x00-\x1f\x7f]/.test(email)) throw new Error("email must not contain control characters");
 
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(secret, email);
@@ -16,6 +17,7 @@ async function deriveSshKeypair(secret, email, { keyName, counter = 1 }) {
 }
 
 function formatAuthorizedKeys(publicKey, comment) {
+  if (/[\x00-\x1f\x7f]/.test(comment)) throw new Error("comment must not contain control characters");
   // Public key blob: string "ssh-ed25519" + string public_key_raw
   const keyType = new TextEncoder().encode("ssh-ed25519");
   const blob = new Uint8Array(4 + keyType.length + 4 + publicKey.length);

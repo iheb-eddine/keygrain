@@ -43,6 +43,9 @@ async function strengthenSecret(secret, email) {
 }
 
 function clearStrengthenCache() {
+  if (_strengthenCache) {
+    _strengthenCache.result.fill(0);
+  }
   _strengthenCache = null;
 }
 
@@ -57,7 +60,9 @@ async function buildStream(key, message, needed) {
   let stream = new Uint8Array(hmacKey);
   let counter = 1;
   while (stream.length < needed) {
-    const ext = await hmacSHA256(hmacKey, new Uint8Array([counter]));
+    const ctrBuf = new Uint8Array(4);
+    new DataView(ctrBuf.buffer).setUint32(0, counter);
+    const ext = await hmacSHA256(hmacKey, ctrBuf);
     const combined = new Uint8Array(stream.length + ext.length);
     combined.set(stream);
     combined.set(ext, stream.length);
@@ -72,19 +77,28 @@ function buildPassword(stream, length, symbols) {
   let pos = 0;
   const nextByte = () => stream[pos++];
 
+  function unbiasedIndex(n) {
+    const limit = Math.floor(256 / n) * n;
+    while (true) {
+      const b = nextByte();
+      if (b < limit) return b % n;
+    }
+  }
+
   const chars = [
-    UPPER[nextByte() % UPPER.length],
-    LOWER[nextByte() % LOWER.length],
-    DIGITS[nextByte() % DIGITS.length],
-    symbols[nextByte() % symbols.length],
+    UPPER[unbiasedIndex(UPPER.length)],
+    LOWER[unbiasedIndex(LOWER.length)],
+    DIGITS[unbiasedIndex(DIGITS.length)],
+    symbols[unbiasedIndex(symbols.length)],
   ];
   for (let i = 0; i < length - 4; i++) {
-    chars.push(fullCharset[nextByte() % fullCharset.length]);
+    chars.push(fullCharset[unbiasedIndex(fullCharset.length)]);
   }
   for (let i = length - 1; i > 0; i--) {
-    const j = nextByte() % (i + 1);
+    const j = unbiasedIndex(i + 1);
     [chars[i], chars[j]] = [chars[j], chars[i]];
   }
+  if (pos > stream.length) throw new Error("stream exhausted");
   return chars.join("");
 }
 
@@ -92,7 +106,7 @@ async function derivePassword(secret, email, { site, length = 20, symbols = "!@#
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(secret, email);
   const message = enc.encode(site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + counter);
-  const stream = await buildStream(strengthened, message, length * 2);
+  const stream = await buildStream(strengthened, message, length * 4);
   return buildPassword(stream, length, symbols);
 }
 
@@ -100,7 +114,7 @@ async function deriveAuthPassword(secret, email) {
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(secret, email);
   const message = enc.encode(email.toLowerCase() + ":32:keygrain-auth");
-  const stream = await buildStream(strengthened, message, 64);
+  const stream = await buildStream(strengthened, message, 128);
   return buildPassword(stream, 32, "!@#$%&*-_=+?");
 }
 

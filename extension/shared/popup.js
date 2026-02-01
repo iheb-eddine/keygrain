@@ -500,10 +500,7 @@
         services = await decryptServices(key, currentEmail, stored);
         return true;
       } catch {
-        // Decryption failed — stale data from old algorithm. Clear and start fresh.
-        await chrome.storage.local.remove("services");
-        services = [];
-        return true;
+        return false;
       } finally {
         key.fill(0);
       }
@@ -657,7 +654,7 @@
       filtered = services.slice().sort((a, b) => (b.frecency || 0) - (a.frecency || 0));
     } else {
       filtered = services.map(s => {
-        const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email), fuzzyScore(filter, s.site));
+        const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email), fuzzyScore(filter, s.site || ""));
         return {svc: s, score};
       }).filter(x => x.score > 0)
         .sort((a, b) => {
@@ -890,9 +887,8 @@
     const parts = host.split(".");
     const baseDomain = parts.length > 2 ? parts.slice(-2).join(".") : host;
     const matches = services.filter(s => {
-      const site = (s.site || "").toLowerCase();
-      const name = s.name.toLowerCase();
-      return site === host || site === baseDomain || host.includes(site) || site.includes(host) || name.includes(baseDomain);
+      const site = (s.site || s.name).toLowerCase();
+      return site === host || host.endsWith("." + site) || site === baseDomain || baseDomain.endsWith("." + site);
     });
     if (matches.length > 0) {
       searchInput.value = matches.length === 1 ? matches[0].name : currentHostname;
@@ -1449,7 +1445,7 @@
     const filter = searchInput.value.trim();
     if (!filter) return services.slice().sort((a, b) => (b.frecency || 0) - (a.frecency || 0));
     return services.map(s => {
-      const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email), fuzzyScore(filter, s.site));
+      const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email), fuzzyScore(filter, s.site || ""));
       return {svc: s, score};
     }).filter(x => x.score > 0)
       .sort((a, b) => {
@@ -1532,7 +1528,7 @@
     menuDropdown.classList.add("hidden");
     try {
       const encKey = await deriveEncryptionKey(currentSecret, currentEmail);
-      const json = JSON.stringify({version: 1, services});
+      const json = JSON.stringify({version: 1, services, wallets, wallet_audit_log: walletAuditLog});
       const encrypted = await encryptBlob(encKey, new TextEncoder().encode(json));
       encKey.fill(0);
       exportToFile(encrypted, "keygrain-backup.keygrain");
@@ -1597,7 +1593,6 @@
   // One-time migration: clear stale data from pre-Argon2id algorithm
   const migCheck = await chrome.storage.local.get("v2_migrated");
   if (!migCheck.v2_migrated) {
-    await chrome.storage.local.clear();
     await chrome.storage.local.set({v2_migrated: true});
   }
 

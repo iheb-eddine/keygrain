@@ -18,15 +18,15 @@ class KeygrainTest {
     )
 
     private val vectors = listOf(
-        Vector("6d792d6d61737465722d736563726574", "github.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "A=4BXNAHYUU_hmVwv\$h?"),
-        Vector("6d792d6d61737465722d736563726574", "google.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "=78WtX?e!hpp6?TMqddW"),
-        Vector("6d792d6d61737465722d736563726574", "GitHub.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "A=4BXNAHYUU_hmVwv\$h?"),
-        Vector("6d792d6d61737465722d736563726574", "github.com", "TEST@Gmail.com", 20, "!@#\$%&*-_=+?", 1, "A=4BXNAHYUU_hmVwv\$h?"),
-        Vector("6d792d6d61737465722d736563726574", "github.com", "test@gmail.com", 16, "!@#\$%&*-_=+?", 1, "gp4QHeNzA72YX-_A"),
-        Vector("6d792d6d61737465722d736563726574", "github.com", "test@gmail.com", 20, "!@#\$%&", 1, "AR4HdgNVYpUC4tVw9Kw&"),
-        Vector("6d792d6d61737465722d736563726574", "github.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 2, "GnkEz!F9-z_NqkGTy4n2"),
-        Vector("646966666572656e742d736563726574", "github.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "q=xsG_Tm3_MCeJ2GZ4zF"),
-        Vector("6d792d6d61737465722d736563726574", "home-wifi", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "4\$\$7A-h4U6YqDm@zb?%4"),
+        Vector("6d792d6d61737465722d736563726574", "github.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "?X_BAbv4UHAfw=kYV\$mh"),
+        Vector("6d792d6d61737465722d736563726574", "google.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "T=p?759\$FdXp8eW!qtdX"),
+        Vector("6d792d6d61737465722d736563726574", "GitHub.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "?X_BAbv4UHAfw=kYV\$mh"),
+        Vector("6d792d6d61737465722d736563726574", "github.com", "TEST@Gmail.com", 20, "!@#\$%&*-_=+?", 1, "?X_BAbv4UHAfw=kYV\$mh"),
+        Vector("6d792d6d61737465722d736563726574", "github.com", "test@gmail.com", 16, "!@#\$%&*-_=+?", 1, "-g_7CA9z\$e2HQ3pA"),
+        Vector("6d792d6d61737465722d736563726574", "github.com", "test@gmail.com", 20, "!@#\$%&", 1, "ARHNdV4gYpUC4tVw9Kw&"),
+        Vector("6d792d6d61737465722d736563726574", "github.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 2, "!kGNn-dTzFGEyq82_9nz"),
+        Vector("646966666572656e742d736563726574", "github.com", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "srFmxZuM_2e4TJ_+=C3q"),
+        Vector("6d792d6d61737465722d736563726574", "home-wifi", "test@gmail.com", 20, "!@#\$%&*-_=+?", 1, "\$64@hqN-ADm4U4\$%?7Yr"),
     )
 
     data class StrengthenVector(

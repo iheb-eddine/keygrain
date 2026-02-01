@@ -89,7 +89,7 @@ button { cursor: pointer; }
 #unlock-btn:active:not(:disabled) { transform: translateY(0); box-shadow: var(--shadow-sm); }
 #unlock-btn:disabled { opacity: 0.5; cursor: default; }
 #fingerprint { display: flex; gap: 6px; margin-top: 6px; min-height: 12px; }
-.fp-dot { width: 12px; height: 12px; border-radius: 50%; }
+.fp-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border); }
 .strength-meter { font-size: 0.75rem; font-weight: 600; margin-top: 4px; min-height: 1em; }
 .strength-weak { color: #cc0000; }
 .strength-fair { color: #e67e00; }

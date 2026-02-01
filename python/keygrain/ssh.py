@@ -29,6 +29,8 @@ def derive_ssh_keypair(
         raise ValueError("key_name must not contain whitespace")
     if counter < 1:
         raise ValueError("counter must be >= 1")
+    if re.search(r"[\x00-\x1f\x7f]", email):
+        raise ValueError("email must not contain control characters")
 
     strengthened = strengthen_secret(secret, email)
     message = f"{email.lower()}:{key_name.lower()}:{counter}:keygrain-ssh".encode("utf-8")
@@ -42,6 +44,8 @@ def derive_ssh_keypair(
 
 def format_openssh_private_key(seed: bytes, public_key: bytes, comment: str) -> str:
     """Format an Ed25519 keypair as an OpenSSH PEM private key string."""
+    if re.search(r"[\x00-\x1f\x7f]", comment):
+        raise ValueError("comment must not contain control characters")
     # Deterministic check bytes
     check_bytes = hmac.new(seed, b"openssh-check", hashlib.sha256).digest()
     check_int = struct.unpack(">I", check_bytes[0:4])[0]
@@ -81,6 +85,8 @@ def format_openssh_private_key(seed: bytes, public_key: bytes, comment: str) -> 
 
 def format_authorized_keys(public_key: bytes, comment: str) -> str:
     """Format an Ed25519 public key as an authorized_keys line."""
+    if re.search(r"[\x00-\x1f\x7f]", comment):
+        raise ValueError("comment must not contain control characters")
     pub_blob = _string(b"ssh-ed25519") + _string(public_key)
     b64 = base64.b64encode(pub_blob).decode("ascii")
     return f"ssh-ed25519 {b64} {comment}"

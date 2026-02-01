@@ -157,6 +157,20 @@ for (const v of coreVectors.vectors) {
   });
 }
 
+// buildPassword: rejection sampling boundary
+await test('buildPassword: rejects bytes >= limit (rejection sampling boundary)', async () => {
+  // For charset 67, limit = floor(256/67)*67 = 201. Byte 255 must be skipped.
+  const valid = new Uint8Array([
+    10, 5, 3, 7,           // mandatory chars (upper, lower, digit, symbol)
+    20, 30, 40, 50,        // fill chars
+    3, 2, 1, 6, 5, 4, 0   // shuffle indices (for i=7..1)
+  ]);
+  const rejected = new Uint8Array([255, ...valid]);
+  const pw1 = runInContext(`buildPassword(new Uint8Array([${valid.join(',')}]), 8, "!@#$%&*-_=+?")`, ctx);
+  const pw2 = runInContext(`buildPassword(new Uint8Array([${rejected.join(',')}]), 8, "!@#$%&*-_=+?")`, ctx);
+  assert.equal(pw1, pw2);
+});
+
 // secretFingerprint
 for (const v of coreVectors.fingerprint_vectors) {
   await test(`secretFingerprint: ${v._note}`, async () => {

@@ -8,11 +8,22 @@ import android.widget.RemoteViews
 
 class KeygrainAutofillService : AutofillService() {
 
-    // TODO: SECURITY — No Digital Asset Links (DAL) verification.
-    // A malicious app can embed a WebView loading any domain (e.g. bank.com),
-    // trigger autofill on a password field, and receive the real derived password.
-    // Mitigation: verify the requesting app's signing certificate against the domain's
-    // /.well-known/assetlinks.json, or add a user confirmation step before filling.
+    companion object {
+        private val DEFAULT_BROWSER_PACKAGES = setOf(
+            "com.android.chrome",
+            "org.mozilla.firefox",
+            "com.sec.android.app.sbrowser",
+            "com.brave.browser",
+            "com.microsoft.emmx"
+        )
+        private const val PREFS_NAME = "keygrain_autofill"
+        private const val KEY_BROWSERS = "trusted_browsers"
+    }
+
+    private fun getTrustedBrowsers(): Set<String> {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        return prefs.getStringSet(KEY_BROWSERS, null) ?: DEFAULT_BROWSER_PACKAGES
+    }
 
     override fun onFillRequest(request: FillRequest, cancel: CancellationSignal, callback: FillCallback) {
         if (!SecretManager.sessionActive) {
@@ -33,7 +44,19 @@ class KeygrainAutofillService : AutofillService() {
             return
         }
 
+        val requestingPackage = structure.activityComponent?.packageName
+
         val domain = extractDomain(structure)
+
+        // If webDomain is present but app is not a trusted browser, refuse to fill
+        if (domain != null && domain.isNotEmpty()) {
+            val trustedBrowsers = getTrustedBrowsers()
+            if (requestingPackage == null || requestingPackage !in trustedBrowsers) {
+                callback.onSuccess(null)
+                return
+            }
+        }
+
         if (domain.isNullOrEmpty()) {
             callback.onSuccess(null)
             return

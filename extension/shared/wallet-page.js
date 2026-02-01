@@ -231,10 +231,10 @@
       if (idx >= 0) {
         const existing = walletsList[idx];
         if (existing.counter !== counter || existing.email !== em) {
-          walletsList[idx] = {...existing, counter, email: em, created_at: new Date().toISOString()};
+          walletsList[idx] = {...existing, counter, email: em, updated_at: new Date().toISOString()};
         }
       } else {
-        walletsList.push({wallet_name: walletName, chain, counter, email: em, mode: "keygrain", created_at: new Date().toISOString(), notes: ""});
+        walletsList.push({wallet_name: walletName, chain, counter, email: em, mode: "keygrain", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), notes: ""});
       }
 
       // Append audit log
