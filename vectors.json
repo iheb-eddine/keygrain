@@ -1,5 +1,5 @@
 {
-  "_comment": "Cross-platform test vectors (algorithm v3 — Argon2id strengthening mandatory). Every implementation MUST produce identical output for these inputs.",
+  "_comment": "Cross-platform test vectors (algorithm v4 — rejection sampling, 4-byte counter). Every implementation MUST produce identical output for these inputs.",
   "_algorithm": "strengthened = Argon2id(secret, salt='keygrain-strengthen:'+lowercase(email), t=3, m=65536, p=1, len=32); message = lowercase(site) + ':' + lowercase(email) + ':' + str(length) + ':' + str(counter); key = HMAC-SHA256(strengthened, message)",
   "strengthen_vectors": [
     {
@@ -33,7 +33,7 @@
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
       "counter": 1,
-      "expected": "A=4BXNAHYUU_hmVwv$h?",
+      "expected": "?X_BAbv4UHAfw=kYV$mh",
       "_note": "Base case"
     },
     {
@@ -44,7 +44,7 @@
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
       "counter": 1,
-      "expected": "=78WtX?e!hpp6?TMqddW",
+      "expected": "T=p?759$FdXp8eW!qtdX",
       "_note": "Different site — different password"
     },
     {
@@ -55,7 +55,7 @@
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
       "counter": 1,
-      "expected": "A=4BXNAHYUU_hmVwv$h?",
+      "expected": "?X_BAbv4UHAfw=kYV$mh",
       "_note": "Site case insensitive — must match vector 1"
     },
     {
@@ -66,7 +66,7 @@
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
       "counter": 1,
-      "expected": "A=4BXNAHYUU_hmVwv$h?",
+      "expected": "?X_BAbv4UHAfw=kYV$mh",
       "_note": "Email case insensitive — must match vector 1"
     },
     {
@@ -77,7 +77,7 @@
       "length": 16,
       "symbols": "!@#$%&*-_=+?",
       "counter": 1,
-      "expected": "gp4QHeNzA72YX-_A",
+      "expected": "-g_7CA9z$e2HQ3pA",
       "_note": "Different length"
     },
     {
@@ -88,7 +88,7 @@
       "length": 20,
       "symbols": "!@#$%&",
       "counter": 1,
-      "expected": "AR4HdgNVYpUC4tVw9Kw&",
+      "expected": "ARHNdV4gYpUC4tVw9Kw&",
       "_note": "Restricted symbols — different output"
     },
     {
@@ -99,7 +99,7 @@
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
       "counter": 2,
-      "expected": "GnkEz!F9-z_NqkGTy4n2",
+      "expected": "!kGNn-dTzFGEyq82_9nz",
       "_note": "Counter rotation — different output"
     },
     {
@@ -110,7 +110,7 @@
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
       "counter": 1,
-      "expected": "q=xsG_Tm3_MCeJ2GZ4zF",
+      "expected": "srFmxZuM_2e4TJ_+=C3q",
       "_note": "Different secret — different output"
     },
     {
@@ -121,7 +121,7 @@
       "length": 20,
       "symbols": "!@#$%&*-_=+?",
       "counter": 1,
-      "expected": "4$$7A-h4U6YqDm@zb?%4",
+      "expected": "$64@hqN-ADm4U4$%?7Yr",
       "_note": "Non-domain site"
     }
   ],

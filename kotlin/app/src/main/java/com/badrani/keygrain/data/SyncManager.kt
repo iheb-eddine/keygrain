@@ -28,6 +28,7 @@ data class WalletEntry(
     val email: String = "",
     val mode: String = "keygrain",
     val createdAt: String = "",
+    val updatedAt: String = "",
     val notes: String = ""
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -37,6 +38,7 @@ data class WalletEntry(
         put("email", email)
         put("mode", mode)
         put("created_at", createdAt)
+        put("updated_at", updatedAt)
         put("notes", notes)
     }
 
@@ -48,6 +50,7 @@ data class WalletEntry(
             email = obj.optString("email", ""),
             mode = obj.optString("mode", "keygrain"),
             createdAt = obj.optString("created_at", ""),
+            updatedAt = obj.optString("updated_at", ""),
             notes = obj.optString("notes", "")
         )
 
@@ -144,7 +147,9 @@ class SyncManager(
         for ((key, remoteW) in remoteByKey) {
             val localW = localByKey.remove(key)
             if (localW != null) {
-                merged.add(if (localW.createdAt > remoteW.createdAt) localW else remoteW)
+                val localTs = localW.updatedAt.ifEmpty { localW.createdAt }
+                val remoteTs = remoteW.updatedAt.ifEmpty { remoteW.createdAt }
+                merged.add(if (localTs > remoteTs) localW else remoteW)
             } else {
                 if (knownWalletKeys.contains(key)) { /* deleted locally */ }
                 else merged.add(remoteW)
@@ -231,8 +236,16 @@ class SyncManager(
                         return@withContext SyncResult.IntegrityError("checksum mismatch")
                     }
 
-                    // Decrypt
-                    val plaintext = SyncCrypto.decrypt(encryptionKey, blobBytes)
+                    // Decrypt with AAD, fallback to no-AAD only for first-time migration
+                    val aad = lookupId.toByteArray(Charsets.UTF_8)
+                    val plaintext = try {
+                        SyncCrypto.decrypt(encryptionKey, blobBytes, aad).also {
+                            getPrefs(context).edit().putBoolean("aad_enabled", true).apply()
+                        }
+                    } catch (e: AEADBadTagException) {
+                        if (getPrefs(context).getBoolean("aad_enabled", false)) throw e
+                        SyncCrypto.decrypt(encryptionKey, blobBytes)
+                    }
                     val json = String(plaintext, Charsets.UTF_8)
                     val (parsedServices, parsedWallets, parsedAudit) = parseBlobContent(json, serviceManager)
                     remoteServices = parsedServices
@@ -286,7 +299,8 @@ class SyncManager(
             }
 
             val plaintext = blobPayload.toString().toByteArray(Charsets.UTF_8)
-            val encrypted = SyncCrypto.encrypt(encryptionKey, plaintext)
+            val aadEnc = lookupId.toByteArray(Charsets.UTF_8)
+            val encrypted = SyncCrypto.encrypt(encryptionKey, plaintext, aadEnc)
             val encryptedB64 = Base64.encodeToString(encrypted, Base64.NO_WRAP)
             val checksum = sha256Hex(encrypted)
 

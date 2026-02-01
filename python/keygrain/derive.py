@@ -46,17 +46,6 @@ def clear_strengthen_cache() -> None:
     _strengthen_cache.clear()
 
 
-def _stream(secret: bytes, message: bytes, length: int) -> bytes:
-    """Generate pseudorandom byte stream via HMAC-SHA256."""
-    key = hmac.new(secret, message, hashlib.sha256).digest()
-    stream = key
-    ctr = 1
-    while len(stream) < length * 2:
-        stream += hmac.new(key, ctr.to_bytes(1, "big"), hashlib.sha256).digest()
-        ctr += 1
-    return stream
-
-
 def derive_password(
     secret: bytes,
     email: str,
@@ -92,30 +81,42 @@ def derive_password(
     full_charset = UPPER + LOWER + DIGITS + symbols
 
     message = f"{site}:{email}:{length}:{counter}".encode()
-    stream = _stream(effective_secret, message, length)
+    key = hmac.new(effective_secret, message, hashlib.sha256).digest()
+    stream = bytearray(key)
+    ctr = 1
     pos = 0
 
     def next_byte() -> int:
-        nonlocal pos
+        nonlocal pos, stream, ctr
+        if pos >= len(stream):
+            stream += hmac.new(key, ctr.to_bytes(4, "big"), hashlib.sha256).digest()
+            ctr += 1
         b = stream[pos]
         pos += 1
         return b
 
-    # Step 2: Force one char from each category
+    def unbiased_index(n: int) -> int:
+        limit = (256 // n) * n
+        while True:
+            b = next_byte()
+            if b < limit:
+                return b % n
+
+    # Step 1: Force one char from each category
     chars = [
-        UPPER[next_byte() % len(UPPER)],
-        LOWER[next_byte() % len(LOWER)],
-        DIGITS[next_byte() % len(DIGITS)],
-        symbols[next_byte() % len(symbols)],
+        UPPER[unbiased_index(len(UPPER))],
+        LOWER[unbiased_index(len(LOWER))],
+        DIGITS[unbiased_index(len(DIGITS))],
+        symbols[unbiased_index(len(symbols))],
     ]
 
-    # Step 3: Fill remaining
+    # Step 2: Fill remaining
     for _ in range(length - 4):
-        chars.append(full_charset[next_byte() % len(full_charset)])
+        chars.append(full_charset[unbiased_index(len(full_charset))])
 
-    # Step 4: Fisher-Yates shuffle
+    # Step 3: Fisher-Yates shuffle
     for i in range(length - 1, 0, -1):
-        j = next_byte() % (i + 1)
+        j = unbiased_index(i + 1)
         chars[i], chars[j] = chars[j], chars[i]
 
     return "".join(chars)

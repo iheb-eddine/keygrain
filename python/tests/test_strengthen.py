@@ -15,7 +15,7 @@ def test_strengthen_deterministic():
 
 def test_strengthen_vector():
     result = derive_password(b"my-master-secret", "test@gmail.com", site="github.com")
-    assert result == "A=4BXNAHYUU_hmVwv$h?"
+    assert result == "?X_BAbv4UHAfw=kYV$mh"
 
 
 def test_strengthen_different_email():

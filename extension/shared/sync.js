@@ -21,21 +21,25 @@ async function deriveEncryptionKey(secret, email) {
   return hmacSHA256(strengthened, message);
 }
 
-async function encryptBlob(keyBytes, plaintext) {
+async function encryptBlob(keyBytes, plaintext, additionalData) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const cryptoKey = await crypto.subtle.importKey("raw", keyBytes, {name: "AES-GCM"}, false, ["encrypt"]);
-  const ciphertext = await crypto.subtle.encrypt({name: "AES-GCM", iv}, cryptoKey, plaintext);
+  const params = {name: "AES-GCM", iv};
+  if (additionalData) params.additionalData = additionalData;
+  const ciphertext = await crypto.subtle.encrypt(params, cryptoKey, plaintext);
   const result = new Uint8Array(12 + ciphertext.byteLength);
   result.set(iv);
   result.set(new Uint8Array(ciphertext), 12);
   return result;
 }
 
-async function decryptBlob(keyBytes, blob) {
+async function decryptBlob(keyBytes, blob, additionalData) {
   const iv = blob.slice(0, 12);
   const ciphertext = blob.slice(12);
   const cryptoKey = await crypto.subtle.importKey("raw", keyBytes, {name: "AES-GCM"}, false, ["decrypt"]);
-  return new Uint8Array(await crypto.subtle.decrypt({name: "AES-GCM", iv}, cryptoKey, ciphertext));
+  const params = {name: "AES-GCM", iv};
+  if (additionalData) params.additionalData = additionalData;
+  return new Uint8Array(await crypto.subtle.decrypt(params, cryptoKey, ciphertext));
 }
 
 function arrayBufferToBase64(buffer) {
@@ -133,7 +137,7 @@ function walletKey(w) {
 /**
  * Merge local and remote wallets.
  * Merge key: wallet_name + chain (lowercased).
- * Conflict: most recent created_at wins.
+ * Conflict: most recent updated_at wins (falls back to created_at if updated_at absent).
  * Absence = deletion (same as services).
  */
 function mergeWallets(localWallets, remoteWallets, knownWalletKeys) {
@@ -149,8 +153,10 @@ function mergeWallets(localWallets, remoteWallets, knownWalletKeys) {
   for (const [key, remote] of remoteByKey) {
     const local = localByKey.get(key);
     if (local) {
-      // Both have it — most recent created_at wins
-      merged.push(local.created_at > remote.created_at ? local : remote);
+      // Both have it — most recent updated_at wins
+      const localTs = local.updated_at || local.created_at || "";
+      const remoteTs = remote.updated_at || remote.created_at || "";
+      merged.push(localTs > remoteTs ? local : remote);
       localByKey.delete(key);
     } else {
       // Remote-only: new or deleted locally?
@@ -320,8 +326,18 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       const checksum = await sha256Hex(blobBytes);
       if (checksum !== remote.checksum) throw new Error("checksum_mismatch");
 
-      // Decrypt
-      const plaintext = await decryptBlob(encKey, blobBytes);
+      // Decrypt with AAD, fallback to no-AAD only for first-time migration
+      const aad = new TextEncoder().encode(lookupId);
+      let plaintext;
+      try {
+        plaintext = await decryptBlob(encKey, blobBytes, aad);
+        await chrome.storage.local.set({ aadEnabled: true });
+      } catch (e) {
+        // Only allow no-AAD fallback if we've never successfully decrypted with AAD
+        const { aadEnabled } = await chrome.storage.local.get("aadEnabled");
+        if (aadEnabled) throw e;
+        plaintext = await decryptBlob(encKey, blobBytes);
+      }
       const parsed = JSON.parse(new TextDecoder().decode(plaintext));
       const blobContent = parseBlobContent(parsed);
       remoteServices = blobContent.services;
@@ -332,9 +348,9 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       if (remoteMetadata.length !== remoteServices.length) throw new Error("metadata_length_mismatch");
 
       // Validate metadata integrity against cache
-      const cached = await getMetadataCache();
-      if (cached) {
-        validateMetadataIntegrity(remoteMetadata, cached);
+      const cachedMeta = await getMetadataCache();
+      if (cachedMeta) {
+        validateMetadataIntegrity(remoteMetadata, cachedMeta);
       }
     } else if (getResp.status === 404) {
       // No remote state — push everything
@@ -363,7 +379,8 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
 
     const blobPayload = {services: contentArray, wallets: mergedWallets, wallet_audit_log: mergedAuditLog};
     const plaintext = new TextEncoder().encode(JSON.stringify(blobPayload));
-    const encrypted = await encryptBlob(encKey, plaintext);
+    const aadEnc = new TextEncoder().encode(lookupId);
+    const encrypted = await encryptBlob(encKey, plaintext, aadEnc);
     const encryptedB64 = arrayBufferToBase64(encrypted);
     const checksum = await sha256Hex(encrypted);
 

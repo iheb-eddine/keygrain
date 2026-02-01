@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -15,7 +16,7 @@ import (
 
 func setupSyncServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	s := newSyncServer(t.TempDir())
+	s := newSyncServer(t.TempDir(), context.Background())
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/sync/", s.syncHandler)
 	return httptest.NewServer(mux)

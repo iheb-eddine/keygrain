@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun WalletScreen(
     masterSecret: String,
+    isDemoMode: Boolean = false,
     defaultEmail: String,
     onBack: () -> Unit
 ) {
@@ -208,6 +209,7 @@ fun WalletScreen(
                             mnemonic = result
 
                             // Persist wallet entry and audit log
+                            if (!isDemoMode) {
                             val syncMgr = SyncManager()
                             val wallets = syncMgr.getWallets(context).toMutableList()
                             val wKey = walletName.trim().lowercase() + ":" + selectedChain.lowercase()
@@ -215,16 +217,17 @@ fun WalletScreen(
                             if (idx >= 0) {
                                 val existing = wallets[idx]
                                 if (existing.counter != c || existing.email != email.trim()) {
-                                    wallets[idx] = existing.copy(counter = c, email = email.trim(), createdAt = java.time.Instant.now().toString())
+                                    wallets[idx] = existing.copy(counter = c, email = email.trim(), updatedAt = java.time.Instant.now().toString())
                                 }
                             } else {
-                                wallets.add(WalletEntry(walletName = walletName.trim(), chain = selectedChain, counter = c, email = email.trim(), mode = "keygrain", createdAt = java.time.Instant.now().toString(), notes = ""))
+                                wallets.add(WalletEntry(walletName = walletName.trim(), chain = selectedChain, counter = c, email = email.trim(), mode = "keygrain", createdAt = java.time.Instant.now().toString(), updatedAt = java.time.Instant.now().toString(), notes = ""))
                             }
                             syncMgr.saveWallets(context, wallets)
 
                             val auditLog = syncMgr.getAuditLog(context).toMutableList()
                             auditLog.add(WalletAuditEntry(action = "derive", walletName = walletName.trim(), chain = selectedChain, counter = c, timestamp = java.time.Instant.now().toString(), verification = "passed"))
                             syncMgr.saveAuditLog(context, auditLog)
+                            }
                         } catch (e: Exception) {
                             errorMsg = e.message
                         }

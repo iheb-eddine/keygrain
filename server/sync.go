@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -85,24 +86,66 @@ type syncPutResponse struct {
 	ETag     string            `json:"etag"`
 }
 
+// dummyHash is used to equalize timing between 404 and 401 responses.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("timing-pad"), 12)
+
+type lockEntry struct {
+	mu         sync.Mutex
+	lastAccess time.Time
+	refs       int32
+}
+
 type syncServer struct {
 	dataDir string
 	mu      sync.Mutex
-	locks   map[string]*sync.Mutex
+	locks   map[string]*lockEntry
 }
 
-func newSyncServer(dataDir string) *syncServer {
+func newSyncServer(dataDir string, ctx context.Context) *syncServer {
 	dir := filepath.Join(dataDir, "sync")
-	return &syncServer{dataDir: dir, locks: make(map[string]*sync.Mutex)}
+	s := &syncServer{dataDir: dir, locks: make(map[string]*lockEntry)}
+	go s.cleanupLocks(ctx, 60*time.Second, 10*time.Minute)
+	return s
 }
 
-func (s *syncServer) getLock(lookupID string) *sync.Mutex {
+func (s *syncServer) getLock(lookupID string) *lockEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.locks[lookupID]; !ok {
-		s.locks[lookupID] = &sync.Mutex{}
+	entry, ok := s.locks[lookupID]
+	if !ok {
+		entry = &lockEntry{}
+		s.locks[lookupID] = entry
 	}
-	return s.locks[lookupID]
+	entry.lastAccess = time.Now()
+	entry.refs++
+	return entry
+}
+
+func (s *syncServer) releaseLock(lookupID string, entry *lockEntry) {
+	entry.mu.Unlock()
+	s.mu.Lock()
+	entry.refs--
+	s.mu.Unlock()
+}
+
+func (s *syncServer) cleanupLocks(ctx context.Context, interval, ttl time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.mu.Lock()
+			threshold := time.Now().Add(-ttl)
+			for k, entry := range s.locks {
+				if entry.refs == 0 && entry.lastAccess.Before(threshold) {
+					delete(s.locks, k)
+				}
+			}
+			s.mu.Unlock()
+		}
+	}
 }
 
 func (s *syncServer) filePath(lookupID string) string {
@@ -128,6 +171,7 @@ func (s *syncServer) syncHandler(w http.ResponseWriter, r *http.Request) {
 func (s *syncServer) handleGet(w http.ResponseWriter, r *http.Request, lookupID string) {
 	username, password, ok := r.BasicAuth()
 	if !ok || username != lookupID {
+		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		jsonError(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
@@ -135,6 +179,7 @@ func (s *syncServer) handleGet(w http.ResponseWriter, r *http.Request, lookupID 
 	path := s.filePath(lookupID)
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
+		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		jsonError(w, `{"error":"not found"}`, http.StatusNotFound)
 		return
 	}
@@ -169,6 +214,7 @@ func (s *syncServer) handleGet(w http.ResponseWriter, r *http.Request, lookupID 
 func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID string) {
 	username, password, ok := r.BasicAuth()
 	if !ok || username != lookupID {
+		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		jsonError(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
@@ -222,8 +268,8 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 	}
 
 	lock := s.getLock(lookupID)
-	lock.Lock()
-	defer lock.Unlock()
+	lock.mu.Lock()
+	defer s.releaseLock(lookupID, lock)
 
 	path := s.filePath(lookupID)
 	now := time.Now().UTC().Format(time.RFC3339)

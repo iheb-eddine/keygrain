@@ -1,6 +1,6 @@
 # Keygrain Algorithm Specification
 
-**Version:** 3 (Argon2id mandatory)
+**Version:** 4 (rejection sampling, 4-byte counter)
 **Status:** Authoritative reference
 
 This document fully specifies the Keygrain deterministic password derivation algorithm. An implementor can produce byte-identical output on any platform using only this specification and the test vectors.
@@ -91,39 +91,55 @@ The stream provides pseudorandom bytes for character selection and shuffling.
 ```
 stream = key
 ctr = 1
-while LENGTH(stream) < length * 2:
-    stream = stream || HMAC-SHA256(key = key, message = BYTE(ctr))
-    ctr = ctr + 1
+pos = 0
+
+function next_byte():
+    if pos >= LENGTH(stream):
+        stream = stream || HMAC-SHA256(key = key, message = UINT32_BE(ctr))
+        ctr = ctr + 1
+    byte = stream[pos]
+    pos = pos + 1
+    return byte
 ```
 
-`BYTE(ctr)` is a single byte with value `ctr` (big-endian, 1 byte). The stream must be at least `length * 2` bytes. Bytes are consumed sequentially via a position counter starting at 0.
+`UINT32_BE(ctr)` is the counter as a 4-byte big-endian unsigned integer (e.g., counter 1 → `0x00000001`).
+
+Implementations MAY pre-allocate stream bytes for performance, but MUST extend on demand if `pos` reaches the end.
 
 ### 4.4 Character Selection
 
-Define `next_byte()` as: return `stream[pos]`, then `pos = pos + 1`.
+Define `unbiased_index(n)`:
+```
+function unbiased_index(n):
+    limit = FLOOR(256 / n) * n
+    loop:
+        b = next_byte()
+        if b < limit:
+            return b % n
+```
 
 **Step 1 — Force one character from each category (in order):**
 
 ```
-chars[0] = UPPER[next_byte() % 24]
-chars[1] = LOWER[next_byte() % 23]
-chars[2] = DIGITS[next_byte() % 8]
-chars[3] = symbols[next_byte() % LENGTH(symbols)]
+chars[0] = UPPER[unbiased_index(24)]
+chars[1] = LOWER[unbiased_index(23)]
+chars[2] = DIGITS[unbiased_index(8)]
+chars[3] = symbols[unbiased_index(LENGTH(symbols))]
 ```
 
 **Step 2 — Fill remaining positions from full charset:**
 
 ```
 full_charset = UPPER + LOWER + DIGITS + symbols
-for i in 0..(length - 5):
-    chars[4 + i] = full_charset[next_byte() % LENGTH(full_charset)]
+for i = 0, 1, ..., length - 5:
+    chars[4 + i] = full_charset[unbiased_index(LENGTH(full_charset))]
 ```
 
 ### 4.5 Fisher-Yates Shuffle
 
 ```
 for i from (length - 1) down to 1:
-    j = next_byte() % (i + 1)
+    j = unbiased_index(i + 1)
     swap(chars[i], chars[j])
 ```
 
@@ -243,15 +259,15 @@ Vectors 2 and 3 MUST produce identical output (email case normalization).
 
 | secret (UTF-8) | site | email | length | symbols | counter | expected |
 |---|---|---|---|---|---|---|
-| `my-master-secret` | `github.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `A=4BXNAHYUU_hmVwv$h?` |
-| `my-master-secret` | `google.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `=78WtX?e!hpp6?TMqddW` |
-| `my-master-secret` | `GitHub.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `A=4BXNAHYUU_hmVwv$h?` |
-| `my-master-secret` | `github.com` | `TEST@Gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `A=4BXNAHYUU_hmVwv$h?` |
-| `my-master-secret` | `github.com` | `test@gmail.com` | 16 | `!@#$%&*-_=+?` | 1 | `gp4QHeNzA72YX-_A` |
-| `my-master-secret` | `github.com` | `test@gmail.com` | 20 | `!@#$%&` | 1 | `AR4HdgNVYpUC4tVw9Kw&` |
-| `my-master-secret` | `github.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 2 | `GnkEz!F9-z_NqkGTy4n2` |
-| `different-secret` | `github.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `q=xsG_Tm3_MCeJ2GZ4zF` |
-| `my-master-secret` | `home-wifi` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `4$$7A-h4U6YqDm@zb?%4` |
+| `my-master-secret` | `github.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `?X_BAbv4UHAfw=kYV$mh` |
+| `my-master-secret` | `google.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `T=p?759$FdXp8eW!qtdX` |
+| `my-master-secret` | `GitHub.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `?X_BAbv4UHAfw=kYV$mh` |
+| `my-master-secret` | `github.com` | `TEST@Gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `?X_BAbv4UHAfw=kYV$mh` |
+| `my-master-secret` | `github.com` | `test@gmail.com` | 16 | `!@#$%&*-_=+?` | 1 | `-g_7CA9z$e2HQ3pA` |
+| `my-master-secret` | `github.com` | `test@gmail.com` | 20 | `!@#$%&` | 1 | `ARHNdV4gYpUC4tVw9Kw&` |
+| `my-master-secret` | `github.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 2 | `!kGNn-dTzFGEyq82_9nz` |
+| `different-secret` | `github.com` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `srFmxZuM_2e4TJ_+=C3q` |
+| `my-master-secret` | `home-wifi` | `test@gmail.com` | 20 | `!@#$%&*-_=+?` | 1 | `$64@hqN-ADm4U4$%?7Yr` |
 
 Vectors 1, 3, and 4 MUST produce identical output (site and email case normalization).
 
@@ -280,7 +296,6 @@ Vectors 1, 3, and 4 MUST produce identical output (site and email case normaliza
 
 - **Compromised device:** If an attacker extracts the raw secret from memory, strengthening provides no protection.
 - **Very weak secrets:** A 4-digit PIN is brute-forceable (~3 hours at 1s/guess for 10⁴ candidates).
-- **Modulo bias:** Character selection uses `byte % charset_length`. For the full charset (67 characters), some characters have selection probability 4/256 vs 3/256 — a relative excess of ~5%. This reduces total password entropy by less than 1 bit for all supported lengths. Acceptable for password generation.
 
 ---
 
@@ -309,13 +324,7 @@ This normalization is applied before the site enters the message string.
 
 ### 10.3 Stream Length
 
-The stream must be at least `length * 2` bytes. The exact consumption is:
-- 4 bytes for forced characters
-- `length - 4` bytes for fill
-- `length - 1` bytes for shuffle
-- Total: `2 * length - 1` bytes
-
-Using `length * 2` provides a 1-byte margin and simplifies the calculation.
+Byte consumption is non-deterministic due to rejection sampling. The stream extends on demand via HMAC-SHA256 rounds with a 4-byte big-endian counter. Implementations MAY pre-allocate `length * 3` bytes as a performance hint.
 
 ### 10.4 Minimum Password Length
 

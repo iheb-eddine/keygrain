@@ -99,9 +99,17 @@ keygrain/
 
 | Feature | Commit | Description |
 |---------|--------|-------------|
+| Web generator UX reorder | pending | Field order: email→secret→fingerprint→site, guidance text for new users |
+| Web generator dark theme | pending | CSS restyle to match landing page (dark bg, accent colors, 8px radii) |
 | Rate limiting | 16d3ace | Token bucket per lookup_id + per IP, 16 tests |
 | Secret fingerprint | 57078de | 4 colored circles, Wong palette, all platforms |
 | Progressive disclosure | e0a548c | details/summary for web, AnimatedVisibility for Android |
+
+## Resolved (Not Bugs)
+
+| Report | Resolution |
+|--------|-----------|
+| Web generator site field not affecting password | Not a bug. Site IS in derivation. User was observing fingerprint (which is intentionally site-independent). |
 
 ## Recently Completed (P1)
 

@@ -8,4 +8,4 @@ build/
 local.properties
 *.apk
 .env
-server/tools/rules-signing.key
+server/tools/rules-signing.keySESSION_HANDOVER.md

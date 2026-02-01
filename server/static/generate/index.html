@@ -6,40 +6,67 @@
     <title>Keygrain — Generate Password</title>
     <link rel="manifest" href="./manifest.json">
     <style>
-        body { font-family: system-ui, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --font: system-ui, -apple-system, sans-serif;
+        }
+        body { font-family: var(--font); max-width: 600px; margin: 80px auto; padding: 0 20px; color: var(--text); background: var(--bg); }
         h1 { font-size: 2rem; }
-        label { display: block; margin-top: 1rem; color: #555; font-size: 0.9rem; }
-        input { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 3px; font-size: 1rem; box-sizing: border-box; }
-        input:focus { outline: none; border-color: #666; }
-        button { padding: 10px 20px; font-size: 1rem; border: none; border-radius: 3px; cursor: pointer; }
-        #generate { margin-top: 1.5rem; background: #333; color: #fff; }
-        #generate:hover { background: #555; }
-        #generate:disabled { background: #999; cursor: wait; }
+        label { display: block; margin-top: 1rem; color: var(--text-secondary); font-size: 0.9rem; }
+        input { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; box-sizing: border-box; background: var(--surface); color: var(--text); }
+        input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2); }
+        button { padding: 10px 20px; font-size: 1rem; border: none; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
+        #generate { margin-top: 1.5rem; background: var(--accent); color: #fff; }
+        #generate:hover { background: var(--accent-hover); }
+        #generate:disabled { background: var(--border); color: var(--text-secondary); cursor: not-allowed; }
         .output-row { display: flex; gap: 8px; margin-top: 1.5rem; align-items: center; }
-        .output-row input { flex: 1; font-family: monospace; background: #f4f4f4; }
-        #copy { background: #f4f4f4; border: 1px solid #ccc; font-size: 1.2rem; padding: 8px 12px; }
-        #copy:hover { background: #e0e0e0; }
-        #status { margin-top: 0.5rem; color: #555; font-size: 0.85rem; min-height: 1.2em; }
+        .output-row input { flex: 1; font-family: monospace; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
+        #copy { background: var(--surface); border: 1px solid var(--border); font-size: 1.2rem; padding: 8px 12px; color: var(--text); }
+        #copy:hover { background: var(--border); }
+        #status { margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.85rem; min-height: 1.2em; }
         #fingerprint { display: flex; gap: 6px; margin-top: 6px; min-height: 12px; }
-        .fp-dot { width: 12px; height: 12px; border-radius: 50%; }
-        details summary { cursor: pointer; font-size: 0.9rem; margin-top: 1rem; color: #555; list-style: none; }
+        .fp-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border); }
+        details summary { cursor: pointer; font-size: 0.9rem; margin-top: 1rem; color: var(--text-secondary); list-style: none; }
+        details summary:hover { color: var(--text); }
         details summary::-webkit-details-marker { display: none; }
         details .details-content { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 200ms ease; overflow: hidden; }
         details[open] .details-content { grid-template-rows: 1fr; }
-        details .details-content > div { overflow: hidden; }
+        details .details-content > div { overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 8px; }
         @media (prefers-reduced-motion: reduce) { details .details-content { transition: none; } }
+        ::selection { background: var(--accent); color: #fff; }
     </style>
 </head>
 <body>
     <h1>Keygrain — Generate Password</h1>
+    <p style="color: var(--text-secondary); font-size: 0.95rem;">
+      Generate unique passwords from your secret — nothing is stored, just re-enter the same inputs to recreate your password anytime.
+    </p>
     <form id="form">
-        <label for="secret">Secret</label>
-        <input type="password" id="secret" autocomplete="off" required>
-        <div id="fingerprint" aria-label="Secret fingerprint"></div>
-        <label for="site">Site</label>
-        <input type="text" id="site" autocomplete="off" required>
         <label for="email">Email</label>
-        <input type="email" id="email" autocomplete="off" required>
+        <input type="email" id="email" autocomplete="off" required aria-describedby="email-hint">
+        <small id="email-hint" style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
+          Your email — combined with your secret to generate passwords
+        </small>
+        <label for="secret">Secret</label>
+        <input type="password" id="secret" autocomplete="off" required aria-describedby="secret-hint">
+        <small id="secret-hint" style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
+          Your master passphrase — memorize it, never store it
+        </small>
+        <div id="fingerprint" role="img" aria-label="Visual fingerprint" aria-describedby="fingerprint-hint"></div>
+        <small id="fingerprint-hint" style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
+          These dots confirm your secret + email combo. Same colors = same inputs.
+        </small>
+        <label for="site">Site</label>
+        <input type="text" id="site" autocomplete="off" required aria-describedby="site-hint">
+        <small id="site-hint" style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
+          Domain or service name (e.g. github.com)
+        </small>
         <details id="options-panel">
             <summary>⚙️ Options</summary>
             <div class="details-content"><div>
@@ -96,7 +123,9 @@
         let stream = new Uint8Array(key);
         let counter = 1;
         while (stream.length < needed) {
-            const ext = await hmacSHA256(key, new Uint8Array([counter]));
+            const ctrBuf = new Uint8Array(4);
+            new DataView(ctrBuf.buffer).setUint32(0, counter);
+            const ext = await hmacSHA256(key, ctrBuf);
             const combined = new Uint8Array(stream.length + ext.length);
             combined.set(stream);
             combined.set(ext, stream.length);
@@ -110,24 +139,33 @@
         const enc = new TextEncoder();
         const strengthened = await strengthen(secret, email);
         const message = enc.encode(site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + counter);
-        const stream = await buildStream(strengthened, message, length * 2);
+        const stream = await buildStream(strengthened, message, length * 4);
         const fullCharset = UPPER + LOWER + DIGITS + symbols;
         let pos = 0;
         const nextByte = () => stream[pos++];
 
+        function unbiasedIndex(n) {
+            const limit = Math.floor(256 / n) * n;
+            while (true) {
+                const b = nextByte();
+                if (b < limit) return b % n;
+            }
+        }
+
         const chars = [
-            UPPER[nextByte() % UPPER.length],
-            LOWER[nextByte() % LOWER.length],
-            DIGITS[nextByte() % DIGITS.length],
-            symbols[nextByte() % symbols.length],
+            UPPER[unbiasedIndex(UPPER.length)],
+            LOWER[unbiasedIndex(LOWER.length)],
+            DIGITS[unbiasedIndex(DIGITS.length)],
+            symbols[unbiasedIndex(symbols.length)],
         ];
         for (let i = 0; i < length - 4; i++) {
-            chars.push(fullCharset[nextByte() % fullCharset.length]);
+            chars.push(fullCharset[unbiasedIndex(fullCharset.length)]);
         }
         for (let i = length - 1; i > 0; i--) {
-            const j = nextByte() % (i + 1);
+            const j = unbiasedIndex(i + 1);
             [chars[i], chars[j]] = [chars[j], chars[i]];
         }
+        if (pos > stream.length) throw new Error("stream exhausted");
         return chars.join("");
     }
 

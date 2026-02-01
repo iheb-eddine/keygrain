@@ -18,6 +18,7 @@ object SshEngine {
         require(keyName.isNotEmpty()) { "keyName must not be empty" }
         require(!keyName.contains(Regex("\\s"))) { "keyName must not contain whitespace" }
         require(counter >= 1) { "counter must be >= 1" }
+        require(!email.contains(Regex("[\\x00-\\x1f\\x7f]"))) { "email must not contain control characters" }
 
         val strengthened = Keygrain.strengthenSecret(secret, email)
         val message = "${email.lowercase()}:${keyName.lowercase()}:$counter:keygrain-ssh".toByteArray(Charsets.UTF_8)
@@ -30,6 +31,7 @@ object SshEngine {
     }
 
     fun formatAuthorizedKeys(publicKey: ByteArray, comment: String): String {
+        require(!comment.contains(Regex("[\\x00-\\x1f\\x7f]"))) { "comment must not contain control characters" }
         val keyType = "ssh-ed25519".toByteArray(Charsets.UTF_8)
         val blob = ByteArray(4 + keyType.size + 4 + publicKey.size)
         var offset = 0

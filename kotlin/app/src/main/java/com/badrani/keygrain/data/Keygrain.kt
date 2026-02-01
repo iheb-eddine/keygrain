@@ -36,6 +36,10 @@ object Keygrain {
     }
 
     fun clearStrengthenCache() {
+        strengthenCache?.let { (cachedSecret, _, cachedResult) ->
+            cachedSecret.fill(0)
+            cachedResult.fill(0)
+        }
         strengthenCache = null
     }
 
@@ -67,30 +71,39 @@ object Keygrain {
         val stream = mutableListOf<Byte>()
         stream.addAll(key.toList())
         var ctr = 1
-        while (stream.size < length * 2) {
-            stream.addAll(hmacSha256(key, byteArrayOf(ctr.toByte())).toList())
-            ctr++
-        }
-
         var pos = 0
+
         fun nextByte(): Int {
+            if (pos >= stream.size) {
+                val ctrBytes = java.nio.ByteBuffer.allocate(4).putInt(ctr).array()
+                stream.addAll(hmacSha256(key, ctrBytes).toList())
+                ctr++
+            }
             val b = stream[pos].toInt() and 0xFF
             pos++
             return b
         }
 
+        fun unbiasedIndex(n: Int): Int {
+            val limit = (256 / n) * n
+            while (true) {
+                val b = nextByte()
+                if (b < limit) return b % n
+            }
+        }
+
         val fullCharset = UPPER + LOWER + DIGITS + symbols
         val chars = mutableListOf(
-            UPPER[nextByte() % UPPER.length],
-            LOWER[nextByte() % LOWER.length],
-            DIGITS[nextByte() % DIGITS.length],
-            symbols[nextByte() % symbols.length],
+            UPPER[unbiasedIndex(UPPER.length)],
+            LOWER[unbiasedIndex(LOWER.length)],
+            DIGITS[unbiasedIndex(DIGITS.length)],
+            symbols[unbiasedIndex(symbols.length)],
         )
         repeat(length - 4) {
-            chars.add(fullCharset[nextByte() % fullCharset.length])
+            chars.add(fullCharset[unbiasedIndex(fullCharset.length)])
         }
         for (i in (length - 1) downTo 1) {
-            val j = nextByte() % (i + 1)
+            val j = unbiasedIndex(i + 1)
             val tmp = chars[i]
             chars[i] = chars[j]
             chars[j] = tmp

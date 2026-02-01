@@ -111,6 +111,13 @@ fun MainScreen() {
                     isDemoMode = false
                     SecretManager.sessionActive = false
                     Keygrain.clearStrengthenCache()
+                    if (android.os.Build.VERSION.SDK_INT >= 28) {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.clearPrimaryClip()
+                    }
+                    if (!canUseBiometric(context)) {
+                        secretManager.clearSecret()
+                    }
                 }
             )
         }
@@ -231,7 +238,9 @@ private fun UnlockScreen(
             Button(
                 onClick = {
                     if (secret.isNotBlank()) {
-                        secretManager.saveSecret(secret)
+                        if (canUseBiometric(context)) {
+                            secretManager.saveSecret(secret)
+                        }
                         onUnlocked(secret)
                     }
                 },
@@ -333,6 +342,11 @@ private fun ServiceListScreen(
     // Auto-sync on unlock (initial load)
     LaunchedEffect(Unit) { performAutoSync() }
 
+    // Clear sessionActive if composable is disposed (Activity death)
+    DisposableEffect(Unit) {
+        onDispose { SecretManager.sessionActive = false }
+    }
+
     // Auto-lock timer (15 min)
     var lockSecondsRemaining by remember { mutableIntStateOf(15 * 60) }
     var showLockWarning by remember { mutableStateOf(false) }
@@ -412,6 +426,7 @@ private fun ServiceListScreen(
     if (showWalletScreen) {
         WalletScreen(
             masterSecret = masterSecret,
+            isDemoMode = isDemoMode,
             defaultEmail = services.groupingBy { it.email }.eachCount()
                 .maxByOrNull { it.value }?.key ?: "",
             onBack = { showWalletScreen = false }
