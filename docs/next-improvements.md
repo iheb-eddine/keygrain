@@ -45,7 +45,7 @@ Output from a 3-agent brainstorming session (product_lead, security_expert, ux_d
 ## Key Decisions
 
 - **Modulo bias** is NOT practically exploitable (~2 bits entropy loss) — defer to P2
-- **TOTP** deferred to preserve "nothing stored" brand identity
+- **TOTP** deferred to preserve "nothing to breach" brand identity
 - **Passkeys** parked — deterministic derivation fundamentally incompatible with hardware-bound keys
 - **Migration wizard** elevated to P1 as critical growth lever
 - **Accessibility** elevated to P0 for store submission requirements

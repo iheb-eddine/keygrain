@@ -1,10 +1,36 @@
 [project]
 name = "keygrain"
 version = "0.1.0"
-description = "Deterministic password derivation from master secret + email"
+description = "Deterministic password, SSH key, and wallet derivation from a master secret"
 requires-python = ">=3.10"
 license = "MIT"
-dependencies = ["argon2-cffi>=23.1.0", "cryptography>=42.0.0"]
+license-files = ["LICENSE"]
+readme = "README.md"
+authors = [
+    {name = "Ismail Badrani"},
+]
+keywords = ["password", "derivation", "deterministic", "argon2", "ssh", "wallet", "bip39"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Security :: Cryptography",
+]
+dependencies = [
+    "argon2-cffi>=23.1.0",
+    "cryptography>=42.0.0",
+]
+
+[project.urls]
+Homepage = "https://keygrain.secbytech.com"
+Source = "https://dev.secbytech.com/tools/keygrain"
+Issues = "https://dev.secbytech.com/tools/keygrain/-/issues"
 
 [project.scripts]
 keygrain = "keygrain.cli:main"

@@ -355,7 +355,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     } else if (getResp.status === 404) {
       // No remote state — push everything
     } else if (getResp.status === 401) {
-      throw new Error("auth_failed");
+      // Auth mismatch (e.g., algorithm migration) — treat as fresh start
     } else {
       throw new Error("server_error");
     }
