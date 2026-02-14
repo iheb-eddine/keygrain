@@ -62,3 +62,9 @@ Do NOT report these in bug bounties, code reviews, or security audits.
 **Issue:** Argon2id with parallelism=1 doesn't penalize GPU attackers (no thread synchronization overhead).
 
 **Why accepted:** Parallelism=1 is required for deterministic cross-platform output. Higher parallelism would produce different results on different thread schedulings. The 64 MiB memory requirement is the primary GPU defense (GPUs have limited per-thread memory).
+
+## 11. Breaches.json Not Signature-Verified
+
+**Issue:** `rules.json` is verified with Ed25519 signature before use, but `breaches.json` is not. A compromised CDN or MITM could inject fake breach notifications.
+
+**Why accepted:** Transport is HTTPS (TLS protects integrity in transit). Breach notifications only trigger UI warnings — they cannot change passwords, delete data, or exfiltrate secrets. The worst case is a false "your password was breached" notification. Adding signature verification requires a signing workflow and key distribution for breaches.json updates. Will be added when the signing toolchain is extended.

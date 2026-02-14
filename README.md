@@ -93,7 +93,7 @@ Full specification: [SPEC.md](SPEC.md)
 
 | Platform | Description | Access |
 |----------|-------------|--------|
-| Browser extension | Chrome + Firefox (MV3) | [Extension store](#) or build from `extension/` |
+| Browser extension | Chrome (MV3) + Firefox (MV2) | [Extension store](#) or build from `extension/` |
 | Android app | Kotlin + Jetpack Compose | [APK download](https://keygrain.secbytech.com) |
 | Web generator | Client-side PWA | [keygrain.secbytech.com/generate](https://keygrain.secbytech.com/generate/) |
 | Python library + CLI | Library and command-line tool | `pip install` from repo |

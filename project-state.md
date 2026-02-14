@@ -99,8 +99,15 @@ keygrain/
 
 | Feature | Commit | Description |
 |---------|--------|-------------|
-| Web generator UX reorder | pending | Field order: email→secret→fingerprint→site, guidance text for new users |
-| Web generator dark theme | pending | CSS restyle to match landing page (dark bg, accent colors, 8px radii) |
+| Web generator UX reorder | 91786c1 | Field order: email→secret→fingerprint→site, guidance text for new users |
+| Web generator dark theme | 120e6c3 | CSS restyle to match landing page (dark bg, accent colors, 8px radii) |
+| Modulo bias fix | 92a983a | Rejection sampling (spec v4), 4-byte counter, all platforms |
+| Kotlin spec v4 parity | dd279cb | Rejection sampling + 4-byte counter in Kotlin |
+| Doc fixes (spec/limitations) | da2cc26 | SPEC loop notation, ACCEPTED_LIMITATIONS §3/§6 resolved |
+| Fingerprint + aria + test | ee5f7d3 | Dot border visibility, role=img, rejection boundary test |
+| PyPI package prep | b1997fb | PEP 621 pyproject.toml, README, LICENSE, __main__.py |
+| Extension store prep | 23de745 | Chrome/Firefox listings, permissions justification, privacy update |
+| Bug hunt round 2 fixes | d3e2630 | Keystore removed, .gitignore fixed, PWA colors, README MV2 |
 | Rate limiting | 16d3ace | Token bucket per lookup_id + per IP, 16 tests |
 | Secret fingerprint | 57078de | 4 colored circles, Wong palette, all platforms |
 | Progressive disclosure | e0a548c | details/summary for web, AnimatedVisibility for Android |

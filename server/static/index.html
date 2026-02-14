@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Keygrain — One secret. Every password. Nothing stored.</title>
+    <title>Keygrain — One secret. Every password. Nothing to breach.</title>
     <style>
         :root {
             --bg: #0f1117;
@@ -37,14 +37,16 @@
         .how { padding: 80px 24px; }
         .section-title { text-align: center; font-size: 28px; margin-bottom: 12px; }
         .section-sub { text-align: center; color: var(--text-secondary); margin-bottom: 48px; }
-        .derivation { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
-        .derivation .input-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; text-align: center; min-width: 140px; }
-        .derivation .input-box .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 4px; }
-        .derivation .input-box .value { font-weight: 600; }
-        .derivation .op { font-size: 24px; color: var(--text-secondary); }
-        .derivation .output-box { background: var(--accent); border-radius: 8px; padding: 16px 20px; text-align: center; min-width: 160px; }
-        .derivation .output-box .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.8; margin-bottom: 4px; }
-        .derivation .output-box .value { font-weight: 600; font-family: monospace; }
+        .seed-block { text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px 24px; max-width: 360px; margin: 0 auto 24px; }
+        .seed-block .seed-label { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; }
+        .seed-block .secret-value { font-size: 22px; font-weight: 700; letter-spacing: 2px; margin-bottom: 8px; }
+        .seed-block .email-anchor { font-size: 13px; color: var(--text-secondary); }
+        .flow-indicator { text-align: center; color: var(--text-secondary); font-size: 15px; margin-bottom: 24px; }
+        .fan-out { max-width: 420px; margin: 0 auto 24px; display: flex; flex-direction: column; gap: 12px; }
+        .fan-out .row { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 20px; }
+        .fan-out .row .site { font-size: 15px; color: var(--text); }
+        .fan-out .row .arrow { color: var(--text-secondary); margin: 0 12px; }
+        .fan-out .row .password { font-family: monospace; font-weight: 600; color: var(--accent); font-size: 15px; }
         .how-note { text-align: center; color: var(--text-secondary); font-size: 14px; }
 
         /* Security */
@@ -74,8 +76,11 @@
             .hero h1 { font-size: 28px; }
             .hero p { font-size: 17px; }
             .hero-buttons { flex-direction: column; align-items: stretch; }
-            .derivation { flex-direction: column; }
-            .derivation .op { transform: rotate(90deg); }
+            .seed-block { max-width: 100%; }
+            .fan-out { max-width: 100%; }
+            .fan-out .row { padding: 10px 14px; }
+            .fan-out .row .site { font-size: 13px; }
+            .fan-out .row .password { font-size: 13px; }
             .security-grid, .download-grid { grid-template-columns: 1fr; }
         }
     </style>
@@ -85,7 +90,7 @@
 <section class="hero">
     <div class="container">
         <img src="/logo-128.png" alt="Keygrain" width="80" height="80" style="margin-bottom: 24px; border-radius: 16px;">
-        <h1>One secret. Every password. Nothing stored.</h1>
+        <h1>One secret. Every password. Nothing to breach.</h1>
         <p>Keygrain derives unique passwords from a single secret you remember. No vault. No database. No account. Just math.</p>
         <div class="hero-buttons">
             <a href="/generate/" class="btn btn-primary">Try Web Generator</a>
@@ -97,17 +102,19 @@
 <section class="how">
     <div class="container">
         <h2 class="section-title">How it works</h2>
-        <p class="section-sub">Deterministic derivation — same inputs always produce the same password.</p>
-        <div class="derivation">
-            <div class="input-box"><div class="label">Secret</div><div class="value">••••••••</div></div>
-            <span class="op">+</span>
-            <div class="input-box"><div class="label">Site</div><div class="value">github.com</div></div>
-            <span class="op">+</span>
-            <div class="input-box"><div class="label">Email</div><div class="value">you@mail.com</div></div>
-            <span class="op">→</span>
-            <div class="output-box"><div class="label">Password</div><div class="value">kX9#mP2$vL</div></div>
+        <p class="section-sub">Remember one secret. Get a unique password for every site.</p>
+        <div class="seed-block">
+            <div class="seed-label">Your one secret</div>
+            <div class="secret-value" aria-hidden="true">••••••••</div>
+            <div class="email-anchor">set once: you@mail.com</div>
         </div>
-        <p class="how-note">Your secret never leaves your device. Passwords are computed locally in milliseconds.</p>
+        <div class="flow-indicator" aria-label="Combined with any site name to produce a unique password">↓ just add a site</div>
+        <div class="fan-out" role="list">
+            <div class="row" role="listitem"><span class="site">github.com</span><span class="arrow" aria-hidden="true">→</span><span class="password">kX9m#P2vL$nQ7w</span></div>
+            <div class="row" role="listitem"><span class="site">gmail.com</span><span class="arrow" aria-hidden="true">→</span><span class="password">hT4&amp;Bm8pJ!kY2rW</span></div>
+            <div class="row" role="listitem"><span class="site">netflix.com</span><span class="arrow" aria-hidden="true">→</span><span class="password">Qn6$wR3mXt@Lp9v</span></div>
+        </div>
+        <p class="how-note">Same secret + any site = unique password. Computed locally, never stored.</p>
     </div>
 </section>
 
@@ -122,7 +129,7 @@
             <p>64 MiB memory, 3 iterations. Makes brute-force attacks against your secret computationally expensive (~1s per guess).</p>
         </div>
         <div class="sec-card">
-            <h3>Nothing Stored</h3>
+            <h3>No Password Database</h3>
             <p>No password database exists. Passwords are recomputed on demand. There is nothing to breach.</p>
         </div>
         <div class="sec-card">

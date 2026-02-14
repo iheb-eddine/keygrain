@@ -16,18 +16,21 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = file("${rootProject.projectDir}/release.keystore")
-            storePassword = "keygrain"
-            keyAlias = "keygrain"
-            keyPassword = "keygrain"
+        val keystoreFile = file("${rootProject.projectDir}/release.keystore")
+        if (keystoreFile.exists()) {
+            create("release") {
+                storeFile = keystoreFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "keygrain"
+                keyAlias = System.getenv("KEY_ALIAS") ?: "keygrain"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "keygrain"
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
