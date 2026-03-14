@@ -4,13 +4,47 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keygrain — Privacy Policy</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:title" content="Keygrain — One secret. Every password. Nothing to breach.">
+    <meta property="og:description" content="Deterministic password generator. No vault. No database. Just math.">
+    <meta property="og:image" content="https://keygrain.com/og-image.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
     <style>
-        body { font-family: system-ui, sans-serif; max-width: 700px; margin: 60px auto; padding: 0 20px; color: #333; line-height: 1.7; }
-        h1 { font-size: 1.8rem; }
-        h2 { font-size: 1.3rem; margin-top: 2rem; }
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --font: system-ui, -apple-system, sans-serif;
+            --max-w: 720px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); }
+        .container { max-width: var(--max-w); margin: 0 auto; padding: 48px 24px; }
+        h1 { font-size: 32px; margin-bottom: 8px; }
+        h2 { font-size: 22px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        p { margin-bottom: 12px; color: var(--text-secondary); }
+        ul { margin: 0 0 16px 24px; color: var(--text-secondary); }
+        li { margin-bottom: 6px; }
+        strong { color: var(--text); }
+        code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+        .back { display: inline-block; margin-bottom: 32px; font-size: 14px; }
+        footer { border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+        footer a { margin: 0 12px; }
     </style>
+    <link rel="stylesheet" href="/theme.css">
 </head>
 <body>
+
+<div class="container">
+    <a href="/" class="back">← Back to Keygrain</a>
     <h1>Keygrain — Privacy Policy</h1>
     <p><em>Last updated: May 2026</em></p>
 
@@ -47,12 +81,25 @@
         <li><strong>scripting</strong> — to inject the autofill script into the active tab</li>
         <li><strong>storage</strong> — to store your encrypted site list, sync preferences, and per-domain settings locally</li>
         <li><strong>tabs</strong> — to read tab URL during background operations (e.g., context menu clicks) when activeTab context is unavailable</li>
-        <li><strong>host_permissions (keygrain.secbytech.com)</strong> — to communicate with the sync server for pushing and pulling encrypted vault data</li>
+        <li><strong>host_permissions (keygrain.com)</strong> — to communicate with the sync server for pushing and pulling encrypted vault data</li>
     </ul>
-    <p>When sync is enabled, the extension makes network requests to keygrain.secbytech.com to transmit and retrieve your encrypted data. All transmitted data is encrypted locally before sending — the server cannot decrypt it.</p>
-    <p>The extension also periodically fetches <code>rules.json</code> (site-specific password rules) and <code>breaches.json</code> (breach notifications) from keygrain.secbytech.com. These are simple GET requests to static files — no user data, credentials, or identifiers are transmitted with these requests.</p>
+    <p>When sync is enabled, the extension makes network requests to keygrain.com to transmit and retrieve your encrypted data. All transmitted data is encrypted locally before sending — the server cannot decrypt it.</p>
+    <p>The extension also periodically fetches <code>rules.json</code> (site-specific password rules) and <code>breaches.json</code> (breach notifications) from keygrain.com. These are simple GET requests to static files — no user data, credentials, or identifiers are transmitted with these requests.</p>
 
     <h2>Contact</h2>
-    <p>Questions? Email: admin@secbytech.com</p>
+    <p>Questions? Email: contact@keygrain.com</p>
+</div>
+
+<footer>
+    <a href="/guide/">Guide</a>
+    <a href="/compare/">Compare</a>
+    <a href="/changelog/">Changelog</a>
+    <a href="/terms/">Terms</a>
+    <a href="/threat-model/">Threat Model</a>
+    <a href="https://dev.secbytech.com/tools/keygrain">Source Code</a>
+    <br><br>
+    <small>© 2026 SecByTech · contact@keygrain.com</small>
+</footer>
+
 </body>
 </html>

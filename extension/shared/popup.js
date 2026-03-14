@@ -29,6 +29,7 @@
   const addRuleIndicator = document.getElementById("add-rule-indicator");
   const addPwWarning = document.getElementById("add-pw-warning");
   const rotateSection = document.getElementById("rotate-section");
+  const addCounter = document.getElementById("add-counter");
   const rotateBtn = document.getElementById("rotate-btn");
   const markRotatedBtn = document.getElementById("mark-rotated-btn");
 
@@ -57,6 +58,13 @@
   const settingsCancel = document.getElementById("settings-cancel");
   const settingsSave = document.getElementById("settings-save");
 
+  // Reset DOM refs
+  const resetBtn = document.getElementById("reset-btn");
+  const resetDialog = document.getElementById("reset-dialog");
+  const resetInput = document.getElementById("reset-input");
+  const resetConfirmBtn = document.getElementById("reset-confirm-btn");
+  const resetCancel = document.getElementById("reset-cancel");
+
   // PIN DOM refs
   const pinScreen = document.getElementById("pin-screen");
   const pinInput = document.getElementById("pin-input");
@@ -81,7 +89,7 @@
   let statusTimer = null;
   let currentHostname = null;
   let focusedIndex = -1;
-  let settings = {autoLockMinutes: 15, defaultLength: 20, defaultSymbols: "!@#$%&*-_=+?", serverUrl: "https://keygrain.secbytech.com"};
+  let settings = {autoLockMinutes: 15, defaultLength: 20, defaultSymbols: "!@#$%&*-_=+?", serverUrl: "https://keygrain.com"};
   let isDemoMode = false;
   let siteRules = null;
   const RULES_PUBLIC_KEY = "nFoyzMF0v9XyAiRzBd5DVvfPJsiNmuDPB9e5Lxld5I0=";
@@ -776,7 +784,7 @@
         copyTotpBtn.setAttribute("aria-label", "Copy TOTP code for " + svc.name);
         copyTotpBtn.addEventListener("click", async () => {
           try {
-            const {code} = await getTOTPCode(svc, currentSecret, currentEmail);
+            const {code} = await getTOTPCode(svc, currentSecret);
             await navigator.clipboard.writeText(code);
             showStatus("TOTP copied");
           } catch (e) { showStatus("TOTP error: " + e.message); }
@@ -832,7 +840,7 @@
       const svc = services[idx];
       if (!svc || !svc.totp) continue;
       try {
-        const {code, remaining} = await getTOTPCode(svc, currentSecret, currentEmail);
+        const {code, remaining} = await getTOTPCode(svc, currentSecret);
         const formatted = code.length === 8
           ? code.slice(0, 4) + " " + code.slice(4)
           : code.slice(0, 3) + " " + code.slice(3);
@@ -937,21 +945,6 @@
 
   emailInput.addEventListener("input", () => {
     updateUnlockBtn();
-    if (fpTimer) clearTimeout(fpTimer);
-    if (!secretInput.value || !emailInput.value.trim()) { fpContainer.textContent = ""; return; }
-    fpContainer.textContent = "⏳";
-    fpTimer = setTimeout(async () => {
-      try {
-        const indices = await secretFingerprint(secretInput.value, emailInput.value.trim());
-        fpContainer.textContent = "";
-        indices.forEach(i => {
-          const dot = document.createElement("span");
-          dot.className = "fp-dot";
-          dot.style.background = WONG_PALETTE[i];
-          fpContainer.appendChild(dot);
-        });
-      } catch (e) { fpContainer.textContent = ""; console.error("fingerprint error:", e); }
-    }, 500);
   });
 
   secretInput.addEventListener("input", () => {
@@ -968,11 +961,11 @@
       strengthMeter.className = "strength-meter";
     }
     if (fpTimer) clearTimeout(fpTimer);
-    if (!secretInput.value || !emailInput.value.trim()) { fpContainer.textContent = ""; return; }
+    if (!secretInput.value) { fpContainer.textContent = ""; return; }
     fpContainer.textContent = "⏳";
     fpTimer = setTimeout(async () => {
       try {
-        const indices = await secretFingerprint(secretInput.value, emailInput.value.trim());
+        const indices = await secretFingerprint(secretInput.value);
         fpContainer.textContent = "";
         indices.forEach(i => {
           const dot = document.createElement("span");
@@ -1149,6 +1142,33 @@
     showStatus("PIN set successfully.");
   });
 
+  // === Enter key → button click ===
+  function enterToClick(input, btn) {
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter" && !btn.disabled) btn.click();
+    });
+  }
+
+  // Lock screen
+  emailInput.addEventListener("keydown", e => { if (e.key === "Enter") secretInput.focus(); });
+  enterToClick(secretInput, unlockBtn);
+
+  // PIN unlock
+  enterToClick(pinInput, pinUnlockBtn);
+
+  // PIN setup
+  enterToClick(pinSetInput, pinSaveBtn);
+
+  // Add/Edit dialog
+  [addName, addSite, addEmail, addLength, addSymbols, addCounter, addTotpSeed, addSshKeyname].forEach(
+    input => enterToClick(input, addConfirm)
+  );
+
+  // Settings dialog
+  [setLockTimeout, setLength, setSymbols, setServerUrl].forEach(
+    input => enterToClick(input, settingsSave)
+  );
+
   lockBtn.addEventListener("click", async () => {
     isDemoMode = false;
     demoBanner.classList.add("hidden");
@@ -1208,6 +1228,45 @@
     quickFill.classList.add("hidden");
     renderServiceList();
   });
+
+  // === Reset handlers ===
+  resetBtn.addEventListener("click", () => {
+    resetInput.value = "";
+    resetConfirmBtn.disabled = true;
+    openDialog(resetDialog);
+    resetInput.focus();
+  });
+
+  resetInput.addEventListener("input", () => {
+    resetConfirmBtn.disabled = resetInput.value !== "RESET";
+  });
+
+  resetCancel.addEventListener("click", () => closeDialog(resetDialog));
+
+  resetConfirmBtn.addEventListener("click", async () => {
+    if (resetInput.value !== "RESET") return;
+    isDemoMode = false;
+    demoBanner.classList.add("hidden");
+    stopAutolockWarning();
+    stopTOTPInterval();
+    if (syncDebounceTimer) { clearTimeout(syncDebounceTimer); syncDebounceTimer = null; }
+    syncInProgress = false;
+    if (syncIndicatorInterval) { clearInterval(syncIndicatorInterval); syncIndicatorInterval = null; }
+    await clearSecret();
+    await clearEmail();
+    await chrome.storage.local.clear();
+    clearStrengthenCache();
+    currentSecret = null;
+    currentEmail = null;
+    services = [];
+    wallets = [];
+    walletAuditLog = [];
+    closeDialog(resetDialog);
+    closeDialog(settingsPanel);
+    showLockScreen();
+  });
+
+  enterToClick(resetInput, resetConfirmBtn);
 
   // Add service
   addBtn.addEventListener("click", () => {
@@ -1291,7 +1350,16 @@
       ssh = {key_name: sshKeyname, counter: sshCounter};
     }
     if (editIndex !== null) {
-      services[editIndex] = {...services[editIndex], name, email, length, symbols, totp, ssh, updated_at: nextTimestamp(services)};
+      const newCounter = parseInt(addCounter.value, 10);
+      if (!newCounter || newCounter < 1 || !Number.isInteger(newCounter)) {
+        showStatus("Password version must be a positive integer."); return;
+      }
+      const oldCounter = services[editIndex].counter || 1;
+      if (newCounter < oldCounter) {
+        if (!confirm("Setting a lower version will revert to an older password. Continue?")) return;
+      }
+      if (newCounter > oldCounter) delete services[editIndex].migrating;
+      services[editIndex] = {...services[editIndex], name, email, length, symbols, totp, ssh, counter: newCounter, updated_at: nextTimestamp(services)};
     } else {
       services.push({name, site: normalizeSite(site), email, length, symbols, counter: 1, totp, ssh, id: null, updated_at: nextTimestamp(services)});
     }
@@ -1300,15 +1368,10 @@
     renderServiceList();
   });
 
-  rotateBtn.addEventListener("click", async () => {
+  rotateBtn.addEventListener("click", () => {
     if (editIndex === null) return;
     if (!confirm("This will generate a new password for this service. The old password will no longer work. Continue?")) return;
-    services[editIndex].counter = (services[editIndex].counter || 1) + 1;
-    delete services[editIndex].migrating;
-    services[editIndex].updated_at = nextTimestamp(services);
-    await saveServices();
-    closeDialog(addDialog);
-    renderServiceList();
+    addCounter.value = parseInt(addCounter.value, 10) + 1;
   });
 
   markRotatedBtn.addEventListener("click", async () => {
@@ -1340,6 +1403,7 @@
     addRuleIndicator.classList.add("hidden");
     addPwWarning.classList.add("hidden");
     rotateSection.classList.remove("hidden");
+    addCounter.value = svc.counter || 1;
     markRotatedBtn.classList.toggle("hidden", !svc.migrating);
     // Populate TOTP
     if (svc.totp) {

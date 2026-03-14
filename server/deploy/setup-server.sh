@@ -20,10 +20,10 @@ elif [ -f "/opt/keygrain/.env" ]; then
 fi
 
 # Defaults (can be overridden by env vars or .env file)
-DOMAIN="${DOMAIN:-keygrain.secbytech.com}"
+DOMAIN="${DOMAIN:-keygrain.com}"
 APP_PORT="${APP_PORT:-9860}"
 APP_DIR="${APP_DIR:-/opt/keygrain}"
-CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@secbytech.com}"
+CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@keygrain.com}"
 
 echo "=== Keygrain server setup ==="
 echo "Domain: ${DOMAIN}"

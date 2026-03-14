@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Keygrain — Generate Password</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:title" content="Keygrain — One secret. Every password. Nothing to breach.">
+    <meta property="og:description" content="Deterministic password generator. No vault. No database. Just math.">
+    <meta property="og:image" content="https://keygrain.com/og-image.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
     <link rel="manifest" href="./manifest.json">
     <style>
         :root {
@@ -48,12 +55,14 @@
         footer .footer-links a { color: var(--text-secondary); text-decoration: none; margin: 0 10px; }
         footer .footer-links a:hover { color: var(--text); }
     </style>
+    <link rel="stylesheet" href="/theme.css">
 </head>
 <body>
     <h1><a href="/" class="brand-link"><img src="/logo-128.png" alt="" width="28" height="28" class="brand-logo">Keygrain</a> — Generate Password</h1>
     <p style="color: var(--text-secondary); font-size: 0.95rem;">
       Generate unique passwords from your secret — no passwords are stored, just re-enter the same inputs to recreate your password anytime.
     </p>
+    <p style="color: var(--text-secondary); font-size: 0.85rem; margin: 0;">ℹ️ Changing any field will generate a different password.</p>
     <form id="form">
         <label for="email">Email</label>
         <input type="email" id="email" autocomplete="off" required aria-describedby="email-hint">
@@ -67,7 +76,7 @@
         </small>
         <div id="fingerprint" role="img" aria-label="Visual fingerprint" aria-describedby="fingerprint-hint"></div>
         <small id="fingerprint-hint" style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
-          These dots confirm your secret + email combo. Same colors = same inputs.
+          These dots confirm your secret. Same colors = same secret.
         </small>
         <label for="site">Site</label>
         <input type="text" id="site" autocomplete="off" required aria-describedby="site-hint">
@@ -191,10 +200,9 @@
 
     const WONG_PALETTE = ["#000000","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00","#CC79A7"];
 
-    async function secretFingerprint(secret, email) {
+    async function secretFingerprint(secret) {
       const enc = new TextEncoder();
-      const strengthened = await strengthen(secret, email);
-      const hash = await hmacSHA256(strengthened, enc.encode("keygrain-fingerprint"));
+      const hash = await hmacSHA256(enc.encode(secret), enc.encode("keygrain-fingerprint"));
       return Array.from(hash.slice(0, 4), b => b % 8);
     }
 
@@ -202,15 +210,13 @@
     function triggerFingerprint() {
       if (fpTimer) clearTimeout(fpTimer);
       const secret = secretInput.value;
-      const email = document.getElementById("email").value;
-      if (!secret || !email) { fpContainer.innerHTML = ""; return; }
+      if (!secret) { fpContainer.innerHTML = ""; return; }
       fpTimer = setTimeout(async () => {
-        const indices = await secretFingerprint(secret, email);
+        const indices = await secretFingerprint(secret);
         fpContainer.innerHTML = indices.map(i => `<span class="fp-dot" style="background:${WONG_PALETTE[i]}"></span>`).join("");
       }, 500);
     }
     secretInput.addEventListener("input", triggerFingerprint);
-    document.getElementById("email").addEventListener("input", triggerFingerprint);
 
     function normalizeSite(site) {
       return site.replace(/^https?:\/\//i, '').split('/')[0].split('?')[0].split('#')[0].replace(/\/$/, '').toLowerCase().replace(/^www\./, '');
@@ -256,10 +262,15 @@
     <script>if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js")</script>
     <footer>
         <div class="footer-links">
+            <a href="/guide/">Guide</a>
+            <a href="/compare/">Compare</a>
+            <a href="/changelog/">Changelog</a>
             <a href="/privacy.html">Privacy</a>
+            <a href="/terms/">Terms</a>
             <a href="/threat-model/">Threat Model</a>
+            <a href="https://dev.secbytech.com/tools/keygrain">Source Code</a>
         </div>
-        <small>© 2026 SecByTech · contact@secbytech.com</small>
+        <small>© 2026 SecByTech · contact@keygrain.com</small>
     </footer>
 </body>
 </html>

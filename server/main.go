@@ -25,11 +25,13 @@ func main() {
 	defer stop()
 
 	syncSrv := newSyncServer(dataDir, ctx)
+	statsSrv := newStatsServer(dataDir)
 	rl := newRateLimitMiddleware(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/sync/", rl.Wrap(syncSrv.syncHandler))
+	mux.HandleFunc("/api/stats", statsSrv.statsHandler)
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 
 	log.Printf("keygrain server listening on :%s", port)

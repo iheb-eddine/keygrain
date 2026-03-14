@@ -42,7 +42,7 @@ SECURITY:
 PRIVACY:
 • Zero plaintext data collection
 • Sync transmits only encrypted blobs
-• Privacy policy: https://keygrain.secbytech.com/privacy.html
+• Privacy policy: https://keygrain.com/privacy.html
 
 ## Category
 
@@ -54,7 +54,7 @@ English
 
 ## Privacy Policy URL
 
-https://keygrain.secbytech.com/privacy.html
+https://keygrain.com/privacy.html
 
 ## Single Purpose Description
 

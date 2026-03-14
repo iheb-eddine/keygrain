@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keygrain vs. Traditional Vaults — Keygrain</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:title" content="Keygrain vs. Traditional Vaults — Keygrain">
+    <meta property="og:description" content="How Keygrain compares to traditional password managers like 1Password, Bitwarden, and LastPass.">
+    <meta property="og:image" content="https://keygrain.com/og-image.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --green: #22c55e;
+            --red: #ef4444;
+            --font: system-ui, -apple-system, sans-serif;
+            --max-w: 820px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); }
+        .container { max-width: var(--max-w); margin: 0 auto; padding: 48px 24px; }
+        h1 { font-size: 32px; margin-bottom: 8px; }
+        h2 { font-size: 22px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        p { margin-bottom: 12px; color: var(--text-secondary); }
+        strong { color: var(--text); }
+        .back { display: inline-block; margin-bottom: 32px; font-size: 14px; }
+        .subtitle { font-size: 18px; color: var(--text-secondary); margin-bottom: 32px; }
+        table { width: 100%; border-collapse: collapse; margin: 24px 0; background: var(--surface); border-radius: 8px; overflow: hidden; }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: var(--bg); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); }
+        td:first-child { font-weight: 600; color: var(--text); }
+        td { color: var(--text-secondary); font-size: 15px; }
+        tr:last-child td { border-bottom: none; }
+        ul { margin: 0 0 16px 24px; color: var(--text-secondary); }
+        li { margin-bottom: 6px; }
+        footer { border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+    </style>
+    <link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+
+<div class="container">
+    <a href="/" class="back">← Back to Keygrain</a>
+    <h1>Keygrain vs. Traditional Vaults</h1>
+    <p class="subtitle">Different approach, different trade-offs. Traditional password managers like 1Password, Bitwarden, and LastPass store your passwords in an encrypted vault. Keygrain doesn't store anything — it derives passwords on the fly.</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Feature</th>
+                <th>Keygrain</th>
+                <th>Traditional Vaults</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Storage</td>
+                <td>Nothing stored — nothing to breach</td>
+                <td>Encrypted vault on servers (encrypted even if breached)</td>
+            </tr>
+            <tr>
+                <td>Account</td>
+                <td>No account needed</td>
+                <td>Requires account + master password</td>
+            </tr>
+            <tr>
+                <td>Sync</td>
+                <td>Optional encrypted sync — or none needed</td>
+                <td>Cloud sync with offline cache available</td>
+            </tr>
+            <tr>
+                <td>Recovery</td>
+                <td>No recovery if secret is lost — permanent</td>
+                <td>Recovery options exist (emergency contacts, reset flows)</td>
+            </tr>
+            <tr>
+                <td>Unique passwords</td>
+                <td>Deterministic — same inputs always produce the same output</td>
+                <td>Stored randomly generated passwords</td>
+            </tr>
+            <tr>
+                <td>Offline</td>
+                <td>Works fully offline</td>
+                <td>May need internet for sync or login</td>
+            </tr>
+            <tr>
+                <td>Cost</td>
+                <td>Free, open source</td>
+                <td>Ranges from free and open source (Bitwarden) to paid proprietary (1Password)</td>
+            </tr>
+            <tr>
+                <td>Password sharing</td>
+                <td>Not possible</td>
+                <td>Supported (family/team vaults)</td>
+            </tr>
+            <tr>
+                <td>Custom passwords</td>
+                <td>Not supported — passwords are deterministic</td>
+                <td>Fully supported</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>Who is Keygrain for?</h2>
+    <ul>
+        <li>People who want <strong>zero trust</strong> — no server ever holds your passwords</li>
+        <li>Users who need <strong>full offline access</strong> without cloud dependency</li>
+        <li>Anyone uncomfortable with a single encrypted vault being a breach target</li>
+        <li>Privacy-focused individuals who don't want to create accounts or share data</li>
+    </ul>
+
+    <h2>Who should use a vault instead?</h2>
+    <ul>
+        <li><strong>Teams and families</strong> who need to share credentials securely</li>
+        <li>Anyone who needs <strong>custom passwords</strong> — some sites have unusual requirements that deterministic generation can't accommodate</li>
+        <li>Users who want <strong>recovery options</strong> — if forgetting a secret with no way back is unacceptable, vaults offer emergency contacts, recovery keys, and reset flows</li>
+        <li>People who store <strong>more than passwords</strong> — SSH keys, secure notes, credit cards, documents</li>
+        <li>Anyone who relies on <strong>breach monitoring</strong> to know when credentials are compromised</li>
+    </ul>
+    <p>There's no wrong choice — only different priorities. Many people use both: Keygrain for personal accounts, a vault for team credentials.</p>
+</div>
+
+<footer>
+    <a href="/">Keygrain</a> · <a href="/privacy.html">Privacy</a> · <a href="https://dev.secbytech.com/tools/keygrain">Source Code</a> · © 2026 SecByTech
+</footer>
+
+</body>
+</html>

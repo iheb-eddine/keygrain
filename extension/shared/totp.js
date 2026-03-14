@@ -117,7 +117,7 @@ async function deriveTOTPSeed(secret, email, site) {
   return hmacSHA256(strengthened, message);
 }
 
-async function getTOTPCode(service, secret, email) {
+async function getTOTPCode(service, secret) {
   const totp = service.totp;
   if (!totp) throw new Error("Service has no TOTP configuration");
 
@@ -127,7 +127,7 @@ async function getTOTPCode(service, secret, email) {
     seed = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) seed[i] = binary.charCodeAt(i);
   } else if (totp.mode === "derived") {
-    seed = await deriveTOTPSeed(secret, email, service.site);
+    seed = await deriveTOTPSeed(secret, service.email, service.site);
   } else {
     throw new Error("Unknown TOTP mode: " + totp.mode);
   }

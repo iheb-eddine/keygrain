@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Getting Started — Keygrain</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:title" content="Getting Started — Keygrain">
+    <meta property="og:description" content="A quick start guide for Keygrain, the deterministic password manager.">
+    <meta property="og:image" content="https://keygrain.com/og-image.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --yellow: #eab308;
+            --font: system-ui, -apple-system, sans-serif;
+            --max-w: 720px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); }
+        .container { max-width: var(--max-w); margin: 0 auto; padding: 48px 24px; }
+        h1 { font-size: 32px; margin-bottom: 8px; }
+        h2 { font-size: 22px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        p { margin-bottom: 12px; color: var(--text-secondary); }
+        ul, ol { margin: 0 0 16px 24px; color: var(--text-secondary); }
+        li { margin-bottom: 6px; }
+        strong { color: var(--text); }
+        code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+        .back { display: inline-block; margin-bottom: 32px; font-size: 14px; }
+        .formula { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 24px; text-align: center; font-size: 18px; margin: 16px 0; color: var(--text); }
+        .callout { border-left: 4px solid var(--yellow); background: var(--surface); padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 24px 0; }
+        .callout p { margin-bottom: 0; }
+        kbd { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+        table { width: 100%; margin: 16px 0; }
+        td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-secondary); }
+        td:first-child { white-space: nowrap; color: var(--text); }
+        footer { border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+    </style>
+    <link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+
+<div class="container">
+    <a href="/" class="back">← Back to Keygrain</a>
+    <h1>Getting Started</h1>
+    <p>You've installed Keygrain — here's how to use it.</p>
+
+    <h2>What is Keygrain?</h2>
+    <p>Keygrain is a deterministic password manager. It doesn't store your passwords — it <strong>derives</strong> them on the fly from a secret you memorize and the site you're logging into.</p>
+    <div class="formula">your secret + site name → unique password</div>
+    <p>Same inputs always produce the same output. No vault. No database. Nothing to breach.</p>
+
+    <div class="callout">
+        <p><strong>⚠️ The trade-off:</strong> Keygrain stores nothing. If you forget your secret, your passwords are gone forever. No recovery. No support ticket. Choose your secret carefully and <strong>write it down on paper</strong> — store it somewhere safe.</p>
+    </div>
+
+    <h2>Choose Your Secret</h2>
+    <p>Your secret is the <strong>one thing</strong> you must remember. This is not a password for any website — it is a master passphrase that generates all your other passwords. It should be long, random, and impossible to guess.</p>
+    <p><strong>Good:</strong> <code>correct horse battery staple piano drift</code> — random words strung together (a "passphrase"). Aim for 6+ words.</p>
+    <p><strong>Bad:</strong> <code>MyDog2024!</code>, your birthday, your pet's name, song lyrics, or anything someone could guess or find on social media.</p>
+    <p>Length beats complexity. A 6-word passphrase is stronger than a short "complex" password. Write it on paper and store it in a safe place. Never store it digitally.</p>
+
+    <h2>Your First Password</h2>
+    <ol>
+        <li>Open Keygrain (browser extension popup or web generator)</li>
+        <li>Enter your secret — the colored dots are a <strong>visual fingerprint</strong>. Same secret always shows the same pattern. Use them to verify you typed correctly.</li>
+        <li>Click <strong>Add Service</strong> and enter the site name (e.g. <code>github.com</code>) and your email</li>
+        <li>Your password is generated instantly — click <strong>Copy</strong></li>
+        <li>Paste it into the site's password field</li>
+    </ol>
+
+    <h2>Daily Use</h2>
+    <p>Open Keygrain and enter your secret to unlock. Search for the site you need. Copy the password or use autofill. No vault to decrypt, no cloud account to sign into.</p>
+
+    <h2>Keyboard Shortcuts</h2>
+    <table>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd></td><td>Auto-fill credentials on the current site (<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> on Mac)</td></tr>
+        <tr><td><kbd>↓</kbd> / <kbd>↑</kbd></td><td>Navigate the service list</td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>Fill the selected service</td></tr>
+        <tr><td><kbd>Escape</kbd></td><td>Clear search or close the popup</td></tr>
+    </table>
+
+    <h2>Sync Across Devices (Optional)</h2>
+    <p>Enable encrypted sync to share your site list across devices. Your data is encrypted client-side before leaving your device — the server only sees ciphertext. Set it up in the extension settings.</p>
+
+    <h2>Non-Website Passwords</h2>
+    <p>Keygrain works for any secret, not just website passwords. Use the Site field for any memorable label: <code>wifi-home</code>, <code>android-keystore</code>, <code>vpn-work</code>, <code>nas-admin</code>. Autofill won't trigger for non-domain names, but the password is generated the same way.</p>
+</div>
+
+<footer>
+    <a href="/">Keygrain</a> · <a href="/privacy.html">Privacy</a> · <a href="https://dev.secbytech.com/tools/keygrain">Source Code</a> · © 2026 SecByTech
+</footer>
+
+</body>
+</html>

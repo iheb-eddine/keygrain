@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Changelog — Keygrain</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:title" content="Changelog — Keygrain">
+    <meta property="og:description" content="Release history for Keygrain, the deterministic password manager.">
+    <meta property="og:image" content="https://keygrain.com/og-image.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --font: system-ui, -apple-system, sans-serif;
+            --max-w: 720px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); }
+        .container { max-width: var(--max-w); margin: 0 auto; padding: 48px 24px; }
+        h1 { font-size: 32px; margin-bottom: 8px; }
+        h2 { font-size: 22px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        h3 { font-size: 16px; margin: 24px 0 8px; color: var(--text); }
+        p { margin-bottom: 12px; color: var(--text-secondary); }
+        ul { margin: 0 0 16px 24px; color: var(--text-secondary); }
+        li { margin-bottom: 6px; }
+        strong { color: var(--text); }
+        code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+        .back { display: inline-block; margin-bottom: 32px; font-size: 14px; }
+        footer { border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+    </style>
+    <link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+
+<div class="container">
+    <a href="/" class="back">← Back to Keygrain</a>
+    <h1>Changelog</h1>
+    <p>Notable changes to Keygrain. See the <a href="https://dev.secbytech.com/tools/keygrain">source repository</a> for full history.</p>
+
+    <h2>1.2.0 — 2026-05-10</h2>
+
+    <h3>Added</h3>
+    <ul>
+        <li>TOTP support (RFC 6238): Model A (stored seeds) + Model B (deterministic derivation), all platforms</li>
+        <li>SSH key derivation (Ed25519, CLI <code>--agent</code> flag), all platforms</li>
+        <li>HD wallet derivation (BIP-39 mnemonics, BIP-85 child seeds, 9 chains), all platforms</li>
+        <li>QR code scanning for TOTP setup (Android, ML Kit barcode scanning)</li>
+        <li>Secret strength meter (extension)</li>
+        <li>Extension onboarding (3-step overlay for first-time users)</li>
+        <li>Wallet saved list + audit log UI</li>
+        <li>In-app help (extension: 10 FAQ sections; Android: 9 FAQ sections)</li>
+        <li>Modern UI redesign (extension: design tokens, SVG icons, card layout, gradient buttons)</li>
+        <li>CI pipeline (Python tests, JS tests, extension build, mobile build)</li>
+        <li>JS test suite (83 tests)</li>
+        <li>Kotlin test suite (42 tests)</li>
+        <li>SPEC.md §11–14 (TOTP Seed Derivation, SSH Key Derivation, HD Wallet Derivation, Domain Separation)</li>
+    </ul>
+
+    <h3>Fixed</h3>
+    <ul>
+        <li>Web generator: added Argon2id key strengthening, removed salt field</li>
+        <li>Legacy storage key fallback for pre-Argon2id encrypted local data</li>
+    </ul>
+
+    <h3>Security</h3>
+    <ul>
+        <li>Argon2id rate limiting (2s client-side throttle on strengthen calls)</li>
+    </ul>
+
+    <h2>1.1.0 — 2026-05-09</h2>
+
+    <h3>Added</h3>
+    <ul>
+        <li>Sync v2 with per-service merge, server-assigned UUIDs, and E2E encryption</li>
+        <li>Argon2id key strengthening (mandatory, 64 MiB / 3 iterations / parallelism 1)</li>
+        <li>PIN unlock for browser extension</li>
+        <li>Fuzzy search with frecency ranking</li>
+        <li>Zero-click fill via global shortcut (Ctrl+Shift+K)</li>
+        <li>Autofill username + password into page fields</li>
+        <li>Background auto-sync</li>
+        <li>Invisible sync (auto-triggers on unlock and service changes)</li>
+        <li>Shadow migration mode (import from other password managers)</li>
+        <li>Site Rules DB with Ed25519 signature verification</li>
+        <li>Demo mode</li>
+        <li>Bulk password rotation for breach response</li>
+        <li>Auto-lock warning (60s before timeout)</li>
+        <li>Secret confirmation on first setup</li>
+        <li>Landing page with public threat model</li>
+        <li>Breach warnings</li>
+        <li>Dark mode</li>
+        <li>Context menu fill</li>
+        <li>Migration wizard</li>
+    </ul>
+
+    <h3>Changed</h3>
+    <ul>
+        <li>Counter hidden behind "Rotate password" flow</li>
+    </ul>
+
+    <h3>Removed</h3>
+    <ul>
+        <li>Global salt parameter from derivation</li>
+        <li>Old /api/backup/ endpoint (replaced by /api/sync/)</li>
+        <li>Migration code and fallback paths</li>
+    </ul>
+
+    <h3>Fixed</h3>
+    <ul>
+        <li>Site normalization stripping + mobile bugs</li>
+        <li>CORS — missing host_permissions for backup server</li>
+        <li>Crash on restore/backup</li>
+        <li>Firefox manifest data_collection_permissions</li>
+        <li>Extension zip structure</li>
+    </ul>
+
+    <h3>Security</h3>
+    <ul>
+        <li>Argon2id makes brute-force of master secret infeasible</li>
+        <li>Ed25519 signed site rules prevent rule injection</li>
+        <li>Metadata tamper detection in sync protocol</li>
+    </ul>
+
+    <h2>1.0.0 — 2026-05-07</h2>
+
+    <h3>Added</h3>
+    <ul>
+        <li>Deterministic password derivation (Python, JavaScript, Kotlin)</li>
+        <li>Browser extension for Chrome and Firefox</li>
+        <li>Android app with biometric unlock</li>
+        <li>Backup/restore API</li>
+        <li>Web generator PWA (offline-capable)</li>
+        <li>Rate limiting on server endpoints</li>
+        <li>Keyboard navigation</li>
+        <li>Clipboard auto-clear (30s)</li>
+        <li>ARIA labels and focus management for accessibility</li>
+    </ul>
+</div>
+
+<footer>
+    <a href="/">Keygrain</a> · <a href="/privacy.html">Privacy</a> · <a href="https://dev.secbytech.com/tools/keygrain">Source Code</a> · © 2026 SecByTech
+</footer>
+
+</body>
+</html>

@@ -1,5 +1,5 @@
 // sync.js — Sync v2: per-service merge (depends on keygrain.js)
-const DEFAULT_SYNC_SERVER = "https://keygrain.secbytech.com";
+const DEFAULT_SYNC_SERVER = "https://keygrain.com";
 
 async function getSyncServer() {
   const data = await chrome.storage.local.get("settings");
@@ -355,7 +355,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     } else if (getResp.status === 404) {
       // No remote state — push everything
     } else if (getResp.status === 401) {
-      // Auth mismatch (e.g., algorithm migration) — treat as fresh start
+      throw new Error("auth_failed");
     } else {
       throw new Error("server_error");
     }

@@ -87,7 +87,7 @@ keygrain/
 | Server | Go 1.22, stdlib + golang.org/x/crypto/bcrypt |
 | Web generator | Vanilla JS, Web Crypto API |
 | CI/CD | GitLab CI, Docker, auto-deploy on push |
-| Hosting | keygrain.secbytech.com, Let's Encrypt SSL |
+| Hosting | keygrain.com, Let's Encrypt SSL |
 
 ## Pending (Not Blocked on Code)
 

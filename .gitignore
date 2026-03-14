@@ -11,3 +11,6 @@ local.properties
 server/tools/rules-signing.key
 SESSION_HANDOVER.md
 kotlin/release.keystore
+og_images/
+generate_og_images.py
+designs/feature-gap-analysis.md

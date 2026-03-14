@@ -123,13 +123,6 @@ object Keygrain {
         return hmacSha256(strengthened, message)
     }
 
-    fun secretFingerprint(secret: ByteArray, email: String): List<Int> {
-        val strengthened = strengthenSecret(secret, email)
-        val hash = hmacSha256(strengthened, "keygrain-fingerprint".toByteArray())
-        return (0 until 4).map { (hash[it].toInt() and 0xFF) % 8 }
-    }
-
-    /** Fingerprint without email — for unlock screen where email is not yet known. */
     fun secretFingerprint(secret: ByteArray): List<Int> {
         val hash = hmacSha256(secret, "keygrain-fingerprint".toByteArray())
         return (0 until 4).map { (hash[it].toInt() and 0xFF) % 8 }

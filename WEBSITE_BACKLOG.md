@@ -8,7 +8,7 @@ All outstanding items that must be completed before public launch.
 
 | # | Item | Details |
 |---|------|---------|
-| 1.1 | **Domain migration: keygrain.com** | Replace all references to keygrain.secbytech.com with keygrain.com. Affects: server config, nginx, SSL cert, extension host_permissions, manifests, privacy policy, store listings, README, SPEC.md, landing page, CI/CD deploy scripts, sync URL in extension code. |
+| 1.1 | **Domain migration: keygrain.com** | Replace all references to keygrain.com with keygrain.com. Affects: server config, nginx, SSL cert, extension host_permissions, manifests, privacy policy, store listings, README, SPEC.md, landing page, CI/CD deploy scripts, sync URL in extension code. |
 | 1.2 | **Dead store links (#)** | Chrome Web Store and Firefox Add-ons buttons on landing page link to `#`. Either link to actual stores (after submission) or replace with "Coming soon" + email signup. |
 | 1.3 | **Contact email inconsistency** | Privacy policy says `admin@secbytech.com`, footer says `contact@secbytech.com`. Unify to `contact@keygrain.com` after domain migration. |
 | 1.4 | **Sync is broken ("sync failed")** | Extension shows "sync failed" when attempting to sync. Investigate and fix — this is a core feature. |
@@ -116,28 +116,39 @@ All outstanding items that must be completed before public launch.
 
 | Item | Status |
 |------|--------|
-| 1.1 Domain migration | Not started |
-| 1.2 Dead store links | Not started |
-| 1.3 Contact email | Not started |
-| 1.4 Sync broken | Not started — needs investigation |
-| 1.5 Enter key submit | Not started |
-| 1.6 Secret reset | Not started |
-| 1.7 Counter rotation | Not started |
-| 2.1 Source code link | Not started |
-| 2.2 Python CLI card | Not started |
-| 2.3 Threat model update | Not started |
-| 2.4 Favicon | Not started |
-| 2.5 Getting started guide | Not started |
-| 2.6 Product screenshot | Not started (needs actual screenshot) |
-| 2.7 Security card icons | Not started |
-| 2.8 Richer footer | Not started |
-| 2.9 No-tracking trust signal | Not started |
-| 2.10 Sticky nav header | Not started |
-| 2.11 Active user count | Not started |
-| 3.1 Comparison page | Not started |
-| 3.2 Changelog page | Not started |
-| 3.3 Terms of service | Not started |
-| 3.4 Meta tags | Not started |
-| 3.5 404 page | Not started |
-| 3.6 Credibility statement | Not started |
-| 3.7 Positioning statement | Not started |
+| 1.1 Domain migration | ✅ Code done — DNS/nginx/SSL manual |
+| 1.2 Dead store links | ✅ Replaced with 'Coming soon' |
+| 1.3 Contact email | ✅ Unified to contact@keygrain.com |
+| 1.4 Sync broken | ✅ Fixed (401→throw, server wipe needed) |
+| 1.5 Enter key submit | ✅ Fixed (enterToClick on all inputs) |
+| 1.6 Secret reset | ✅ Added (type RESET to confirm) |
+| 1.7 Counter rotation | ✅ Fixed (editable number input) |
+| 2.1 Source code link | ✅ Added to footers |
+| 2.2 Python CLI card | ✅ Added to download section |
+| 2.3 Threat model update | ✅ Modulo bias removed |
+| 2.4 Favicon | ✅ Generated + linked |
+| 2.5 Getting started guide | ✅ Created at /guide/ |
+| 2.6 Product screenshot | ✅ CSS mockup added (real screenshot pending from user) |
+| 2.7 Security card icons | ✅ SVG icons added |
+| 2.8 Richer footer | ✅ 3-column + trust signal |
+| 2.9 No-tracking trust signal | ✅ CSS pill in footer |
+| 2.10 Sticky nav header | ✅ Added |
+| 2.11 Active user count | ✅ GET /api/stats endpoint |
+| 3.1 Comparison page | ✅ Created at /compare/ |
+| 3.2 Changelog page | ✅ Created at /changelog/ |
+| 3.3 Terms of service | ✅ Created at /terms/ |
+| 3.4 Meta tags | ✅ og:image + social tags on all pages |
+| 3.5 404 page | ✅ Created (needs nginx error_page config) |
+| 3.6 Credibility statement | ✅ "Built with security-first principles" in footer |
+| 3.7 Positioning statement | ✅ "Free and open source · Works offline · All platforms" in hero |
+
+---
+
+## Priority 1: Next Implementation Batch
+
+| # | Item | Details |
+|---|------|---------|
+| N.1 | **Fingerprint unification (secret-only)** | Make colored dots depend only on secret across all platforms. Remove email dependency. Consistent behavior everywhere. |
+| N.2 | **TOTP Model B bug: uses global email instead of service.email** | `getTOTPCode` in extension passes `currentEmail` to `deriveTOTPSeed` instead of `service.email`. Fix across extension + document for Kotlin. |
+| N.3 | **Field derivation hints** | Add hints on all platforms (extension, web generator, mobile) indicating which fields affect the generated password. Users must know that site, email, length, symbols, counter ALL matter. |
+| N.4 | **Guide: non-website usage note** | Add to /guide/: "For non-website passwords (WiFi, keystores, API keys), use any memorable name in the Site field." |
