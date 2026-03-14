@@ -174,7 +174,7 @@ await test('buildPassword: rejects bytes >= limit (rejection sampling boundary)'
 // secretFingerprint
 for (const v of coreVectors.fingerprint_vectors) {
   await test(`secretFingerprint: ${v._note}`, async () => {
-    const result = await call('secretFingerprint', v.secret_utf8, v.email);
+    const result = await call('secretFingerprint', v.secret_utf8);
     assert.deepEqual(Array.from(result), v.expected_color_indices);
   });
 }

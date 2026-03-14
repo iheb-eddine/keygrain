@@ -79,7 +79,7 @@ Keygrain generates deterministic passwords from a master secret and fills them i
 - `background.js`: `chrome.tabs.query(...)` — keyboard shortcut, context menu, lock handler
 - `background.js`: `chrome.tabs.get(tabId)` — badge calculation
 
-## Permission: `host_permissions` — `https://keygrain.secbytech.com/*`
+## Permission: `host_permissions` — `https://keygrain.com/*`
 
 **What it does:** Allows making network requests (fetch) to the specified origin.
 

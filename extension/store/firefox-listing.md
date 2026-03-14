@@ -49,15 +49,15 @@ MIT
 
 ## Homepage
 
-https://keygrain.secbytech.com
+https://keygrain.com
 
 ## Support Email
 
-admin@secbytech.com
+admin@keygrain.com
 
 ## Privacy Policy URL
 
-https://keygrain.secbytech.com/privacy.html
+https://keygrain.com/privacy.html
 
 ## Tags
 
@@ -92,7 +92,7 @@ Keygrain is a deterministic cryptographic derivation tool. It derives passwords,
 4. TOTP: derives authenticator seeds deterministically (or imports existing TOTP secrets)
 5. SSH: derives Ed25519 key pairs using tweetnacl (`nacl.sign.keyPair.fromSeed()`)
 6. Wallets: derives BIP-39 mnemonic seeds for cryptocurrency wallets
-7. Optionally, the encrypted site list syncs to keygrain.secbytech.com (end-to-end encrypted — server cannot decrypt)
+7. Optionally, the encrypted site list syncs to keygrain.com (end-to-end encrypted — server cannot decrypt)
 8. Auto-lock clears the master secret from memory after configurable inactivity
 
 ### Test instructions
@@ -103,11 +103,11 @@ Keygrain is a deterministic cryptographic derivation tool. It derives passwords,
 4. Click "Add Service", enter a site name (e.g., "github.com")
 5. A deterministic password is generated — verify it's the same every time with the same inputs
 6. Navigate to github.com, click the extension icon, click "Fill" to autofill
-7. To test sync: enable sync in settings (requires creating an account on keygrain.secbytech.com)
+7. To test sync: enable sync in settings (requires creating an account on keygrain.com)
 
 ### Network requests
 
-The extension makes network requests to `https://keygrain.secbytech.com` for:
+The extension makes network requests to `https://keygrain.com` for:
 1. **Sync** (`/api/sync/*`) — when sync is enabled, pushes/pulls the encrypted vault. All transmitted data is encrypted client-side with AES-256-GCM before sending. The server stores only opaque ciphertext.
 2. **Site rules** (`/rules.json`) — fetches password rules for known sites (max length, required chars). Simple GET, no user data sent.
 3. **Breach feed** (`/breaches.json`) — fetches breach notifications. Simple GET, no user data sent.
@@ -119,7 +119,7 @@ The extension makes network requests to `https://keygrain.secbytech.com` for:
 - `contextMenus` — "Fill with Keygrain" right-click menu on editable fields
 - `storage` — encrypted site list and settings in local storage
 - `tabs` — read tab URL during background operations (badge updates, context menu, keyboard shortcut)
-- `https://keygrain.secbytech.com/*` — sync server communication
+- `https://keygrain.com/*` — sync server communication
 
 ## Version
 

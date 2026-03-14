@@ -4,6 +4,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 
 from .derive import derive_password, normalize_site, DEFAULT_SYMBOLS
 from .ssh import derive_ssh_keypair, format_openssh_private_key, format_authorized_keys
@@ -12,6 +13,7 @@ from .wallet import (
     SUPPORTED_CHAINS, BIP44_PATHS,
 )
 from .bip85 import bip85_derive_mnemonic
+from .totp import generate_totp, parse_totp_input, derive_totp_seed
 
 
 def _get_secret(env_var: str) -> bytes:
@@ -157,6 +159,36 @@ def _cmd_wallet_bip85(args):
     print(" ".join(words))
 
 
+def _cmd_totp(args):
+    if args.derive:
+        if not args.email or not args.site:
+            print("Error: --email and --site are required with --derive", file=sys.stderr)
+            sys.exit(1)
+        secret = _get_secret(args.secret_env)
+        seed = derive_totp_seed(secret, args.email, normalize_site(args.site))
+        digits = args.digits or 6
+        period = args.period or 30
+    else:
+        if not args.seed:
+            print("Error: --seed is required (or use --derive with --email and --site)", file=sys.stderr)
+            sys.exit(1)
+        try:
+            params = parse_totp_input(args.seed)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        seed = params["seed"]
+        digits = args.digits if args.digits is not None else params["digits"]
+        period = args.period if args.period is not None else params["period"]
+
+    try:
+        code = generate_totp(seed, int(time.time()), digits=digits, period=period)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(code)
+
+
 def _build_password_parser(parser):
     parser.add_argument("email", help="Email address")
     parser.add_argument("--site", required=True, help="Site identifier")
@@ -168,7 +200,7 @@ def _build_password_parser(parser):
 
 def main():
     argv = sys.argv[1:]
-    subcommands = {"ssh", "password", "wallet", "wallet-bip85"}
+    subcommands = {"ssh", "password", "wallet", "wallet-bip85", "totp"}
     first_positional = next((a for a in argv if not a.startswith("-")), None)
 
     if first_positional in subcommands:
@@ -202,6 +234,15 @@ def main():
         bip85_parser.add_argument("--words", type=int, default=24, choices=[12, 24], help="Output word count (default: 24)")
         bip85_parser.add_argument("--passphrase", default="", help="BIP-39 passphrase for master mnemonic (default: empty)")
 
+        totp_parser = subparsers.add_parser("totp", help="Generate a TOTP code")
+        totp_parser.add_argument("--seed", help="TOTP seed (base32, hex, or otpauth:// URI)")
+        totp_parser.add_argument("--site", help="Site identifier (for --derive mode)")
+        totp_parser.add_argument("--email", help="Email address (for --derive mode)")
+        totp_parser.add_argument("--derive", action="store_true", help="Derive seed from master secret + email + site")
+        totp_parser.add_argument("--digits", type=int, default=None, choices=[6, 8], help="TOTP digits (default: 6)")
+        totp_parser.add_argument("--period", type=int, default=None, help="TOTP period in seconds (default: 30)")
+        totp_parser.add_argument("--secret-env", default="KEYGRAIN_SECRET", help="Env var holding the master secret")
+
         args = parser.parse_args()
     else:
         parser = argparse.ArgumentParser(prog="keygrain", description="Derive a deterministic password")
@@ -217,6 +258,8 @@ def main():
         _cmd_wallet(args)
     elif args.command == "wallet-bip85":
         _cmd_wallet_bip85(args)
+    elif args.command == "totp":
+        _cmd_totp(args)
 
 
 if __name__ == "__main__":

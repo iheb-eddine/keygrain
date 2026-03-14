@@ -235,7 +235,7 @@ Click the **⚙** button to open settings:
 | Auto-lock timeout | Minutes before Keygrain locks automatically | 15 min |
 | Default password length | Length for new services | 20 |
 | Default symbols | Special characters for new services | !@#$%&*-_=+? |
-| Server URL | Sync server address | https://keygrain.secbytech.com |
+| Server URL | Sync server address | https://keygrain.com |
 
 ### Auto-Lock
 

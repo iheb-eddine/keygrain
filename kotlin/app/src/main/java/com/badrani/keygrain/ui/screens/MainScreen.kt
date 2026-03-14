@@ -1046,6 +1046,11 @@ private fun AddServiceDialog(
         title = { Text(if (isEdit) "Edit Service" else "Add Service") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "ℹ️ Changing any field will generate a different password.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },

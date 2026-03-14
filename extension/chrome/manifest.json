@@ -12,7 +12,7 @@
     "tabs"
   ],
   "host_permissions": [
-    "https://keygrain.secbytech.com/*"
+    "https://keygrain.com/*"
   ],
   "action": {
     "default_popup": "popup.html",

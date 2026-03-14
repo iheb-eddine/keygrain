@@ -278,3 +278,9 @@ button { cursor: pointer; }
 #add-ssh-section { margin-top: var(--space-sm); }
 #add-ssh-section summary { cursor: pointer; font-size: 0.9rem; color: var(--text-secondary); }
 #add-ssh-section input { margin-top: var(--space-xs); }
+
+/* Reset / Danger button */
+.btn-danger { width: 100%; padding: 10px 16px; background: #dc3545; color: #fff; border: none; border-color: #dc3545; border-radius: var(--radius-md); font-size: 0.9rem; cursor: pointer; transition: background var(--transition-fast); }
+.btn-danger:hover { background: #c82333; }
+.btn-danger:disabled { opacity: 0.5; cursor: default; }
+.reset-warning { font-size: 0.85rem; color: var(--error); margin-bottom: 8px; }

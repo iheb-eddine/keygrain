@@ -7,7 +7,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
 authors = [
-    {name = "Ismail Badrani"},
+    {name = "Iheb Eddine Badrani"},
 ]
 keywords = ["password", "derivation", "deterministic", "argon2", "ssh", "wallet", "bip39"]
 classifiers = [
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://keygrain.secbytech.com"
+Homepage = "https://keygrain.com"
 Source = "https://dev.secbytech.com/tools/keygrain"
 Issues = "https://dev.secbytech.com/tools/keygrain/-/issues"
 

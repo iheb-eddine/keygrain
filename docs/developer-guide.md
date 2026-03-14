@@ -138,7 +138,7 @@ CI variables required:
 ### Manual deployment
 
 ```bash
-ssh root@keygrain.secbytech.com
+ssh root@keygrain.com
 cd /opt/keygrain
 docker compose down
 docker compose build

@@ -9,7 +9,7 @@
     "contextMenus",
     "storage",
     "tabs",
-    "https://keygrain.secbytech.com/*"
+    "https://keygrain.com/*"
   ],
   "browser_action": {
     "default_popup": "popup.html",

@@ -90,7 +90,7 @@ data class WalletAuditEntry(
 }
 
 class SyncManager(
-    private val baseUrl: String = "https://keygrain.secbytech.com"
+    private val baseUrl: String = "https://keygrain.com"
 ) {
     private fun getPrefs(context: Context) =
         context.getSharedPreferences("keygrain_sync", Context.MODE_PRIVATE)

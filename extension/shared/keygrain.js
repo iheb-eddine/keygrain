@@ -141,9 +141,8 @@ function entropyLabel(bits) {
   return { label: "Weak", cls: "strength-weak" };
 }
 
-async function secretFingerprint(secret, email) {
-  const strengthened = await strengthenSecret(secret, email);
+async function secretFingerprint(secret) {
   const enc = new TextEncoder();
-  const hash = await hmacSHA256(strengthened, enc.encode("keygrain-fingerprint"));
+  const hash = await hmacSHA256(enc.encode(secret), enc.encode("keygrain-fingerprint"));
   return Array.from(hash.slice(0, 4), b => b % 8);
 }

@@ -129,28 +129,25 @@
     {
       "secret_utf8": "my-master-secret",
       "secret_hex": "6d792d6d61737465722d736563726574",
-      "email": "test@gmail.com",
       "hmac_message": "keygrain-fingerprint",
-      "expected_first_4_bytes_hex": "ee276b25",
-      "expected_color_indices": [6, 7, 3, 5],
-      "_note": "Fingerprint now uses strengthened key — requires email"
+      "expected_first_4_bytes_hex": "4482716f",
+      "expected_color_indices": [4, 2, 1, 7],
+      "_note": "Fingerprint uses raw HMAC-SHA256(secret, message) — no email, no Argon2id"
     },
     {
       "secret_utf8": "different-secret",
       "secret_hex": "646966666572656e742d736563726574",
-      "email": "test@gmail.com",
       "hmac_message": "keygrain-fingerprint",
-      "expected_first_4_bytes_hex": "1b7e0c53",
-      "expected_color_indices": [3, 6, 4, 3],
+      "expected_first_4_bytes_hex": "d482d679",
+      "expected_color_indices": [4, 2, 6, 1],
       "_note": "Different secret"
     },
     {
       "secret_utf8": "a",
       "secret_hex": "61",
-      "email": "test@gmail.com",
       "hmac_message": "keygrain-fingerprint",
-      "expected_first_4_bytes_hex": "a2ff4deb",
-      "expected_color_indices": [2, 7, 5, 3],
+      "expected_first_4_bytes_hex": "b57cc734",
+      "expected_color_indices": [5, 4, 7, 4],
       "_note": "Single character secret"
     }
   ]
