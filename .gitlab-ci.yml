@@ -92,7 +92,7 @@ build-mobile:
         if [ -f "$RELEASE_KEYSTORE" ]; then
           cp "$RELEASE_KEYSTORE" release.keystore
         else
-          echo "$RELEASE_KEYSTORE" | base64 -d > release.keystore
+          printf '%s' "$RELEASE_KEYSTORE" | tr -d '\n\r ' | base64 -d > release.keystore
         fi
       fi
     - 'sed -i "s/versionName = \"1.0.0\"/versionName = \"1.0.0-${CI_COMMIT_SHORT_SHA}\"/" app/build.gradle.kts'
@@ -131,7 +131,7 @@ deploy:
     - scp ${APP_NAME}.tar.gz ${SERVER_USER}@${SERVER_IP}:/tmp/${APP_NAME}.tar.gz
     - scp server/deploy/setup-server.sh ${SERVER_USER}@${SERVER_IP}:/tmp/keygrain-setup.sh
     - scp server/deploy/deploy.sh ${SERVER_USER}@${SERVER_IP}:/tmp/keygrain-deploy.sh
-    - ssh ${SERVER_USER}@${SERVER_IP} "chmod +x /tmp/keygrain-setup.sh /tmp/keygrain-deploy.sh && /tmp/keygrain-setup.sh && /tmp/keygrain-deploy.sh"
+    - ssh ${SERVER_USER}@${SERVER_IP} "chmod +x /tmp/keygrain-setup.sh /tmp/keygrain-deploy.sh && DOMAIN=keygrain.com /tmp/keygrain-setup.sh && /tmp/keygrain-deploy.sh"
     - |
       if [ -f kotlin/keygrain.apk ]; then
         scp kotlin/keygrain.apk ${SERVER_USER}@${SERVER_IP}:/opt/keygrain/static/app/keygrain.apk

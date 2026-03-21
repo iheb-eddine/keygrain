@@ -37,6 +37,7 @@
         #copy { background: var(--surface); border: 1px solid var(--border); font-size: 1.2rem; padding: 8px 12px; color: var(--text); }
         #copy:hover { background: var(--border); }
         #status { margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.85rem; min-height: 1.2em; }
+        #strength { display: block; font-size: 0.85rem; font-weight: 500; min-height: 1.2em; }
         #fingerprint { display: flex; gap: 6px; margin-top: 6px; min-height: 12px; }
         .fp-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border); }
         details summary { cursor: pointer; font-size: 0.9rem; margin-top: 1rem; color: var(--text-secondary); list-style: none; }
@@ -90,17 +91,19 @@
                 <input type="number" id="length" min="8" value="20">
                 <label for="symbols">Symbols</label>
                 <input type="text" id="symbols" value="!@#$%&*-_=+?">
-                <label for="counter">Counter</label>
+                <label for="counter">Password version</label>
                 <input type="number" id="counter" min="1" value="1">
             </div></div>
         </details>
         <button type="submit" id="generate">Generate</button>
     </form>
     <div class="output-row">
-        <input type="text" id="output" readonly aria-label="Generated password">
+        <input type="password" id="output" readonly aria-label="Generated password">
+        <button type="button" id="toggle-vis" title="Show/hide password" aria-label="Toggle password visibility">👁</button>
         <button type="button" id="copy" title="Copy to clipboard">&#x1F4CB;</button>
     </div>
     <div id="status" aria-live="polite"></div>
+    <span id="strength" aria-live="polite"></span>
     <script src="./hash-wasm-argon2.js"></script>
     <script>
     const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -190,9 +193,26 @@
     const output = document.getElementById("output");
     const status = document.getElementById("status");
     const copyBtn = document.getElementById("copy");
+    const toggleVis = document.getElementById("toggle-vis");
     const secretInput = document.getElementById("secret");
     const fpContainer = document.getElementById("fingerprint");
     const optionsPanel = document.getElementById("options-panel");
+    const strengthEl = document.getElementById("strength");
+
+    // Toggle password visibility
+    toggleVis.addEventListener("click", () => {
+      output.type = output.type === "password" ? "text" : "password";
+      toggleVis.textContent = output.type === "password" ? "👁" : "🙈";
+    });
+
+    // Clear output when any derivation input changes
+    function clearOutput() { output.value = ""; if (strengthEl) strengthEl.textContent = ""; }
+    document.getElementById("site").addEventListener("input", clearOutput);
+    document.getElementById("email").addEventListener("input", clearOutput);
+    document.getElementById("length").addEventListener("input", clearOutput);
+    document.getElementById("symbols").addEventListener("input", clearOutput);
+    document.getElementById("counter").addEventListener("input", clearOutput);
+    secretInput.addEventListener("input", clearOutput);
 
     optionsPanel.addEventListener("toggle", () => {
       optionsPanel.querySelector("summary").textContent = optionsPanel.open ? "⚙️ Hide options" : "⚙️ Options";
@@ -238,9 +258,16 @@
         status.textContent = "Strengthening key…";
         try {
             output.value = await derivePassword(secret, email, site, length, symbols, counter);
+            const charset = UPPER + LOWER + DIGITS + symbols;
+            const bits = Math.floor(length * Math.log2(charset.length));
+            const el = document.getElementById("strength");
+            const [label, color] = bits >= 120 ? ["Strong","#22c55e"] : bits >= 78 ? ["Good","#8bc34a"] : ["Fair","#e67e22"];
+            el.textContent = label + " (" + bits + " bits)";
+            el.style.color = color;
             status.textContent = "";
         } catch (err) {
             status.textContent = "Error: " + err.message;
+            document.getElementById("strength").textContent = "";
         } finally {
             btn.disabled = false;
         }

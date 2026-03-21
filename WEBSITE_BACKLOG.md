@@ -146,9 +146,9 @@ All outstanding items that must be completed before public launch.
 
 ## Priority 1: Next Implementation Batch
 
-| # | Item | Details |
-|---|------|---------|
-| N.1 | **Fingerprint unification (secret-only)** | Make colored dots depend only on secret across all platforms. Remove email dependency. Consistent behavior everywhere. |
-| N.2 | **TOTP Model B bug: uses global email instead of service.email** | `getTOTPCode` in extension passes `currentEmail` to `deriveTOTPSeed` instead of `service.email`. Fix across extension + document for Kotlin. |
-| N.3 | **Field derivation hints** | Add hints on all platforms (extension, web generator, mobile) indicating which fields affect the generated password. Users must know that site, email, length, symbols, counter ALL matter. |
-| N.4 | **Guide: non-website usage note** | Add to /guide/: "For non-website passwords (WiFi, keystores, API keys), use any memorable name in the Site field." |
+| # | Item | Details | Status |
+|---|------|---------|--------|
+| N.1 | **Fingerprint unification (secret-only)** | Make colored dots depend only on secret across all platforms. Remove email dependency. Consistent behavior everywhere. | ✅ Done |
+| N.2 | **TOTP Model B bug: uses global email instead of service.email** | `getTOTPCode` in extension passes `currentEmail` to `deriveTOTPSeed` instead of `service.email`. Fix across extension + document for Kotlin. | ✅ Done |
+| N.3 | **Field derivation hints** | Add hints on all platforms (extension, web generator, mobile) indicating which fields affect the generated password. Users must know that site, email, length, symbols, counter ALL matter. | ✅ Done |
+| N.4 | **Guide: non-website usage note** | Add to /guide/: "For non-website passwords (WiFi, keystores, API keys), use any memorable name in the Site field." | ✅ Done |
