@@ -102,10 +102,30 @@ async function backgroundSync() {
     const newKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["encrypt"]);
     const newCiphertext = await crypto.subtle.encrypt({name: "AES-GCM", iv: newIv, additionalData: aad}, newKey, newPlaintext);
     await browser.storage.local.set({services: {version: 2, iv: arrayBufferToBase64(newIv), ciphertext: arrayBufferToBase64(newCiphertext)}, lastSyncTime: Date.now(), lastSyncError: null});
+    await browser.storage.local.remove("syncRetryState");
+    browser.alarms.clear("syncRetry");
   } catch (e) {
     console.error("[keygrain] background sync error:", e?.message || e);
     if (e instanceof MetadataTamperError || e?.message === "checksum_mismatch") {
       browser.alarms.clear("syncAlarm");
+    }
+    const errType = e?.message;
+    if (errType === "network_error" || errType === "server_error") {
+      const data = await browser.storage.local.get("syncRetryState");
+      const state = data.syncRetryState || {attempt: 0, nextRetryAt: null, errorType: null};
+      state.attempt++;
+      state.errorType = errType === "network_error" ? "network" : "server";
+      if (state.attempt <= 2) {
+        const delay = state.attempt === 1 ? 30 : 60;
+        state.nextRetryAt = Date.now() + delay * 1000;
+        await browser.storage.local.set({syncRetryState: state, lastSyncError: {type: state.errorType, message: state.errorType === "network" ? "Connection error" : "Server error"}});
+        browser.alarms.create("syncRetry", {delayInMinutes: delay / 60});
+      } else {
+        state.nextRetryAt = null;
+        await browser.storage.local.set({syncRetryState: state, lastSyncError: {type: state.errorType, message: "Sync unavailable. Will retry on next change."}});
+      }
+    } else {
+      await browser.storage.local.set({lastSyncError: {type: errType === "auth_failed" ? "auth" : "other", message: e?.message || "Sync failed"}});
     }
   } finally { bgSyncInProgress = false; }
 }
@@ -125,6 +145,9 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
     if (tab) browser.browserAction.setBadgeText({text: "", tabId: tab.id});
   }
   if (alarm.name === "syncAlarm") {
+    backgroundSync();
+  }
+  if (alarm.name === "syncRetry") {
     backgroundSync();
   }
 });
@@ -168,6 +191,24 @@ browser.runtime.onMessage.addListener((msg) => {
   if (msg.action === "clearEmail") {
     sessionEmail = null;
     return Promise.resolve({ok: true});
+  }
+  if (msg.action === "scheduleSyncRetry") {
+    return (async () => {
+      const data = await browser.storage.local.get("syncRetryState");
+      const state = data.syncRetryState || {attempt: 0, nextRetryAt: null, errorType: null};
+      state.attempt++;
+      state.errorType = msg.errorType;
+      if (state.attempt <= 2) {
+        const delay = state.attempt === 1 ? 30 : 60;
+        state.nextRetryAt = Date.now() + delay * 1000;
+        await browser.storage.local.set({syncRetryState: state});
+        browser.alarms.create("syncRetry", {delayInMinutes: delay / 60});
+      } else {
+        state.nextRetryAt = null;
+        await browser.storage.local.set({syncRetryState: state});
+      }
+      return {ok: true};
+    })();
   }
 });
 

@@ -551,9 +551,24 @@
       lastSyncTime = Date.now();
       lastSyncError = null;
       await chrome.storage.local.set({lastSyncTime, lastSyncError: null});
+      await chrome.storage.local.remove("syncRetryState");
     } catch (e) {
-      lastSyncError = e.message;
-      await chrome.storage.local.set({lastSyncError: e.message});
+      const msg = e.message;
+      let errorObj;
+      if (msg === "network_error") {
+        errorObj = {type: "network", message: "Connection error"};
+      } else if (msg === "server_error") {
+        errorObj = {type: "server", message: "Server error"};
+      } else if (msg === "auth_failed") {
+        errorObj = {type: "auth", message: "Authentication failed"};
+      } else {
+        errorObj = {type: "other", message: msg || "Sync failed"};
+      }
+      lastSyncError = errorObj;
+      await chrome.storage.local.set({lastSyncError: errorObj});
+      if (errorObj.type === "network" || errorObj.type === "server") {
+        sendMsg({action: "scheduleSyncRetry", errorType: errorObj.type});
+      }
     } finally {
       syncInProgress = false;
       updateSyncIndicator();
@@ -581,7 +596,22 @@
       syncIndicator.classList.remove("hidden");
       syncTimeEl.textContent = "";
       syncErrorEl.classList.remove("hidden");
-      syncErrorEl.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> Sync failed';
+      const errObj = typeof lastSyncError === "object" ? lastSyncError : {type: "other", message: lastSyncError};
+      chrome.storage.local.get("syncRetryState", (data) => {
+        const retryState = data.syncRetryState;
+        let msg;
+        if ((errObj.type === "network" || errObj.type === "server") && retryState && retryState.nextRetryAt && retryState.nextRetryAt > Date.now()) {
+          const secs = Math.ceil((retryState.nextRetryAt - Date.now()) / 1000);
+          msg = (errObj.type === "network" ? "Connection error" : "Server error") + ". Retrying in " + secs + "s...";
+        } else if (errObj.type === "network" || errObj.type === "server") {
+          msg = retryState && retryState.attempt >= 3 ? "Sync unavailable. Will retry on next change." : errObj.message;
+        } else if (errObj.type === "auth") {
+          msg = "Authentication failed";
+        } else {
+          msg = errObj.message || "Sync failed";
+        }
+        syncErrorEl.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> ' + esc(msg);
+      });
       return;
     }
     if (lastSyncTime) {
@@ -648,7 +678,7 @@
     renderServiceList();
     startTOTPInterval();
     if (!syncIndicatorInterval) {
-      syncIndicatorInterval = setInterval(updateSyncIndicator, 30000);
+      syncIndicatorInterval = setInterval(updateSyncIndicator, 1000);
     }
   }
 

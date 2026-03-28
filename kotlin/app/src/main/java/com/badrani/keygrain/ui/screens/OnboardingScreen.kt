@@ -194,7 +194,7 @@ private fun MasterSecretPage(
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 fingerprintIndices.forEach { idx ->
-                    Box(Modifier.size(16.dp).background(WongPalette[idx], CircleShape))
+                    Box(Modifier.size(20.dp).background(WongPalette[idx], CircleShape))
                 }
             }
             Spacer(Modifier.height(8.dp))
