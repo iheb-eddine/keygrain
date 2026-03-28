@@ -4,7 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.util.Log
-import android.widget.Toast
+import androidx.compose.ui.hapticfeedback.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
@@ -16,7 +17,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -29,9 +32,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -136,6 +141,8 @@ private fun UnlockScreen(
     var secret by remember { mutableStateOf("") }
     var secretVisible by remember { mutableStateOf(false) }
     var fingerprintIndices by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var showManualEntry by remember { mutableStateOf(false) }
+    val biometricFirstMode = secretManager.hasSecret() && canUseBiometric(context)
 
     LaunchedEffect(secret) {
         if (secret.isEmpty()) {
@@ -148,10 +155,11 @@ private fun UnlockScreen(
 
     // Auto-trigger biometric if secret is stored
     LaunchedEffect(Unit) {
-        if (secretManager.hasSecret() && canUseBiometric(context)) {
-            showBiometric(context) {
-                secretManager.getSecret()?.let { onUnlocked(it) }
-            }
+        if (biometricFirstMode) {
+            showBiometric(context,
+                onSuccess = { secretManager.getSecret()?.let { onUnlocked(it) } },
+                onFailed = { showManualEntry = true }
+            )
         }
     }
 
@@ -166,25 +174,32 @@ private fun UnlockScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (secretManager.hasSecret()) {
-                Text("Unlock with biometric or enter master secret")
-                Spacer(Modifier.height(16.dp))
+            if (biometricFirstMode) {
                 Button(onClick = {
-                    if (canUseBiometric(context)) {
-                        showBiometric(context) {
-                            secretManager.getSecret()?.let { onUnlocked(it) }
-                        }
-                    }
+                    showBiometric(context,
+                        onSuccess = { secretManager.getSecret()?.let { onUnlocked(it) } },
+                        onFailed = { showManualEntry = true }
+                    )
                 }) {
                     Icon(Icons.Default.Fingerprint, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Unlock")
                 }
-                Spacer(Modifier.height(24.dp))
-                HorizontalDivider()
+                if (!showManualEntry) {
+                    Spacer(Modifier.height(16.dp))
+                    TextButton(onClick = { showManualEntry = true }) {
+                        Text("Use secret instead")
+                    }
+                }
                 Spacer(Modifier.height(24.dp))
             }
 
+            AnimatedVisibility(
+                visible = showManualEntry || !biometricFirstMode,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
             if (showSubtitle) {
                 Text(
                     "Enter your master secret — the single passphrase that generates all your passwords.",
@@ -230,7 +245,7 @@ private fun UnlockScreen(
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.CenterHorizontally)) {
                     fingerprintIndices.forEach { idx ->
-                        Box(Modifier.size(16.dp).background(WongPalette[idx], CircleShape))
+                        Box(Modifier.size(20.dp).background(WongPalette[idx], CircleShape))
                     }
                 }
             }
@@ -252,6 +267,8 @@ private fun UnlockScreen(
             Spacer(Modifier.height(16.dp))
             TextButton(onClick = onDemo) {
                 Text("Try Demo")
+            }
+                }
             }
         }
     }
@@ -283,7 +300,7 @@ private fun ServiceListScreen(
         }.sortedByDescending { (svc, score) -> score * (1 + svc.frecency) }
             .map { it.first }
     }
-    var showAddDialog by remember { mutableStateOf(false) }
+    var prefillSite by remember { mutableStateOf<String?>(null) }
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
     var showEditDialog by remember { mutableStateOf<ServiceEntry?>(null) }
     var menuExpanded by remember { mutableStateOf(false) }
@@ -292,6 +309,7 @@ private fun ServiceListScreen(
     var showSyncEmailDialog by remember { mutableStateOf(false) }
     var syncEmail by remember { mutableStateOf("") }
     var isSyncing by remember { mutableStateOf(false) }
+    var syncFailed by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val syncManager = remember { SyncManager() }
@@ -300,6 +318,10 @@ private fun ServiceListScreen(
     var syncGeneration by remember { mutableIntStateOf(0) }
     var skipNextDebounce by remember { mutableStateOf(false) }
     var lastSyncTime by remember { mutableLongStateOf(0L) }
+
+    // Tick to force subtitle recomposition every 60s
+    var subtitleTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { delay(60_000); subtitleTick++ } }
 
     fun getMostCommonEmail(): String =
         services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: ""
@@ -320,8 +342,9 @@ private fun ServiceListScreen(
                             skipNextDebounce = true
                             services = serviceManager.getServices()
                             lastSyncTime = System.currentTimeMillis()
+                            syncFailed = false
                         }
-                        else -> { /* silent failure for auto-sync */ }
+                        else -> { syncFailed = true }
                     }
                 } finally { secretBytes.fill(0) }
             } catch (_: Exception) { }
@@ -442,7 +465,26 @@ private fun ServiceListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Keygrain") },
+                title = {
+                    Column {
+                        Text("Keygrain")
+                        @Suppress("UNUSED_EXPRESSION") subtitleTick
+                        val subtitle = when {
+                            isDemoMode || getMostCommonEmail().isBlank() -> null
+                            isSyncing -> "Syncing…"
+                            lastSyncTime > 0L -> "Synced ${formatRelativeTime(lastSyncTime)}"
+                            syncFailed -> "Not synced"
+                            else -> null
+                        }
+                        if (subtitle != null) {
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                },
                 actions = {
                     Box {
                         IconButton(onClick = { menuExpanded = true }) {
@@ -502,7 +544,12 @@ private fun ServiceListScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showAddDialog = true }) {
+            FloatingActionButton(onClick = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clipText = clipboard.primaryClip?.getItemAt(0)?.text?.toString()?.trim() ?: ""
+                val urlRegex = Regex("^(https?://\\S+|[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z]{2,}(:\\d+)?(/\\S*)?)$", RegexOption.IGNORE_CASE)
+                prefillSite = if (clipText.matches(urlRegex)) ServiceManager.normalizeSite(clipText) else ""
+            }) {
                 Icon(Icons.Default.Add, contentDescription = "Add service")
             }
         }
@@ -574,14 +621,6 @@ private fun ServiceListScreen(
                     }
                 }
             )
-            if (lastSyncTime > 0L) {
-                Text(
-                    text = "Last synced: ${formatRelativeTime(lastSyncTime)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-            }
             if (filteredServices.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -594,7 +633,7 @@ private fun ServiceListScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(filteredServices, key = { it.name }) { service ->
+                    items(filteredServices, key = { it.id ?: "${it.name}:${it.email}:${it.counter}" }) { service ->
                         ServiceCard(
                             service = service,
                             masterSecret = masterSecret,
@@ -756,9 +795,9 @@ private fun ServiceListScreen(
         )
     }
 
-    if (showAddDialog) {
+    prefillSite?.let { initialSite ->
         AddServiceDialog(
-            onDismiss = { showAddDialog = false },
+            onDismiss = { prefillSite = null },
             onAdd = { entry ->
                 if (isDemoMode) {
                     services = services + entry
@@ -767,8 +806,9 @@ private fun ServiceListScreen(
                     services = serviceManager.getServices()
                     triggerDebouncedSync()
                 }
-                showAddDialog = false
-            }
+                prefillSite = null
+            },
+            initialSite = initialSite
         )
     }
 
@@ -833,6 +873,20 @@ private fun ServiceCard(
         )
     }
     var visible by remember { mutableStateOf(false) }
+    var passwordCopied by remember { mutableStateOf(false) }
+    var totpCopied by remember { mutableStateOf(false) }
+    var sshCopied by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+
+    LaunchedEffect(passwordCopied) {
+        if (passwordCopied) { delay(1500); passwordCopied = false }
+    }
+    LaunchedEffect(totpCopied) {
+        if (totpCopied) { delay(1500); totpCopied = false }
+    }
+    LaunchedEffect(sshCopied) {
+        if (sshCopied) { delay(1500); sshCopied = false }
+    }
 
     fun copyAndClear(label: String, text: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -877,8 +931,9 @@ private fun ServiceCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -886,19 +941,36 @@ private fun ServiceCard(
                     Text(service.name, style = MaterialTheme.typography.titleMedium)
                     Text(service.email, style = MaterialTheme.typography.bodySmall)
                 }
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit")
+                var cardMenuExpanded by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { cardMenuExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More options for ${service.name}")
+                    }
+                    DropdownMenu(
+                        expanded = cardMenuExpanded,
+                        onDismissRequest = { cardMenuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Edit") },
+                            onClick = { cardMenuExpanded = false; onEdit() },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                            onClick = { cardMenuExpanded = false; onDelete() },
+                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) }
+                        )
+                    }
                 }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete")
-                }
-            
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = if (visible) password else "••••••••••••",
                     style = MaterialTheme.typography.bodyLarge,
+                    fontFamily = if (visible) FontFamily.Monospace else FontFamily.Default,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = { visible = !visible }) {
@@ -908,21 +980,28 @@ private fun ServiceCard(
                     )
                 }
                 IconButton(onClick = {
+                    if (passwordCopied) return@IconButton
                     copyAndClear("password", password)
-                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    passwordCopied = true
                     onCopy()
                 }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
+                    Icon(
+                        if (passwordCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                        contentDescription = if (passwordCopied) "Copied" else "Copy"
+                    )
                 }
             }
             // TOTP display
             if (service.totp != null && totpCode.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    val formatted = if (totpCode.length == 8)
-                        totpCode.substring(0, 4) + " " + totpCode.substring(4)
-                    else
-                        totpCode.substring(0, 3) + " " + totpCode.substring(3)
+                    val formatted = if (totpCode.all { it.isDigit() }) {
+                        if (totpCode.length == 8)
+                            totpCode.substring(0, 4) + " " + totpCode.substring(4)
+                        else
+                            totpCode.substring(0, 3) + " " + totpCode.substring(3)
+                    } else totpCode
                     Text(
                         text = formatted,
                         style = MaterialTheme.typography.titleLarge,
@@ -935,11 +1014,16 @@ private fun ServiceCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     IconButton(onClick = {
+                        if (totpCopied) return@IconButton
                         copyAndClear("totp", totpCode)
-                        Toast.makeText(context, "TOTP copied", Toast.LENGTH_SHORT).show()
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        totpCopied = true
                         onCopy()
                     }) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy TOTP")
+                        Icon(
+                            if (totpCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                            contentDescription = if (totpCopied) "Copied" else "Copy TOTP"
+                        )
                     }
                 }
                 LinearProgressIndicator(
@@ -972,18 +1056,23 @@ private fun ServiceCard(
                             modifier = Modifier.weight(1f)
                         )
                         IconButton(onClick = {
+                            if (sshCopied) return@IconButton
                             try {
                                 val sshCounter = service.ssh.optInt("counter", 1)
                                 val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
                                 val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
                                 val line = SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
                                 copyAndClear("ssh-pubkey", line)
-                                Toast.makeText(context, "SSH public key copied", Toast.LENGTH_SHORT).show()
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                sshCopied = true
                             } catch (e: Exception) {
-                                Toast.makeText(context, "SSH error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy SSH public key")
+                            Icon(
+                                if (sshCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                                contentDescription = if (sshCopied) "Copied" else "Copy SSH public key"
+                            )
                         }
                     }
                 }
@@ -997,10 +1086,11 @@ private fun ServiceCard(
 private fun AddServiceDialog(
     onDismiss: () -> Unit,
     onAdd: (ServiceEntry) -> Unit,
-    initialEntry: ServiceEntry? = null
+    initialEntry: ServiceEntry? = null,
+    initialSite: String = ""
 ) {
     var name by remember { mutableStateOf(initialEntry?.name ?: "") }
-    var site by remember { mutableStateOf(initialEntry?.site ?: "") }
+    var site by remember { mutableStateOf(initialEntry?.site ?: initialSite) }
     var email by remember { mutableStateOf(initialEntry?.email ?: "") }
     var length by remember { mutableStateOf(initialEntry?.length?.toString() ?: "20") }
     var symbols by remember { mutableStateOf(initialEntry?.symbols ?: Keygrain.DEFAULT_SYMBOLS) }
@@ -1041,187 +1131,206 @@ private fun AddServiceDialog(
         }
     }
 
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEdit) "Edit Service" else "Add Service") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    "ℹ️ Changing any field will generate a different password.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (isEdit) "Edit Service" else "Add Service",
+                    style = MaterialTheme.typography.titleLarge
                 )
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Service name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = site,
-                    onValueChange = { if (!isEdit) site = it },
-                    label = { Text("Site") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isEdit
-                )
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text("Email") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
-                )
-                TextButton(
-                    onClick = { showAdvanced = !showAdvanced },
-                    modifier = Modifier.semantics {
-                        contentDescription = if (showAdvanced) "Hide options" else "Show options"
-                    }
-                ) {
-                    Text(if (showAdvanced) "⚙️ Hide options" else "⚙️ Options")
-                }
-                AnimatedVisibility(
-                    visible = showAdvanced,
-                    enter = expandVertically(),
-                    exit = shrinkVertically()
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = length,
-                            onValueChange = { length = it.filter { c -> c.isDigit() } },
-                            label = { Text("Length") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                        )
-                        OutlinedTextField(
-                            value = symbols,
-                            onValueChange = { symbols = it },
-                            label = { Text("Symbols") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = counter,
-                            onValueChange = { counter = it.filter { c -> c.isDigit() } },
-                            label = { Text("Counter") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                        )
-                        if (pwChanged) {
-                            Text(
-                                "⚠️ Changing these options will change your generated password.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                        // TOTP section
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                        Text("🔑 TOTP", style = MaterialTheme.typography.labelLarge)
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                            totpModes.forEachIndexed { index, label ->
-                                SegmentedButton(
-                                    selected = totpModeIndex == index,
-                                    onClick = { totpModeIndex = index },
-                                    shape = SegmentedButtonDefaults.itemShape(index, totpModes.size)
-                                ) { Text(label, style = MaterialTheme.typography.bodySmall) }
-                            }
-                        }
-                        if (totpModeIndex == 1) {
-                            OutlinedTextField(
-                                value = totpSeed,
-                                onValueChange = { totpSeed = it },
-                                label = { Text("Seed / otpauth:// URI") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            OutlinedButton(
-                                onClick = {
-                                    if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                        showQrScanner = true
+                Row {
+                    TextButton(onClick = {
+                        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
+                    }) { Text("Cancel") }
+                    TextButton(
+                        onClick = {
+                            val totpJson = when (totpModeIndex) {
+                                1 -> { // Stored
+                                    val input = totpSeed.trim()
+                                    if (input == originalTotpSeed && initialEntry?.totp != null) {
+                                        initialEntry.totp
                                     } else {
-                                        cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                                        try {
+                                            val parsed = TotpEngine.parseTotpInput(input)
+                                            JSONObject().apply {
+                                                put("mode", "stored")
+                                                put("seed", android.util.Base64.encodeToString(parsed.seed, android.util.Base64.NO_WRAP))
+                                                put("digits", parsed.digits)
+                                                put("period", parsed.period)
+                                                put("algorithm", parsed.algorithm)
+                                            }
+                                        } catch (_: Exception) { null }
                                     }
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Default.QrCodeScanner, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Scan QR")
+                                }
+                                2 -> JSONObject().apply { // Derived
+                                    put("mode", "derived")
+                                    put("digits", 6)
+                                    put("period", 30)
+                                    put("algorithm", "SHA1")
+                                }
+                                else -> null
                             }
-                        }
-                        // SSH section
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                        Text("🔐 SSH Key", style = MaterialTheme.typography.labelLarge)
-                        OutlinedTextField(
-                            value = sshKeyName,
-                            onValueChange = { sshKeyName = it.filter { c -> !c.isWhitespace() } },
-                            label = { Text("Key name (optional)") },
-                            placeholder = { Text("e.g. github, work-servers") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                            val sshJson = if (sshKeyName.isNotBlank()) {
+                                val sshCounter = initialEntry?.ssh?.optInt("counter", 1) ?: 1
+                                JSONObject().apply {
+                                    put("key_name", sshKeyName.trim())
+                                    put("counter", sshCounter)
+                                }
+                            } else null
+                            onAdd(ServiceEntry(
+                                name = name.trim(),
+                                site = site.trim().ifEmpty { name.trim().lowercase() },
+                                email = email.trim(),
+                                length = (length.toIntOrNull() ?: 20).coerceAtLeast(8),
+                                symbols = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS },
+                                counter = (counter.toIntOrNull() ?: 1).coerceAtLeast(1),
+                                totp = totpJson,
+                                ssh = sshJson
+                            ))
+                        },
+                        enabled = name.isNotBlank() && email.isNotBlank()
+                    ) { Text(if (isEdit) "Save" else "Add") }
                 }
             }
-        },
-        confirmButton = {
+            Text(
+                "ℹ️ Changing any field will generate a different password.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Service name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = site,
+                onValueChange = { if (!isEdit) site = it },
+                label = { Text("Site") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isEdit
+            )
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                label = { Text("Email") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+            )
             TextButton(
-                onClick = {
-                    val totpJson = when (totpModeIndex) {
-                        1 -> { // Stored
-                            val input = totpSeed.trim()
-                            if (input == originalTotpSeed && initialEntry?.totp != null) {
-                                initialEntry.totp
-                            } else {
-                                try {
-                                    val parsed = TotpEngine.parseTotpInput(input)
-                                    JSONObject().apply {
-                                        put("mode", "stored")
-                                        put("seed", android.util.Base64.encodeToString(parsed.seed, android.util.Base64.NO_WRAP))
-                                        put("digits", parsed.digits)
-                                        put("period", parsed.period)
-                                        put("algorithm", parsed.algorithm)
-                                    }
-                                } catch (_: Exception) { null }
-                            }
-                        }
-                        2 -> JSONObject().apply { // Derived
-                            put("mode", "derived")
-                            put("digits", 6)
-                            put("period", 30)
-                            put("algorithm", "SHA1")
-                        }
-                        else -> null
+                onClick = { showAdvanced = !showAdvanced },
+                modifier = Modifier.semantics {
+                    contentDescription = if (showAdvanced) "Hide options" else "Show options"
+                }
+            ) {
+                Text(if (showAdvanced) "⚙️ Hide options" else "⚙️ Options")
+            }
+            AnimatedVisibility(
+                visible = showAdvanced,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = length,
+                        onValueChange = { length = it.filter { c -> c.isDigit() } },
+                        label = { Text("Length") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                    OutlinedTextField(
+                        value = symbols,
+                        onValueChange = { symbols = it },
+                        label = { Text("Symbols") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = counter,
+                        onValueChange = { counter = it.filter { c -> c.isDigit() } },
+                        label = { Text("Counter") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                    if (pwChanged) {
+                        Text(
+                            "⚠️ Changing these options will change your generated password.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
                     }
-                    val sshJson = if (sshKeyName.isNotBlank()) {
-                        val sshCounter = initialEntry?.ssh?.optInt("counter", 1) ?: 1
-                        JSONObject().apply {
-                            put("key_name", sshKeyName.trim())
-                            put("counter", sshCounter)
+                    // TOTP section
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text("🔑 TOTP", style = MaterialTheme.typography.labelLarge)
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        totpModes.forEachIndexed { index, label ->
+                            SegmentedButton(
+                                selected = totpModeIndex == index,
+                                onClick = { totpModeIndex = index },
+                                shape = SegmentedButtonDefaults.itemShape(index, totpModes.size)
+                            ) { Text(label, style = MaterialTheme.typography.bodySmall) }
                         }
-                    } else null
-                    onAdd(ServiceEntry(
-                        name = name.trim(),
-                        site = site.trim().ifEmpty { name.trim().lowercase() },
-                        email = email.trim(),
-                        length = (length.toIntOrNull() ?: 20).coerceAtLeast(8),
-                        symbols = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS },
-                        counter = (counter.toIntOrNull() ?: 1).coerceAtLeast(1),
-                        totp = totpJson,
-                        ssh = sshJson
-                    ))
-                },
-                enabled = name.isNotBlank() && email.isNotBlank()
-            ) { Text(if (isEdit) "Save" else "Add") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+                    }
+                    if (totpModeIndex == 1) {
+                        OutlinedTextField(
+                            value = totpSeed,
+                            onValueChange = { totpSeed = it },
+                            label = { Text("Seed / otpauth:// URI") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                    showQrScanner = true
+                                } else {
+                                    cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Scan QR")
+                        }
+                    }
+                    // SSH section
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text("🔐 SSH Key", style = MaterialTheme.typography.labelLarge)
+                    OutlinedTextField(
+                        value = sshKeyName,
+                        onValueChange = { sshKeyName = it.filter { c -> !c.isWhitespace() } },
+                        label = { Text("Key name (optional)") },
+                        placeholder = { Text("e.g. github, work-servers") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
         }
-    )
+    }
 
     if (showQrScanner) {
         QrScannerDialog(
@@ -1332,12 +1441,18 @@ private fun formatRelativeTime(ts: Long): String {
     }
 }
 
-private fun showBiometric(context: Context, onSuccess: () -> Unit) {
+private fun showBiometric(context: Context, onSuccess: () -> Unit, onFailed: () -> Unit = {}) {
     val activity = context as FragmentActivity
     val executor = ContextCompat.getMainExecutor(activity)
     val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
         override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
             onSuccess()
+        }
+        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+            onFailed()
+        }
+        override fun onAuthenticationFailed() {
+            // No-op: user can retry. Only onAuthenticationError is terminal.
         }
     })
     prompt.authenticate(

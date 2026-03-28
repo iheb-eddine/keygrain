@@ -303,10 +303,15 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
   const authHeader = "Basic " + btoa(lookupId + ":" + authPassword);
   try {
     // Step 1: GET remote state
-    const getResp = await fetch(syncServer + "/api/sync/" + lookupId, {
-      method: "GET",
-      headers: {"Authorization": authHeader},
-    });
+    let getResp;
+    try {
+      getResp = await fetch(syncServer + "/api/sync/" + lookupId, {
+        method: "GET",
+        headers: {"Authorization": authHeader},
+      });
+    } catch (e) {
+      throw new Error("network_error");
+    }
 
     let remoteServices = [];
     let remoteWallets = [];
@@ -391,15 +396,19 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     if (etag) putHeaders["If-Match"] = '"' + etag + '"';
 
     // Step 5: PUT
-    const putResp = await fetch(syncServer + "/api/sync/" + lookupId, {
-      method: "PUT",
-      headers: putHeaders,
-      body: JSON.stringify({services: metadataArray, encrypted_blob: encryptedB64, checksum}),
-    });
+    let putResp;
+    try {
+      putResp = await fetch(syncServer + "/api/sync/" + lookupId, {
+        method: "PUT",
+        headers: putHeaders,
+        body: JSON.stringify({services: metadataArray, encrypted_blob: encryptedB64, checksum}),
+      });
+    } catch (e) {
+      throw new Error("network_error");
+    }
 
     if (putResp.status === 409) {
-      // Conflict — retry once
-      if (retryCount < 1) return syncWithServer(secret, email, localServices, localWallets, localAuditLog, retryCount + 1);
+      if (retryCount < 3) return syncWithServer(secret, email, localServices, localWallets, localAuditLog, retryCount + 1);
       throw new Error("conflict");
     }
     if (putResp.status === 401) throw new Error("auth_failed");

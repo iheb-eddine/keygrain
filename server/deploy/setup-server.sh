@@ -12,18 +12,23 @@ set -e
 
 ENV_FILE="${1:-}"
 
-# Load config from file if provided or if default exists
+# Save any env vars passed explicitly (e.g., DOMAIN=keygrain.com from CI)
+_CLI_DOMAIN="${DOMAIN:-}"
+_CLI_APP_PORT="${APP_PORT:-}"
+_CLI_CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
+
+# Load config from file (lowest priority)
 if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
     set -a; source "$ENV_FILE"; set +a
 elif [ -f "/opt/keygrain/.env" ]; then
     set -a; source "/opt/keygrain/.env"; set +a
 fi
 
-# Defaults (can be overridden by env vars or .env file)
-DOMAIN="${DOMAIN:-keygrain.com}"
-APP_PORT="${APP_PORT:-9860}"
+# CLI env vars override .env file
+DOMAIN="${_CLI_DOMAIN:-${DOMAIN:-keygrain.com}}"
+APP_PORT="${_CLI_APP_PORT:-${APP_PORT:-9860}}"
 APP_DIR="${APP_DIR:-/opt/keygrain}"
-CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@keygrain.com}"
+CERTBOT_EMAIL="${_CLI_CERTBOT_EMAIL:-${CERTBOT_EMAIL:-admin@keygrain.com}}"
 
 echo "=== Keygrain server setup ==="
 echo "Domain: ${DOMAIN}"
@@ -59,11 +64,36 @@ APP_DIR=${APP_DIR}
 CERTBOT_EMAIL=${CERTBOT_EMAIL}
 EOF
 
-# --- 3. Nginx config (idempotent) ---
+# --- 3. Nginx config + SSL certificate ---
 NGINX_CONF="/etc/nginx/sites-available/keygrain.conf"
 mkdir -p /var/www/certbot
 
-# Write nginx config (always overwrite to pick up changes)
+# Get SSL certificate first if needed
+if [ ! -d "/etc/letsencrypt/live/${DOMAIN}" ]; then
+    echo "Obtaining SSL certificate for ${DOMAIN}..."
+    # Temporarily enable HTTP-only nginx for ACME challenge
+    TMP_CONF="/etc/nginx/sites-available/keygrain-http-only.conf"
+    cat > "${TMP_CONF}" <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 444; }
+}
+EOF
+    ln -sf "${TMP_CONF}" /etc/nginx/sites-enabled/keygrain.conf
+    nginx -t && systemctl reload nginx
+
+    certbot certonly --webroot -w /var/www/certbot \
+        -d "${DOMAIN}" \
+        --email "${CERTBOT_EMAIL}" --agree-tos --no-eff-email --non-interactive
+
+    rm -f "${TMP_CONF}"
+else
+    echo "SSL certificate already exists for ${DOMAIN}, skipping."
+fi
+
+# Write full nginx config (with SSL)
 cat > "${NGINX_CONF}" <<EOF
 server {
     listen 80;
@@ -97,36 +127,7 @@ EOF
 
 ln -sf "${NGINX_CONF}" /etc/nginx/sites-enabled/keygrain.conf
 
-# --- 4. SSL certificate (idempotent — skips if already exists) ---
-if [ ! -d "/etc/letsencrypt/live/${DOMAIN}" ]; then
-    echo "Obtaining SSL certificate for ${DOMAIN}..."
-    # Temporarily enable HTTP-only nginx for ACME challenge
-    TMP_CONF="/etc/nginx/sites-available/keygrain-http-only.conf"
-    cat > "${TMP_CONF}" <<EOF
-server {
-    listen 80;
-    server_name ${DOMAIN};
-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
-    location / { return 444; }
-}
-EOF
-    ln -sf "${TMP_CONF}" /etc/nginx/sites-enabled/keygrain-http-only.conf
-    rm -f /etc/nginx/sites-enabled/keygrain.conf
-    nginx -t && systemctl reload nginx
-
-    certbot certonly --webroot -w /var/www/certbot \
-        -d "${DOMAIN}" \
-        --email "${CERTBOT_EMAIL}" --agree-tos --no-eff-email --non-interactive
-
-    # Restore full config
-    rm -f /etc/nginx/sites-enabled/keygrain-http-only.conf
-    rm -f "${TMP_CONF}"
-    ln -sf "${NGINX_CONF}" /etc/nginx/sites-enabled/keygrain.conf
-else
-    echo "SSL certificate already exists for ${DOMAIN}, skipping."
-fi
-
-# --- 5. Reload nginx ---
+# --- 4. Reload nginx ---
 nginx -t && systemctl reload nginx
 echo "Nginx configured and running."
 

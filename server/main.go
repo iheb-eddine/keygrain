@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -30,7 +33,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/api/sync/", rl.Wrap(syncSrv.syncHandler))
+	mux.HandleFunc("/api/sync/", loggingMiddleware(rl.Wrap(syncSrv.syncHandler)))
 	mux.HandleFunc("/api/stats", statsSrv.statsHandler)
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 
@@ -52,4 +55,48 @@ func securityHeaders(next http.Handler) http.Handler {
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{"status":"ok"}`)
+}
+
+type logResponseWriter struct {
+	http.ResponseWriter
+	status int
+	size   int
+}
+
+func (w *logResponseWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *logResponseWriter) Write(b []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(b)
+	w.size += n
+	return n, err
+}
+
+func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		lw := &logResponseWriter{ResponseWriter: w, status: 200}
+		next(lw, r)
+		entry := map[string]interface{}{
+			"ts":          start.UTC().Format(time.RFC3339),
+			"method":      r.Method,
+			"path":        r.URL.Path,
+			"status":      lw.status,
+			"duration_ms": time.Since(start).Milliseconds(),
+			"size":        lw.size,
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/sync/") {
+			id := strings.TrimPrefix(r.URL.Path, "/api/sync/")
+			if len(id) >= 8 {
+				entry["lookup_prefix"] = id[:8]
+			}
+			if len(r.URL.Path) > len("/api/sync/")+20 {
+				entry["path"] = r.URL.Path[:len("/api/sync/")+20] + "..."
+			}
+		}
+		line, _ := json.Marshal(entry)
+		fmt.Fprintln(os.Stdout, string(line))
+	}
 }

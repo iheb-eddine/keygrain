@@ -104,10 +104,30 @@ async function backgroundSync() {
     const newKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["encrypt"]);
     const newCiphertext = await crypto.subtle.encrypt({name: "AES-GCM", iv: newIv, additionalData: aad}, newKey, newPlaintext);
     await chrome.storage.local.set({services: {version: 2, iv: arrayBufferToBase64(newIv), ciphertext: arrayBufferToBase64(newCiphertext)}, lastSyncTime: Date.now(), lastSyncError: null});
+    await chrome.storage.local.remove("syncRetryState");
+    chrome.alarms.clear("syncRetry");
   } catch (e) {
     console.error("[keygrain] background sync error:", e?.message || e);
     if (e instanceof MetadataTamperError || e?.message === "checksum_mismatch") {
       chrome.alarms.clear("syncAlarm");
+    }
+    const errType = e?.message;
+    if (errType === "network_error" || errType === "server_error") {
+      const data = await chrome.storage.local.get("syncRetryState");
+      const state = data.syncRetryState || {attempt: 0, nextRetryAt: null, errorType: null};
+      state.attempt++;
+      state.errorType = errType === "network_error" ? "network" : "server";
+      if (state.attempt <= 2) {
+        const delay = state.attempt === 1 ? 30 : 60;
+        state.nextRetryAt = Date.now() + delay * 1000;
+        await chrome.storage.local.set({syncRetryState: state, lastSyncError: {type: state.errorType, message: state.errorType === "network" ? "Connection error" : "Server error"}});
+        chrome.alarms.create("syncRetry", {delayInMinutes: delay / 60});
+      } else {
+        state.nextRetryAt = null;
+        await chrome.storage.local.set({syncRetryState: state, lastSyncError: {type: state.errorType, message: "Sync unavailable. Will retry on next change."}});
+      }
+    } else {
+      await chrome.storage.local.set({lastSyncError: {type: errType === "auth_failed" ? "auth" : "other", message: e?.message || "Sync failed"}});
     }
   } finally { bgSyncInProgress = false; }
 }
@@ -126,6 +146,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (tab) chrome.action.setBadgeText({text: "", tabId: tab.id});
   }
   if (alarm.name === "syncAlarm") {
+    backgroundSync();
+  }
+  if (alarm.name === "syncRetry") {
     backgroundSync();
   }
 });
@@ -184,6 +207,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.storage.session.remove("email", () => {
       sendResponse({ok: true});
     });
+    return true;
+  }
+  if (msg.action === "scheduleSyncRetry") {
+    (async () => {
+      const data = await chrome.storage.local.get("syncRetryState");
+      const state = data.syncRetryState || {attempt: 0, nextRetryAt: null, errorType: null};
+      state.attempt++;
+      state.errorType = msg.errorType;
+      if (state.attempt <= 2) {
+        const delay = state.attempt === 1 ? 30 : 60;
+        state.nextRetryAt = Date.now() + delay * 1000;
+        await chrome.storage.local.set({syncRetryState: state});
+        chrome.alarms.create("syncRetry", {delayInMinutes: delay / 60});
+      } else {
+        state.nextRetryAt = null;
+        await chrome.storage.local.set({syncRetryState: state});
+      }
+      sendResponse({ok: true});
+    })();
     return true;
   }
 });
