@@ -86,7 +86,7 @@
   let editIndex = null;
   let clearTimer = null;
   let fpTimer = null;
-  let statusTimer = null;
+  const statusTimerState = {id: null};
   let currentHostname = null;
   let focusedIndex = -1;
   let settings = {autoLockMinutes: 15, defaultLength: 20, defaultSymbols: "!@#$%&*-_=+?", serverUrl: "https://keygrain.com"};
@@ -110,8 +110,10 @@
   const breachWarnings = document.getElementById("breach-warnings");
 
   // === Focus trap ===
-  let lastFocusTrigger = null;
-  let trapHandler = null;
+  let settingsState = null;
+  let resetState = null;
+  let addState = null;
+  let deleteState = null;
 
   const tryDemoLink = document.getElementById("try-demo");
   const demoBanner = document.getElementById("demo-banner");
@@ -136,128 +138,31 @@
     enterDemoMode();
   });
 
-  function openDialog(dialog, trigger) {
-    lastFocusTrigger = trigger || document.activeElement;
-    dialog.classList.remove("hidden");
-    trapHandler = (e) => {
-      if (e.key !== "Tab") return;
-      const focusable = [...dialog.querySelectorAll('input:not([disabled]),button:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el => el.offsetParent !== null);
-      if (!focusable.length) return;
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    };
-    dialog.addEventListener("keydown", trapHandler);
-  }
 
-  function closeDialog(dialog) {
-    dialog.classList.add("hidden");
-    if (trapHandler) { dialog.removeEventListener("keydown", trapHandler); trapHandler = null; }
-    if (lastFocusTrigger) { lastFocusTrigger.focus(); lastFocusTrigger = null; }
-  }
 
   // === Helpers ===
-  function showStatus(msg) {
-    statusEl.textContent = msg;
-    if (statusTimer) clearTimeout(statusTimer);
-    statusTimer = setTimeout(() => { statusEl.textContent = ""; }, 3000);
-  }
-
-  function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
-
-  function nextTimestamp(services) {
-    let max = 0;
-    for (const s of services) if (s.updated_at > max) max = s.updated_at;
-    return Math.max(Date.now(), max + 1);
-  }
 
   async function loadSettings() {
     const data = await chrome.storage.local.get("settings");
     if (data.settings) Object.assign(settings, data.settings);
   }
 
-  function canonicalJSON(obj) {
-    if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
-    if (Array.isArray(obj)) return "[" + obj.map(canonicalJSON).join(",") + "]";
-    return "{" + Object.keys(obj).sort().map(k => JSON.stringify(k) + ":" + canonicalJSON(obj[k])).join(",") + "}";
-  }
-
-  async function verifyRulesSignature(json) {
-    const payload = canonicalJSON({rules: json.rules, version: json.version});
-    const sig = Uint8Array.from(atob(json.signature), c => c.charCodeAt(0));
-    const keyBytes = Uint8Array.from(atob(RULES_PUBLIC_KEY), c => c.charCodeAt(0));
-    const key = await crypto.subtle.importKey("raw", keyBytes, {name: "Ed25519"}, false, ["verify"]);
-    return crypto.subtle.verify("Ed25519", key, sig, new TextEncoder().encode(payload));
-  }
-
-  async function fetchSiteRules() {
+  async function loadSiteRules() {
     const data = await chrome.storage.local.get("siteRules");
-    const cached = data.siteRules;
-    if (cached && Date.now() - cached.fetchedAt < 86400000) {
-      siteRules = cached.rules;
-      return;
-    }
-    try {
-      const resp = await fetch(settings.serverUrl + "/rules.json");
-      if (!resp.ok) throw new Error(resp.status);
-      const json = await resp.json();
-      if (!Array.isArray(json.rules) || !json.version || !json.signature) throw new Error("invalid");
-      if (!await verifyRulesSignature(json)) throw new Error("signature verification failed");
-      if (cached && json.version <= cached.version) {
-        siteRules = cached.rules;
-        await chrome.storage.local.set({siteRules: {...cached, fetchedAt: Date.now()}});
-        return;
-      }
-      siteRules = json.rules;
-      await chrome.storage.local.set({siteRules: {version: json.version, rules: json.rules, fetchedAt: Date.now()}});
-    } catch {
-      siteRules = cached ? cached.rules : null;
-    }
+    const result = await fetchSiteRules(settings.serverUrl, data.siteRules, RULES_PUBLIC_KEY);
+    siteRules = result.rules;
+    if (result.cacheEntry) await chrome.storage.local.set({siteRules: result.cacheEntry});
   }
 
-  function lookupRule(hostname) {
-    if (!siteRules || !hostname) return null;
-    const host = hostname.toLowerCase().replace(/^www\./, "");
-    for (const rule of siteRules) {
-      if (rule.exact) {
-        if (host === rule.domain) return rule;
-      } else {
-        if (host === rule.domain || host.endsWith("." + rule.domain)) return rule;
-      }
-    }
-    return null;
-  }
-
-  async function fetchBreaches() {
+  async function loadBreaches() {
     const data = await chrome.storage.local.get("breachFeed");
-    const cached = data.breachFeed;
-    if (cached && Date.now() - cached.fetchedAt < 86400000) {
-      checkBreaches(cached.breaches);
-      return;
+    const result = await fetchBreachFeed(settings.serverUrl, data.breachFeed);
+    if (result.cacheEntry) await chrome.storage.local.set({breachFeed: result.cacheEntry});
+    if (result.breaches && result.breaches.length) {
+      const d = await chrome.storage.local.get("dismissedBreaches");
+      const matched = checkBreaches(result.breaches, services, d.dismissedBreaches || []);
+      renderBreachWarnings(matched);
     }
-    try {
-      const resp = await fetch(settings.serverUrl + "/breaches.json");
-      if (!resp.ok) throw new Error(resp.status);
-      const json = await resp.json();
-      if (!Array.isArray(json.breaches)) throw new Error("invalid");
-      await chrome.storage.local.set({breachFeed: {version: json.version, breaches: json.breaches, fetchedAt: Date.now()}});
-      checkBreaches(json.breaches);
-    } catch {
-      if (cached) checkBreaches(cached.breaches);
-    }
-  }
-
-  async function checkBreaches(breaches) {
-    const data = await chrome.storage.local.get("dismissedBreaches");
-    const dismissed = data.dismissedBreaches || [];
-    const matched = breaches.filter(b => {
-      if (dismissed.includes(b.id)) return false;
-      return services.some(svc => {
-        const name = svc.name.toLowerCase().replace(/^www\./, "");
-        return name === b.domain || name.endsWith("." + b.domain);
-      });
-    });
-    renderBreachWarnings(matched);
   }
 
   function renderBreachWarnings(matched) {
@@ -381,7 +286,7 @@
   function applyRule(name) {
     if (!name || !name.includes(".")) { addRuleIndicator.classList.add("hidden"); return; }
     const domain = name.toLowerCase().replace(/^www\./, "");
-    const rule = lookupRule(domain);
+    const rule = lookupRule(domain, siteRules);
     if (rule) {
       addLength.value = rule.maxLength || settings.defaultLength;
       addSymbols.value = rule.symbols || settings.defaultSymbols;
@@ -415,79 +320,11 @@
   async function setEmail(e) { return sendMsg({action: "setEmail", email: e}); }
   async function clearEmail() { return sendMsg({action: "clearEmail"}); }
 
-  // === Base64 utilities ===
-  function arrayBufferToBase64(buf) {
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary);
-  }
 
-  function base64ToArrayBuffer(b64) {
-    const binary = atob(b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-  }
 
-  // === PIN crypto ===
-  async function pinDeriveKey(pin, salt) {
-    const enc = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(pin), "PBKDF2", false, ["deriveKey"]);
-    return crypto.subtle.deriveKey(
-      {name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256"},
-      keyMaterial, {name: "AES-GCM", length: 256}, false, ["encrypt", "decrypt"]
-    );
-  }
 
-  async function pinEncryptSecret(pin, secret) {
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const key = await pinDeriveKey(pin, salt);
-    const ciphertext = await crypto.subtle.encrypt({name: "AES-GCM", iv}, key, new TextEncoder().encode(secret));
-    return {encrypted: arrayBufferToBase64(ciphertext), salt: arrayBufferToBase64(salt), iv: arrayBufferToBase64(iv)};
-  }
 
-  async function pinDecryptSecret(pin, stored) {
-    const salt = base64ToArrayBuffer(stored.salt);
-    const iv = base64ToArrayBuffer(stored.iv);
-    const key = await pinDeriveKey(pin, salt);
-    const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv}, key, base64ToArrayBuffer(stored.encrypted));
-    return new TextDecoder().decode(decrypted);
-  }
 
-  // === Local storage encryption ===
-  async function deriveStorageKey(secret, email) {
-    const enc = new TextEncoder();
-    const strengthened = await strengthenSecret(secret, email);
-    const message = enc.encode(email.toLowerCase() + ":keygrain-local-storage");
-    return hmacSHA256(strengthened, message);
-  }
-
-  async function encryptServices(storageKey, email, servicesArray) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const aad = new TextEncoder().encode(email.toLowerCase());
-    const plaintext = new TextEncoder().encode(JSON.stringify({version: 1, services: servicesArray, wallets, wallet_audit_log: walletAuditLog}));
-    const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["encrypt"]);
-    const ciphertext = await crypto.subtle.encrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, plaintext);
-    return {
-      version: 2,
-      iv: arrayBufferToBase64(iv),
-      ciphertext: arrayBufferToBase64(ciphertext)
-    };
-  }
-
-  async function decryptServices(storageKey, email, stored) {
-    const iv = base64ToArrayBuffer(stored.iv);
-    const ciphertext = base64ToArrayBuffer(stored.ciphertext);
-    const aad = new TextEncoder().encode(email.toLowerCase());
-    const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["decrypt"]);
-    const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
-    const data = JSON.parse(new TextDecoder().decode(decrypted));
-    wallets = data.wallets || [];
-    walletAuditLog = data.wallet_audit_log || [];
-    return data.services || data;
-  }
 
   async function loadServices() {
     const data = await chrome.storage.local.get("services");
@@ -505,7 +342,10 @@
     if (stored.version === 2) {
       const key = await deriveStorageKey(currentSecret, currentEmail);
       try {
-        services = await decryptServices(key, currentEmail, stored);
+        const result = await decryptServices(key, currentEmail, stored);
+        services = result.services;
+        wallets = result.wallets;
+        walletAuditLog = result.walletAuditLog;
         return true;
       } catch {
         return false;
@@ -521,7 +361,7 @@
     if (isDemoMode) return;
     const key = await deriveStorageKey(currentSecret, currentEmail);
     try {
-      const encrypted = await encryptServices(key, currentEmail, services);
+      const encrypted = await encryptServices(key, currentEmail, services, wallets, walletAuditLog);
       await chrome.storage.local.set({services: encrypted});
     } finally {
       key.fill(0);
@@ -575,72 +415,27 @@
     }
   }
 
-  function formatRelativeTime(ts) {
-    if (!ts) return "";
-    const diff = Math.floor((Date.now() - ts) / 1000);
-    if (diff < 60) return "just now";
-    const m = Math.floor(diff / 60);
-    if (m < 60) return m + "m ago";
-    const h = Math.floor(m / 60);
-    return h + "h ago";
-  }
+
 
   function updateSyncIndicator() {
-    if (syncInProgress) {
-      syncIndicator.classList.remove("hidden");
-      syncTimeEl.textContent = "Syncing...";
-      syncErrorEl.classList.add("hidden");
-      return;
-    }
     if (lastSyncError) {
-      syncIndicator.classList.remove("hidden");
-      syncTimeEl.textContent = "";
-      syncErrorEl.classList.remove("hidden");
-      const errObj = typeof lastSyncError === "object" ? lastSyncError : {type: "other", message: lastSyncError};
       chrome.storage.local.get("syncRetryState", (data) => {
-        const retryState = data.syncRetryState;
-        let msg;
-        if ((errObj.type === "network" || errObj.type === "server") && retryState && retryState.nextRetryAt && retryState.nextRetryAt > Date.now()) {
-          const secs = Math.ceil((retryState.nextRetryAt - Date.now()) / 1000);
-          msg = (errObj.type === "network" ? "Connection error" : "Server error") + ". Retrying in " + secs + "s...";
-        } else if (errObj.type === "network" || errObj.type === "server") {
-          msg = retryState && retryState.attempt >= 3 ? "Sync unavailable. Will retry on next change." : errObj.message;
-        } else if (errObj.type === "auth") {
-          msg = "Authentication failed";
-        } else {
-          msg = errObj.message || "Sync failed";
-        }
-        syncErrorEl.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> ' + esc(msg);
+        const status = computeSyncStatus(syncInProgress, lastSyncError, lastSyncTime, data.syncRetryState);
+        syncIndicator.classList.toggle("hidden", !status.visible);
+        syncTimeEl.textContent = status.text;
+        syncErrorEl.classList.toggle("hidden", !status.errorHtml);
+        if (status.errorHtml) syncErrorEl.innerHTML = status.errorHtml;
       });
-      return;
+    } else {
+      const status = computeSyncStatus(syncInProgress, lastSyncError, lastSyncTime, null);
+      syncIndicator.classList.toggle("hidden", !status.visible);
+      syncTimeEl.textContent = status.text;
+      syncErrorEl.classList.toggle("hidden", !status.errorHtml);
+      if (status.errorHtml) syncErrorEl.innerHTML = status.errorHtml;
     }
-    if (lastSyncTime) {
-      syncIndicator.classList.remove("hidden");
-      syncTimeEl.textContent = "Last synced: " + formatRelativeTime(lastSyncTime);
-      syncErrorEl.classList.add("hidden");
-      return;
-    }
-    syncIndicator.classList.add("hidden");
   }
 
-  // === Fuzzy match ===
-  function fuzzyScore(query, text) {
-    const q = query.toLowerCase();
-    const t = text.toLowerCase();
-    let qi = 0, score = 0, consecutive = 0, prevIdx = -2;
-    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-      if (t[ti] === q[qi]) {
-        score++;
-        if (ti === prevIdx + 1) { consecutive++; score += consecutive; }
-        else consecutive = 0;
-        if (ti === 0) score += 2;
-        if (ti > 0 && /[\s\-_.]/.test(t[ti - 1])) score += 2;
-        prevIdx = ti;
-        qi++;
-      }
-    }
-    return qi === q.length ? score : 0;
-  }
+
 
   // === Rendering ===
   function showLockScreen() {
@@ -687,20 +482,7 @@
     focusedIndex = -1;
     searchInput.removeAttribute("aria-activedescendant");
     const filter = searchInput.value.trim();
-    let filtered;
-    if (!filter) {
-      filtered = services.slice().sort((a, b) => (b.frecency || 0) - (a.frecency || 0));
-    } else {
-      filtered = services.map(s => {
-        const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email), fuzzyScore(filter, s.site || ""));
-        return {svc: s, score};
-      }).filter(x => x.score > 0)
-        .sort((a, b) => {
-          const sa = a.score * (1 + (a.svc.frecency || 0));
-          const sb = b.score * (1 + (b.svc.frecency || 0));
-          return sb - sa;
-        }).map(x => x.svc);
-    }
+    const filtered = getFilteredServices(services, filter);
     if (filtered.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
@@ -816,8 +598,8 @@
           try {
             const {code} = await getTOTPCode(svc, currentSecret);
             await navigator.clipboard.writeText(code);
-            showStatus("TOTP copied");
-          } catch (e) { showStatus("TOTP error: " + e.message); }
+            showStatus(statusEl, "TOTP copied", statusTimerState);
+          } catch (e) { showStatus(statusEl, "TOTP error: " + e.message, statusTimerState); }
         });
         totpRow.appendChild(codeSpan);
         totpRow.appendChild(countdown);
@@ -846,8 +628,8 @@
             const comment = svc.email.toLowerCase() + ":" + svc.ssh.key_name.toLowerCase();
             const line = formatAuthorizedKeys(kp.publicKey, comment);
             await navigator.clipboard.writeText(line);
-            showStatus("SSH public key copied");
-          } catch (e) { showStatus("SSH error: " + e.message); }
+            showStatus(statusEl, "SSH public key copied", statusTimerState);
+          } catch (e) { showStatus(statusEl, "SSH error: " + e.message, statusTimerState); }
         });
         sshRow.appendChild(badge);
         sshRow.appendChild(keyLabel);
@@ -959,7 +741,7 @@
         addSshKeyname.value = "";
         addDialog.querySelector("h2").textContent = "Add Service";
         addConfirm.textContent = "Add";
-        openDialog(addDialog);
+        addState = openDialog(addDialog);
         addName.focus();
       });
       siteSuggestion.textContent = "";
@@ -1016,7 +798,7 @@
     let ok;
     try { ok = await loadServices(); } catch { ok = false; }
     if (!ok) {
-      showStatus("Wrong secret or email. Please try again.");
+      showStatus(statusEl, "Wrong secret or email. Please try again.", statusTimerState);
       currentSecret = null;
       currentEmail = null;
       return;
@@ -1024,7 +806,7 @@
     // If no local services, try fetching from server (returning user on new device?)
     if (services.length === 0) {
       try {
-        showStatus("Checking server...");
+        showStatus(statusEl, "Checking server...", statusTimerState);
         const result = await syncWithServer(s, e, services);
         if (result.services.length > 0) {
           // Server had data — returning user
@@ -1036,7 +818,7 @@
     }
     // If still no services (new user), ask to confirm secret
     if (services.length === 0) {
-      showStatus("");
+      showStatus(statusEl, "", statusTimerState);
       const confirmResult = await new Promise(resolve => {
         const dialog = document.createElement("div");
         dialog.className = "dialog";
@@ -1064,7 +846,7 @@
         });
       });
       if (confirmResult === null || confirmResult !== s) {
-        showStatus(confirmResult === null ? "" : "Secrets don't match. Try again.");
+        showStatus(statusEl, confirmResult === null ? "" : "Secrets don't match. Try again.", statusTimerState);
         currentSecret = null;
         currentEmail = null;
         return;
@@ -1079,8 +861,8 @@
     showMainScreen();
     updateSyncIndicator();
     performAutoSync();
-    await fetchSiteRules();
-    fetchBreaches();
+    await loadSiteRules();
+    loadBreaches();
     autoDetectSite();
     updateMigrateBtn();
     // Offer PIN setup if not already set
@@ -1124,8 +906,8 @@
       showMainScreen();
       updateSyncIndicator();
       performAutoSync();
-      await fetchSiteRules();
-      fetchBreaches();
+      await loadSiteRules();
+      loadBreaches();
       autoDetectSite();
       updateMigrateBtn();
     } catch {
@@ -1163,13 +945,13 @@
     if (isDemoMode) return;
     const pin = pinSetInput.value;
     if (!/^\d{4,6}$/.test(pin)) {
-      showStatus("PIN must be 4-6 digits.");
+      showStatus(statusEl, "PIN must be 4-6 digits.", statusTimerState);
       return;
     }
     const stored = await pinEncryptSecret(pin, currentSecret);
     await chrome.storage.local.set({pinData: stored, pinFailCount: 0});
     pinSetupBanner.classList.add("hidden");
-    showStatus("PIN set successfully.");
+    showStatus(statusEl, "PIN set successfully.", statusTimerState);
   });
 
   // === Enter key → button click ===
@@ -1223,7 +1005,7 @@
   });
 
   syncErrorEl.addEventListener("click", () => {
-    if (lastSyncError) showStatus(lastSyncError);
+    if (lastSyncError) showStatus(statusEl, lastSyncError.message || "Sync error", statusTimerState);
   });
 
   settingsBtn.addEventListener("click", () => {
@@ -1231,11 +1013,11 @@
     setLength.value = settings.defaultLength;
     setSymbols.value = settings.defaultSymbols;
     setServerUrl.value = settings.serverUrl;
-    openDialog(settingsPanel);
+    settingsState = openDialog(settingsPanel);
   });
 
   settingsCancel.addEventListener("click", () => {
-    closeDialog(settingsPanel);
+    closeDialog(settingsPanel, settingsState);
   });
 
   settingsSave.addEventListener("click", async () => {
@@ -1243,14 +1025,14 @@
     const length = parseInt(setLength.value, 10);
     const symbols = setSymbols.value;
     const url = setServerUrl.value.trim();
-    if (!timeout || timeout < 1) { showStatus("Timeout must be at least 1 minute."); return; }
-    if (!length || length < 8) { showStatus("Length must be at least 8."); return; }
-    if (!symbols) { showStatus("At least one symbol is required."); return; }
-    if (!url.startsWith("https://")) { showStatus("Server URL must start with https://"); return; }
+    if (!timeout || timeout < 1) { showStatus(statusEl, "Timeout must be at least 1 minute.", statusTimerState); return; }
+    if (!length || length < 8) { showStatus(statusEl, "Length must be at least 8.", statusTimerState); return; }
+    if (!symbols) { showStatus(statusEl, "At least one symbol is required.", statusTimerState); return; }
+    if (!url.startsWith("https://")) { showStatus(statusEl, "Server URL must start with https://", statusTimerState); return; }
     settings = {autoLockMinutes: timeout, defaultLength: length, defaultSymbols: symbols, serverUrl: url};
     await chrome.storage.local.set({settings});
-    closeDialog(settingsPanel);
-    showStatus("Settings saved.");
+    closeDialog(settingsPanel, settingsState);
+    showStatus(statusEl, "Settings saved.", statusTimerState);
   });
 
   searchInput.addEventListener("input", () => {
@@ -1263,7 +1045,7 @@
   resetBtn.addEventListener("click", () => {
     resetInput.value = "";
     resetConfirmBtn.disabled = true;
-    openDialog(resetDialog);
+    resetState = openDialog(resetDialog);
     resetInput.focus();
   });
 
@@ -1271,7 +1053,7 @@
     resetConfirmBtn.disabled = resetInput.value !== "RESET";
   });
 
-  resetCancel.addEventListener("click", () => closeDialog(resetDialog));
+  resetCancel.addEventListener("click", () => closeDialog(resetDialog, resetState));
 
   resetConfirmBtn.addEventListener("click", async () => {
     if (resetInput.value !== "RESET") return;
@@ -1291,8 +1073,8 @@
     services = [];
     wallets = [];
     walletAuditLog = [];
-    closeDialog(resetDialog);
-    closeDialog(settingsPanel);
+    closeDialog(resetDialog, resetState);
+    closeDialog(settingsPanel, settingsState);
     showLockScreen();
   });
 
@@ -1317,11 +1099,11 @@
     addSshKeyname.value = "";
     addDialog.querySelector("h2").textContent = "Add Service";
     addConfirm.textContent = "Add";
-    openDialog(addDialog);
+    addState = openDialog(addDialog);
     addName.focus();
   });
 
-  addCancel.addEventListener("click", () => closeDialog(addDialog));
+  addCancel.addEventListener("click", () => closeDialog(addDialog, addState));
 
   addTotpMode.addEventListener("change", () => {
     addTotpSeedGroup.classList.toggle("hidden", addTotpMode.value === "derived" || addTotpMode.value === "");
@@ -1343,21 +1125,21 @@
     const name = addName.value.trim();
     const site = addSite.value.trim();
     const email = addEmail.value.trim();
-    if (!name || !email) { showStatus("Name and email are required."); return; }
-    if (!site) { showStatus("Site is required."); return; }
+    if (!name || !email) { showStatus(statusEl, "Name and email are required.", statusTimerState); return; }
+    if (!site) { showStatus(statusEl, "Site is required.", statusTimerState); return; }
     const length = parseInt(addLength.value, 10);
-    if (length < 8) { showStatus("Length must be at least 8."); return; }
+    if (length < 8) { showStatus(statusEl, "Length must be at least 8.", statusTimerState); return; }
     const symbols = addSymbols.value;
-    if (!symbols) { showStatus("At least one symbol is required."); return; }
+    if (!symbols) { showStatus(statusEl, "At least one symbol is required.", statusTimerState); return; }
     // Name collision check
     const duplicate = services.some((s, i) => s.name === name && i !== editIndex);
-    if (duplicate) { showStatus("A service with that name already exists."); return; }
+    if (duplicate) { showStatus(statusEl, "A service with that name already exists.", statusTimerState); return; }
     // Build TOTP config
     let totp = null;
     const totpMode = addTotpMode.value;
     if (totpMode === "stored") {
       const seedInput = addTotpSeed.value.trim();
-      if (!seedInput) { showStatus("TOTP seed is required for stored mode."); return; }
+      if (!seedInput) { showStatus(statusEl, "TOTP seed is required for stored mode.", statusTimerState); return; }
       if (editIndex !== null && seedInput === originalTotpSeed && services[editIndex].totp && services[editIndex].totp.mode === "stored") {
         totp = services[editIndex].totp;
       } else {
@@ -1365,24 +1147,24 @@
           const parsed = parseTOTPInput(seedInput);
           const binary = String.fromCharCode(...parsed.seed);
           totp = {mode: "stored", seed: btoa(binary), digits: parsed.digits, period: parsed.period, algorithm: parsed.algorithm};
-        } catch (e) { showStatus("Invalid TOTP input: " + e.message); return; }
+        } catch (e) { showStatus(statusEl, "Invalid TOTP input: " + e.message, statusTimerState); return; }
       }
     } else if (totpMode === "derived") {
-      if (!email) { showStatus("Email is required for derived TOTP."); return; }
+      if (!email) { showStatus(statusEl, "Email is required for derived TOTP.", statusTimerState); return; }
       totp = {mode: "derived", digits: 6, period: 30, algorithm: "SHA1"};
     }
     // Build SSH config
     let ssh = null;
     const sshKeyname = addSshKeyname.value.trim();
     if (sshKeyname) {
-      if (/\s/.test(sshKeyname)) { showStatus("SSH key name must not contain whitespace."); return; }
+      if (/\s/.test(sshKeyname)) { showStatus(statusEl, "SSH key name must not contain whitespace.", statusTimerState); return; }
       const sshCounter = (editIndex !== null && services[editIndex].ssh) ? services[editIndex].ssh.counter || 1 : 1;
       ssh = {key_name: sshKeyname, counter: sshCounter};
     }
     if (editIndex !== null) {
       const newCounter = parseInt(addCounter.value, 10);
       if (!newCounter || newCounter < 1 || !Number.isInteger(newCounter)) {
-        showStatus("Password version must be a positive integer."); return;
+        showStatus(statusEl, "Password version must be a positive integer.", statusTimerState); return;
       }
       const oldCounter = services[editIndex].counter || 1;
       if (newCounter < oldCounter) {
@@ -1391,10 +1173,10 @@
       if (newCounter > oldCounter) delete services[editIndex].migrating;
       services[editIndex] = {...services[editIndex], name, email, length, symbols, totp, ssh, counter: newCounter, updated_at: nextTimestamp(services)};
     } else {
-      services.push({name, site: normalizeSite(site), email, length, symbols, counter: 1, totp, ssh, id: null, updated_at: nextTimestamp(services)});
+      services.push({name, site: normalizeSite(site), email, length, symbols, counter: 1, totp, ssh, id: crypto.randomUUID(), updated_at: nextTimestamp(services)});
     }
     await saveServices();
-    closeDialog(addDialog);
+    closeDialog(addDialog, addState);
     renderServiceList();
   });
 
@@ -1409,7 +1191,7 @@
     delete services[editIndex].migrating;
     services[editIndex].updated_at = nextTimestamp(services);
     await saveServices();
-    closeDialog(addDialog);
+    closeDialog(addDialog, addState);
     renderServiceList();
   });
 
@@ -1417,7 +1199,7 @@
   function handleDeletePrompt(idx) {
     deleteTarget = idx;
     deleteServiceName.textContent = services[idx].name;
-    openDialog(deleteDialog);
+    deleteState = openDialog(deleteDialog);
   }
 
   // Edit service
@@ -1451,12 +1233,12 @@
     addSshKeyname.value = (svc.ssh && svc.ssh.key_name) ? svc.ssh.key_name : "";
     addDialog.querySelector("h2").textContent = "Edit Service";
     addConfirm.textContent = "Save";
-    openDialog(addDialog);
+    addState = openDialog(addDialog);
     addName.focus();
   }
 
   deleteCancel.addEventListener("click", () => {
-    closeDialog(deleteDialog);
+    closeDialog(deleteDialog, deleteState);
     deleteTarget = null;
   });
 
@@ -1466,7 +1248,7 @@
       await saveServices();
       renderServiceList();
     }
-    closeDialog(deleteDialog);
+    closeDialog(deleteDialog, deleteState);
     deleteTarget = null;
   });
 
@@ -1492,31 +1274,31 @@
   // Copy
   async function handleCopy(svc) {
     if (svc.migrating) {
-      showStatus("⚠ Old password — visit the site and change it to the Keygrain-generated one.");
+      showStatus(statusEl, "⚠ Old password — visit the site and change it to the Keygrain-generated one.", statusTimerState);
     }
     const pw = await deriveForService(svc);
     await navigator.clipboard.writeText(pw);
-    showStatus("Copied! Clears in 30s.");
+    showStatus(statusEl, "Copied! Clears in 30s.", statusTimerState);
     svc.frecency = (svc.frecency || 0) * 0.95 + 1;
     await saveServices();
     if (clearTimer) clearTimeout(clearTimer);
     clearTimer = setTimeout(async () => {
       await navigator.clipboard.writeText("");
-      showStatus("Clipboard cleared.");
+      showStatus(statusEl, "Clipboard cleared.", statusTimerState);
     }, 30000);
   }
 
   // Fill
   async function handleFill(svc) {
     if (svc.migrating) {
-      showStatus("⚠ Old password — visit the site and change it to the Keygrain-generated one.");
+      showStatus(statusEl, "⚠ Old password — visit the site and change it to the Keygrain-generated one.", statusTimerState);
     }
     const pw = await deriveForService(svc);
     svc.frecency = (svc.frecency || 0) * 0.95 + 1;
     await saveServices();
     try {
       const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-      if (!tab) { showStatus("No active tab."); return; }
+      if (!tab) { showStatus(statusEl, "No active tab.", statusTimerState); return; }
       if (typeof browser !== "undefined" && browser.tabs?.executeScript) {
         await browser.tabs.executeScript(tab.id, {file: "content.js"});
       } else {
@@ -1525,29 +1307,16 @@
       const resp = await chrome.tabs.sendMessage(tab.id, {action: "fill", password: pw, email: svc.email});
       if (resp?.success) {
         const msgs = {both: "Credentials filled.", password_only: "Password filled.", username_only: "Username filled."};
-        showStatus(msgs[resp.filled] || "Filled.");
+        showStatus(statusEl, msgs[resp.filled] || "Filled.", statusTimerState);
       } else {
-        showStatus(resp?.error || "No fillable fields found.");
+        showStatus(statusEl, resp?.error || "No fillable fields found.", statusTimerState);
       }
     } catch {
-      showStatus("Couldn't fill. Try copying instead.");
+      showStatus(statusEl, "Couldn't fill. Try copying instead.", statusTimerState);
     }
   }
 
   // === Keyboard navigation ===
-  function getFilteredServices() {
-    const filter = searchInput.value.trim();
-    if (!filter) return services.slice().sort((a, b) => (b.frecency || 0) - (a.frecency || 0));
-    return services.map(s => {
-      const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email), fuzzyScore(filter, s.site || ""));
-      return {svc: s, score};
-    }).filter(x => x.score > 0)
-      .sort((a, b) => {
-        const sa = a.score * (1 + (a.svc.frecency || 0));
-        const sb = b.score * (1 + (b.svc.frecency || 0));
-        return sb - sa;
-      }).map(x => x.svc);
-  }
 
   function applyFocus() {
     const rows = serviceList.querySelectorAll(".service-item");
@@ -1566,15 +1335,15 @@
   document.addEventListener("keydown", (e) => {
     // Dialogs: Escape closes them
     if (!settingsPanel.classList.contains("hidden")) {
-      if (e.key === "Escape") { closeDialog(settingsPanel); e.preventDefault(); }
+      if (e.key === "Escape") { closeDialog(settingsPanel, settingsState); e.preventDefault(); }
       return;
     }
     if (!addDialog.classList.contains("hidden")) {
-      if (e.key === "Escape") { closeDialog(addDialog); e.preventDefault(); }
+      if (e.key === "Escape") { closeDialog(addDialog, addState); e.preventDefault(); }
       return;
     }
     if (!deleteDialog.classList.contains("hidden")) {
-      if (e.key === "Escape") { closeDialog(deleteDialog); deleteTarget = null; e.preventDefault(); }
+      if (e.key === "Escape") { closeDialog(deleteDialog, deleteState); deleteTarget = null; e.preventDefault(); }
       return;
     }
 
@@ -1599,7 +1368,7 @@
       }
     } else if (e.key === "Enter" && focusedIndex >= 0) {
       e.preventDefault();
-      const filtered = getFilteredServices();
+      const filtered = getFilteredServices(services, searchInput.value.trim());
       if (filtered[focusedIndex]) handleFill(filtered[focusedIndex]);
     } else if (e.key === "Escape") {
       e.preventDefault();
@@ -1626,9 +1395,9 @@
       const encrypted = await encryptBlob(encKey, new TextEncoder().encode(json));
       encKey.fill(0);
       exportToFile(encrypted, "keygrain-backup.keygrain");
-      showStatus("Export started.");
+      showStatus(statusEl, "Export started.", statusTimerState);
     } catch (e) {
-      showStatus("Export failed: " + e.message);
+      showStatus(statusEl, "Export failed: " + e.message, statusTimerState);
     }
   });
 
@@ -1703,8 +1472,8 @@
       showMainScreen();
       updateSyncIndicator();
       performAutoSync();
-      await fetchSiteRules();
-      fetchBreaches();
+      await loadSiteRules();
+      loadBreaches();
       autoDetectSite();
       updateMigrateBtn();
     } else {

@@ -159,7 +159,7 @@ Retry-After: 30
 
 ### IP Extraction
 
-**Strategy:** Use a configurable trusted header (default: `X-Real-IP`) with `r.RemoteAddr` fallback.
+**Strategy:** Use a configurable trusted header (default: empty — RemoteAddr only) with `r.RemoteAddr` fallback. Set `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER=X-Real-IP` when behind a reverse proxy.
 
 ```go
 func (rl *rateLimitMiddleware) extractIP(r *http.Request) string {
@@ -286,7 +286,7 @@ All configuration via environment variables with sensible defaults:
 | `KEYGRAIN_RATE_LIMIT_ID_RATE` | `2` | Per-lookup_id sustained rate (requests/minute) |
 | `KEYGRAIN_RATE_LIMIT_IP_BURST` | `100` | Per-IP burst capacity |
 | `KEYGRAIN_RATE_LIMIT_IP_RATE` | `100` | Per-IP sustained rate (requests/minute) |
-| `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER` | `X-Real-IP` | Header for client IP (empty = use RemoteAddr only) |
+| `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER` | *(empty)* | Header for client IP (set to `X-Real-IP` behind proxy; empty = RemoteAddr only) |
 | `KEYGRAIN_RATE_LIMIT_CLEANUP_INTERVAL` | `60` | Cleanup goroutine interval (seconds) |
 | `KEYGRAIN_RATE_LIMIT_EVICTION_TTL` | `600` | Bucket eviction threshold (seconds of inactivity) |
 

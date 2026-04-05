@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -249,7 +248,11 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 			jsonError(w, `{"error":"validation failed","detail":"invalid timestamp"}`, http.StatusUnprocessableEntity)
 			return
 		}
-		if svc.ID != nil && !uuidRegex.MatchString(*svc.ID) {
+		if svc.ID == nil {
+			jsonError(w, `{"error":"validation failed","detail":"id required"}`, http.StatusUnprocessableEntity)
+			return
+		}
+		if !uuidRegex.MatchString(*svc.ID) {
 			jsonError(w, `{"error":"validation failed","detail":"invalid id format"}`, http.StatusUnprocessableEntity)
 			return
 		}
@@ -312,14 +315,6 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 		record.CreatedAt = now
 	}
 
-	// Assign UUIDs to null IDs
-	for i := range req.Services {
-		if req.Services[i].ID == nil {
-			id := generateUUID()
-			req.Services[i].ID = &id
-		}
-	}
-
 	newETag := computeETag(blobBytes)
 	record.Services = req.Services
 	record.EncryptedBlob = req.EncryptedBlob
@@ -367,13 +362,4 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 func sha256Hex(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
-}
-
-func generateUUID() string {
-	var uuid [16]byte
-	rand.Read(uuid[:])
-	uuid[6] = (uuid[6] & 0x0f) | 0x40 // version 4
-	uuid[8] = (uuid[8] & 0x3f) | 0x80 // variant 10
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
 }

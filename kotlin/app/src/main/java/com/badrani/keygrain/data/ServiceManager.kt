@@ -5,6 +5,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
 
 data class ServiceEntry(
     val name: String,
@@ -82,7 +83,7 @@ class ServiceManager(context: Context) {
 
     fun addService(entry: ServiceEntry) {
         val services = getServices().toMutableList()
-        services.add(entry.copy(site = normalizeSite(entry.site), updatedAt = System.currentTimeMillis()))
+        services.add(entry.copy(site = normalizeSite(entry.site), id = UUID.randomUUID().toString(), updatedAt = System.currentTimeMillis()))
         save(services)
     }
 

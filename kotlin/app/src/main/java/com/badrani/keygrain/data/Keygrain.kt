@@ -52,6 +52,7 @@ object Keygrain {
         counter: Int = 1
     ): String {
         require(length >= 8) { "length must be >= 8" }
+        require(length <= 128) { "length must be <= 128" }
         require(symbols.isNotEmpty()) { "symbols must not be empty" }
         require(site.isNotEmpty()) { "site must not be empty" }
 

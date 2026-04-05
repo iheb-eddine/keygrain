@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -288,5 +290,43 @@ func TestExtractLookupID(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("extractLookupID(%q) = %q, want %q", tt.path, got, tt.want)
 		}
+	}
+}
+
+func TestDefaultConfig_NoHeaderTrust(t *testing.T) {
+	// Ensure env var is unset (t.Setenv registers cleanup to restore original)
+	t.Setenv("KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER", "")
+	os.Unsetenv("KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rl := newRateLimitMiddleware(ctx)
+	if rl.trustedHeader != "" {
+		t.Fatalf("expected empty trustedHeader, got %q", rl.trustedHeader)
+	}
+}
+
+func TestDefaultConfig_ExplicitHeaderTrust(t *testing.T) {
+	t.Setenv("KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER", "X-Real-IP")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rl := newRateLimitMiddleware(ctx)
+	if rl.trustedHeader != "X-Real-IP" {
+		t.Fatalf("expected X-Real-IP, got %q", rl.trustedHeader)
+	}
+}
+
+func TestExtractIP_SpoofAttemptBlocked(t *testing.T) {
+	rl := &rateLimitMiddleware{trustedHeader: ""}
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-Real-IP", "1.2.3.4")
+	r.RemoteAddr = "10.0.0.1:9999"
+
+	ip := rl.extractIP(r)
+	if ip != "10.0.0.1" {
+		t.Fatalf("spoof not blocked: expected 10.0.0.1, got %s", ip)
 	}
 }

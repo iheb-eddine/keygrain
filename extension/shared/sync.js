@@ -230,13 +230,8 @@ function mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs
   }
 
   const localByID = new Map();
-  const localNew = [];
   for (const svc of localServices) {
-    if (svc.id) {
-      localByID.set(svc.id, svc);
-    } else {
-      localNew.push(svc);
-    }
+    localByID.set(svc.id, svc);
   }
 
   const merged = [];
@@ -266,20 +261,16 @@ function mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs
   // Local services with UUID not in remote → deleted on another device
   for (const [id, svc] of localByID) {
     if (remoteByID.has(id)) continue; // already handled
-    // UUID exists locally but not in remote → deleted remotely
-    // Don't include in merged
+    if (knownUUIDs.has(id)) {
+      // Was previously seen from server but now gone → deleted remotely → don't include
+    } else {
+      // Never seen from server → new local service → preserve
+      merged.push(svc);
+    }
   }
 
-  // Local services with no UUID → new locally
-  for (const svc of localNew) {
-    merged.push(svc);
-  }
-
-  // New known UUIDs = all UUIDs in merged that have an id
-  const newKnown = new Set();
-  for (const svc of merged) {
-    if (svc.id) newKnown.add(svc.id);
-  }
+  // New known UUIDs = all UUIDs in merged
+  const newKnown = new Set(merged.map(svc => svc.id));
 
   return {merged, knownUUIDs: newKnown};
 }
@@ -380,7 +371,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
 
     // Step 4: Build push payload
     const contentArray = merged.map(({id, updated_at, ...content}) => content);
-    const metadataArray = merged.map(s => ({id: s.id || null, updated_at: s.updated_at}));
+    const metadataArray = merged.map(s => ({id: s.id, updated_at: s.updated_at}));
 
     const blobPayload = {services: contentArray, wallets: mergedWallets, wallet_audit_log: mergedAuditLog};
     const plaintext = new TextEncoder().encode(JSON.stringify(blobPayload));
@@ -416,20 +407,12 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
 
     const putResult = await putResp.json();
 
-    // Step 6: Update local state with server-assigned UUIDs
-    const finalServices = merged.map((svc, i) => ({
-      ...svc,
-      id: putResult.services[i].id,
-      updated_at: svc.updated_at,
-    }));
-
     // Update known UUIDs and wallet keys
-    const finalKnown = new Set(putResult.services.map(s => s.id).filter(Boolean));
     await setMetadataCache(putResult.services);
     await setKnownWalletKeys(newWKeys);
 
     const status = getResp.status === 404 ? "created" : "synced";
-    return {services: finalServices, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, status, etag: putResult.etag, knownUUIDs: finalKnown};
+    return {services: merged, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, status, etag: putResult.etag, knownUUIDs: newKnown};
   } finally {
     encKey.fill(0);
   }

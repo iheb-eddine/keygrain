@@ -70,6 +70,8 @@ def derive_password(
     """
     if length < 8:
         raise ValueError("Error: Password length must be at least 8.")
+    if length > 128:
+        raise ValueError("Error: Password length must not exceed 128.")
     if not symbols:
         raise ValueError("Error: At least one symbol character is required.")
     if not site:

@@ -106,7 +106,7 @@ No automated tests currently. Manual testing only.
 | `KEYGRAIN_RATE_LIMIT_ID_RATE` | `2` | Per-lookup-ID refill rate (tokens/min) |
 | `KEYGRAIN_RATE_LIMIT_IP_BURST` | `100` | Per-IP token bucket capacity |
 | `KEYGRAIN_RATE_LIMIT_IP_RATE` | `100` | Per-IP refill rate (tokens/min) |
-| `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER` | `X-Real-IP` | Header for real client IP (behind proxy) |
+| `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER` | *(empty)* | Header for real client IP (set to `X-Real-IP` behind nginx) |
 
 ## Development Workflow
 

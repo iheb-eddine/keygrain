@@ -285,7 +285,7 @@ class SyncManager(
             for (svc in merged) {
                 contentArray.put(svc.toJsonContent())
                 metadataArray.put(JSONObject().apply {
-                    put("id", svc.id ?: JSONObject.NULL)
+                    put("id", svc.id)
                     put("updated_at", svc.updatedAt)
                 })
             }
@@ -315,20 +315,16 @@ class SyncManager(
 
             when (putResult) {
                 is PutResult.Success -> {
-                    // Update local with server-assigned UUIDs
-                    val finalServices = merged.mapIndexed { i, svc ->
-                        svc.copy(id = putResult.services[i].first, updatedAt = svc.updatedAt)
-                    }
-                    serviceManager.replaceAll(finalServices)
+                    serviceManager.replaceAll(merged)
 
                     // Update known UUIDs and wallet keys
-                    val newKnown = putResult.services.mapNotNull { it.first }.toSet()
+                    val newKnown = merged.mapNotNull { it.id }.toSet()
                     setKnownUUIDs(context, newKnown)
                     setKnownWalletKeys(context, newWKeys)
                     saveWallets(context, mergedWallets)
                     saveAuditLog(context, mergedAuditLog)
 
-                    SyncResult.Success(finalServices, mergedWallets, mergedAuditLog, status)
+                    SyncResult.Success(merged, mergedWallets, mergedAuditLog, status)
                 }
                 is PutResult.Conflict -> {
                     if (retryCount < 1) {
@@ -363,10 +359,8 @@ class SyncManager(
         }
 
         val localByID = mutableMapOf<String, ServiceEntry>()
-        val localNew = mutableListOf<ServiceEntry>()
         for (svc in local) {
             if (svc.id != null) localByID[svc.id] = svc
-            else localNew.add(svc)
         }
 
         val merged = mutableListOf<ServiceEntry>()
@@ -390,10 +384,15 @@ class SyncManager(
             }
         }
 
-        // Local with UUID not in remote → deleted remotely, don't include
-
-        // Local new (no UUID)
-        merged.addAll(localNew)
+        // Local-only services
+        for ((id, svc) in localByID) {
+            if (knownUUIDs.contains(id)) {
+                // Was previously seen from server but now gone → deleted remotely
+            } else {
+                // Never seen from server → new local service → preserve
+                merged.add(svc)
+            }
+        }
 
         return merged
     }

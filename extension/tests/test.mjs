@@ -157,6 +157,10 @@ for (const v of coreVectors.vectors) {
   });
 }
 
+await test('derivePassword: rejects length > 128', async () => {
+  await assert.rejects(() => call('derivePassword', 'secret', 'a@b.com', { site: 'x.com', length: 129 }), /length must be between 8 and 128/);
+});
+
 // buildPassword: rejection sampling boundary
 await test('buildPassword: rejects bytes >= limit (rejection sampling boundary)', async () => {
   // For charset 67, limit = floor(256/67)*67 = 201. Byte 255 must be skipped.
@@ -294,17 +298,17 @@ await test('mergeServices: remote-only known UUID = deleted locally, not include
   assert.equal(result.merged.length, 0);
 });
 
-await test('mergeServices: local-only with UUID not in remote = deleted remotely', async () => {
+await test('mergeServices: local-only with UUID in knownUUIDs = deleted remotely', async () => {
   const local = [{ id: 'd', site: 'gone.com', updated_at: 100 }];
   const remote = [];
   const meta = [];
-  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();
+  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set(['d']);
   const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
   assert.equal(result.merged.length, 0);
 });
 
-await test('mergeServices: local new (no UUID) preserved', async () => {
-  const local = [{ site: 'brand-new.com', updated_at: 300 }];
+await test('mergeServices: local new (with UUID, not in remote) preserved', async () => {
+  const local = [{ id: 'local-uuid-1', site: 'brand-new.com', updated_at: 300 }];
   const remote = [];
   const meta = [];
   ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();

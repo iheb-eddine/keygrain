@@ -95,7 +95,7 @@ func newRateLimitMiddleware(ctx context.Context) *rateLimitMiddleware {
 	idRate := envInt("KEYGRAIN_RATE_LIMIT_ID_RATE", 2)
 	ipBurst := envInt("KEYGRAIN_RATE_LIMIT_IP_BURST", 100)
 	ipRate := envInt("KEYGRAIN_RATE_LIMIT_IP_RATE", 100)
-	trustedHeader := envString("KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER", "X-Real-IP")
+	trustedHeader := envString("KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER", "")
 	cleanupInterval := envInt("KEYGRAIN_RATE_LIMIT_CLEANUP_INTERVAL", 60)
 	evictionTTL := envInt("KEYGRAIN_RATE_LIMIT_EVICTION_TTL", 600)
 

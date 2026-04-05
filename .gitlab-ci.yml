@@ -8,6 +8,31 @@ variables:
   APP_NAME: keygrain
   PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${APP_NAME}/${CI_COMMIT_REF_SLUG}"
 
+checksum-gate:
+  stage: test
+  image: alpine:3.19
+  script:
+    - |
+      ACTUAL=$(sha256sum vectors.json | cut -d' ' -f1)
+      EXPECTED=$(tr -d '[:space:]' < .vectors-checksum)
+      if [ "$ACTUAL" != "$EXPECTED" ]; then
+        echo "CHECKSUM MISMATCH: vectors.json"
+        echo "  expected: $EXPECTED"
+        echo "  actual:   $ACTUAL"
+        exit 1
+      fi
+    - |
+      ACTUAL=$(sha256sum SPEC.md | cut -d' ' -f1)
+      EXPECTED=$(tr -d '[:space:]' < .spec-checksum)
+      if [ "$ACTUAL" != "$EXPECTED" ]; then
+        echo "CHECKSUM MISMATCH: SPEC.md"
+        echo "  expected: $EXPECTED"
+        echo "  actual:   $ACTUAL"
+        exit 1
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
 test-python:
   stage: test
   image: python:3.11-slim
@@ -15,7 +40,18 @@ test-python:
     - cd python
     - pip install -e .
     - pip install pytest
-    - pytest
+    - pytest -q | tee test-output.txt
+    - |
+      ACTUAL_COUNT=$(grep -oP '^\d+(?= passed)' test-output.txt || true)
+      ACTUAL_COUNT=${ACTUAL_COUNT:-0}
+      BASELINE=$(grep '^python=' ../.test-baselines | cut -d= -f2)
+      if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
+        echo "TEST COUNT REGRESSION: python"
+        echo "  baseline: $BASELINE"
+        echo "  actual:   $ACTUAL_COUNT"
+        exit 1
+      fi
+      echo "Test count OK: python $ACTUAL_COUNT >= $BASELINE"
   rules:
     - if: $CI_COMMIT_BRANCH
 
@@ -24,7 +60,59 @@ test-js:
   image: node:20-alpine
   script:
     - cd extension/tests
-    - node test.mjs
+    - node test.mjs | tee test-output.txt
+    - |
+      ACTUAL_COUNT=$(grep -o '^[0-9]* tests:' test-output.txt | grep -o '^[0-9]*' || true)
+      ACTUAL_COUNT=${ACTUAL_COUNT:-0}
+      BASELINE=$(grep '^js=' ../../.test-baselines | cut -d= -f2)
+      if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
+        echo "TEST COUNT REGRESSION: js"
+        echo "  baseline: $BASELINE"
+        echo "  actual:   $ACTUAL_COUNT"
+        exit 1
+      fi
+      echo "Test count OK: js $ACTUAL_COUNT >= $BASELINE"
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+test-js-slow:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd extension/tests
+    - node test-strengthen-slow.mjs
+  timeout: 2m
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+test-cross-platform:
+  stage: test
+  image: node:20
+  script:
+    - apt-get update && apt-get install -y python3 python3-pip python3-venv
+    - pip install --break-system-packages ./python
+    - bash ci/cross-platform-check.sh
+  timeout: 2m
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+test-go:
+  stage: test
+  image: golang:1.22-alpine
+  script:
+    - cd server
+    - go test -v ./... 2>&1 | tee test-output.txt
+    - |
+      ACTUAL_COUNT=$(grep -c "^--- PASS:" test-output.txt || true)
+      ACTUAL_COUNT=${ACTUAL_COUNT:-0}
+      BASELINE=$(grep '^go=' ../.test-baselines | cut -d= -f2)
+      if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
+        echo "TEST COUNT REGRESSION: go"
+        echo "  baseline: $BASELINE"
+        echo "  actual:   $ACTUAL_COUNT"
+        exit 1
+      fi
+      echo "Test count OK: go $ACTUAL_COUNT >= $BASELINE"
   rules:
     - if: $CI_COMMIT_BRANCH
 
@@ -97,6 +185,17 @@ build-mobile:
       fi
     - 'sed -i "s/versionName = \"1.0.0\"/versionName = \"1.0.0-${CI_COMMIT_SHORT_SHA}\"/" app/build.gradle.kts'
     - ./gradlew testReleaseUnitTest --no-daemon --max-workers=1
+    - |
+      ACTUAL_COUNT=$(find app/build/test-results/testReleaseUnitTest -name "*.xml" -exec grep -c "<testcase" {} + | awk -F: '{sum+=$NF} END {print sum}')
+      ACTUAL_COUNT=${ACTUAL_COUNT:-0}
+      BASELINE=$(grep '^kotlin=' ../.test-baselines | cut -d= -f2)
+      if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
+        echo "TEST COUNT REGRESSION: kotlin"
+        echo "  baseline: $BASELINE"
+        echo "  actual:   $ACTUAL_COUNT"
+        exit 1
+      fi
+      echo "Test count OK: kotlin $ACTUAL_COUNT >= $BASELINE"
     - ./gradlew assembleRelease --no-daemon --max-workers=1
     - cp app/build/outputs/apk/release/app-release.apk keygrain.apk || cp app/build/outputs/apk/release/app-release-unsigned.apk keygrain.apk
   artifacts:

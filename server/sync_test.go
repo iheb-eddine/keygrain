@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,12 @@ import (
 	"sync"
 	"testing"
 )
+
+var validID = strings.Repeat("ab", 32) // 64-char hex string
+
+func testUUID(n int) string {
+	return fmt.Sprintf("00000000-0000-4000-8000-%012d", n)
+}
 
 func setupSyncServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -52,7 +59,7 @@ func TestSync_PutNewUser(t *testing.T) {
 	ts := setupSyncServer(t)
 	defer ts.Close()
 
-	body := syncPutBody(`[{"id":null,"updated_at":1000}]`, "encrypted")
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "encrypted")
 	resp, err := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	if err != nil {
 		t.Fatal(err)
@@ -71,10 +78,10 @@ func TestSync_PutNewUser(t *testing.T) {
 		t.Fatalf("expected 1 service, got %d", len(result.Services))
 	}
 	if result.Services[0].ID == nil {
-		t.Fatal("expected UUID to be assigned")
+		t.Fatal("expected id in response")
 	}
-	if !uuidRegex.MatchString(*result.Services[0].ID) {
-		t.Fatalf("invalid UUID: %s", *result.Services[0].ID)
+	if *result.Services[0].ID != testUUID(1) {
+		t.Fatalf("expected id to be preserved, got %s", *result.Services[0].ID)
 	}
 	if result.ETag == "" {
 		t.Fatal("expected etag in response")
@@ -86,16 +93,13 @@ func TestSync_PutExistingUser(t *testing.T) {
 	defer ts.Close()
 
 	// Create
-	body := syncPutBody(`[{"id":null,"updated_at":1000}]`, "blob1")
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "blob1")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
-	var createResp syncPutResponse
-	json.NewDecoder(resp.Body).Decode(&createResp)
 	resp.Body.Close()
 	etag := strings.Trim(resp.Header.Get("ETag"), `"`)
 
 	// Update with correct If-Match
-	existingID := *createResp.Services[0].ID
-	body = syncPutBody(`[{"id":"`+existingID+`","updated_at":2000},{"id":null,"updated_at":2000}]`, "blob2")
+	body = syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":2000},{"id":"`+testUUID(2)+`","updated_at":2000}]`, "blob2")
 	req := syncPut(ts.URL, validID, "pass", body)
 	req.Header.Set("If-Match", `"`+etag+`"`)
 	resp, _ = http.DefaultClient.Do(req)
@@ -111,11 +115,11 @@ func TestSync_PutExistingUser(t *testing.T) {
 	if len(updateResp.Services) != 2 {
 		t.Fatalf("expected 2 services, got %d", len(updateResp.Services))
 	}
-	if *updateResp.Services[0].ID != existingID {
+	if *updateResp.Services[0].ID != testUUID(1) {
 		t.Fatal("existing UUID should be preserved")
 	}
-	if updateResp.Services[1].ID == nil {
-		t.Fatal("new service should get UUID")
+	if *updateResp.Services[1].ID != testUUID(2) {
+		t.Fatal("second UUID should be preserved")
 	}
 }
 
@@ -123,12 +127,12 @@ func TestSync_PutWrongIfMatch(t *testing.T) {
 	ts := setupSyncServer(t)
 	defer ts.Close()
 
-	body := syncPutBody(`[{"id":null,"updated_at":1000}]`, "blob1")
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "blob1")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	resp.Body.Close()
 
 	// Try with wrong etag
-	body = syncPutBody(`[{"id":null,"updated_at":2000}]`, "blob2")
+	body = syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":2000}]`, "blob2")
 	req := syncPut(ts.URL, validID, "pass", body)
 	req.Header.Set("If-Match", `"`+strings.Repeat("a", 32)+`"`)
 	resp, _ = http.DefaultClient.Do(req)
@@ -148,12 +152,12 @@ func TestSync_PutMissingIfMatch(t *testing.T) {
 	defer ts.Close()
 
 	// Create first
-	body := syncPutBody(`[{"id":null,"updated_at":1000}]`, "blob1")
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "blob1")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	resp.Body.Close()
 
 	// Update without If-Match should fail with 409
-	body = syncPutBody(`[{"id":null,"updated_at":2000}]`, "blob2")
+	body = syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":2000}]`, "blob2")
 	resp, _ = http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	defer resp.Body.Close()
 
@@ -167,7 +171,7 @@ func TestSync_PutInvalidChecksum(t *testing.T) {
 	defer ts.Close()
 
 	encoded := base64.StdEncoding.EncodeToString([]byte("data"))
-	body := `{"services":[{"id":null,"updated_at":1000}],"encrypted_blob":"` + encoded + `","checksum":"` + strings.Repeat("a", 64) + `"}`
+	body := `{"services":[{"id":"` + testUUID(1) + `","updated_at":1000}],"encrypted_blob":"` + encoded + `","checksum":"` + strings.Repeat("a", 64) + `"}`
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	defer resp.Body.Close()
 
@@ -180,7 +184,7 @@ func TestSync_PutInvalidTimestamp(t *testing.T) {
 	ts := setupSyncServer(t)
 	defer ts.Close()
 
-	body := syncPutBody(`[{"id":null,"updated_at":0}]`, "data")
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":0}]`, "data")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	defer resp.Body.Close()
 
@@ -202,6 +206,23 @@ func TestSync_PutInvalidUUID(t *testing.T) {
 	}
 }
 
+func TestSync_PutNullIdRejected(t *testing.T) {
+	ts := setupSyncServer(t)
+	defer ts.Close()
+
+	body := syncPutBody(`[{"id":null,"updated_at":1000}]`, "data")
+	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", resp.StatusCode)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "id required") {
+		t.Fatalf("expected 'id required' in body: %s", b)
+	}
+}
+
 func TestSync_PutTooManyServices(t *testing.T) {
 	ts := setupSyncServer(t)
 	defer ts.Close()
@@ -209,7 +230,7 @@ func TestSync_PutTooManyServices(t *testing.T) {
 	// Build 1001 services
 	var svcs []string
 	for i := 0; i < 1001; i++ {
-		svcs = append(svcs, `{"id":null,"updated_at":1000}`)
+		svcs = append(svcs, fmt.Sprintf(`{"id":"%s","updated_at":1000}`, testUUID(i)))
 	}
 	body := syncPutBody("["+strings.Join(svcs, ",")+"]", "data")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
@@ -238,7 +259,7 @@ func TestSync_GetExisting(t *testing.T) {
 	ts := setupSyncServer(t)
 	defer ts.Close()
 
-	body := syncPutBody(`[{"id":null,"updated_at":1000}]`, "my-blob")
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "my-blob")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	resp.Body.Close()
 
@@ -284,7 +305,7 @@ func TestSync_GetWrongPassword(t *testing.T) {
 	ts := setupSyncServer(t)
 	defer ts.Close()
 
-	body := syncPutBody(`[{"id":null,"updated_at":1000}]`, "data")
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "data")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	resp.Body.Close()
 
@@ -300,12 +321,12 @@ func TestSync_PutWrongPassword(t *testing.T) {
 	ts := setupSyncServer(t)
 	defer ts.Close()
 
-	body := syncPutBody(`[{"id":null,"updated_at":1000}]`, "data")
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "data")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	resp.Body.Close()
 	etag := strings.Trim(resp.Header.Get("ETag"), `"`)
 
-	body = syncPutBody(`[{"id":null,"updated_at":2000}]`, "data2")
+	body = syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":2000}]`, "data2")
 	req := syncPut(ts.URL, validID, "wrong", body)
 	req.Header.Set("If-Match", `"`+etag+`"`)
 	resp, _ = http.DefaultClient.Do(req)
@@ -320,17 +341,21 @@ func TestSync_UUIDPreservation(t *testing.T) {
 	ts := setupSyncServer(t)
 	defer ts.Close()
 
-	body := syncPutBody(`[{"id":null,"updated_at":1000},{"id":null,"updated_at":1000}]`, "blob1")
+	id0 := testUUID(1)
+	id1 := testUUID(2)
+
+	body := syncPutBody(`[{"id":"`+id0+`","updated_at":1000},{"id":"`+id1+`","updated_at":1000}]`, "blob1")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	var r1 syncPutResponse
 	json.NewDecoder(resp.Body).Decode(&r1)
 	resp.Body.Close()
 	etag := strings.Trim(resp.Header.Get("ETag"), `"`)
 
-	id0 := *r1.Services[0].ID
-	id1 := *r1.Services[1].ID
+	if *r1.Services[0].ID != id0 || *r1.Services[1].ID != id1 {
+		t.Fatal("initial UUIDs should be preserved")
+	}
 
-	// Push again with existing IDs
+	// Push again with same IDs
 	body = syncPutBody(`[{"id":"`+id0+`","updated_at":2000},{"id":"`+id1+`","updated_at":2000}]`, "blob2")
 	req := syncPut(ts.URL, validID, "pass", body)
 	req.Header.Set("If-Match", `"`+etag+`"`)
@@ -349,7 +374,7 @@ func TestSync_ConcurrentPuts(t *testing.T) {
 	defer ts.Close()
 
 	// Create initial
-	body := syncPutBody(`[{"id":null,"updated_at":1000}]`, "initial")
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "initial")
 	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
 	resp.Body.Close()
 	etag := strings.Trim(resp.Header.Get("ETag"), `"`)
@@ -360,7 +385,7 @@ func TestSync_ConcurrentPuts(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			b := syncPutBody(`[{"id":null,"updated_at":2000}]`, "concurrent-"+string(rune('a'+n)))
+			b := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":2000}]`, "concurrent-"+string(rune('a'+n)))
 			req := syncPut(ts.URL, validID, "pass", b)
 			req.Header.Set("If-Match", `"`+etag+`"`)
 			r, _ := http.DefaultClient.Do(req)

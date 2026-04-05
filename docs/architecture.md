@@ -246,7 +246,7 @@ Dual token-bucket rate limiting protects against brute-force:
 | Per-IP | 100 | 100/min | Prevents distributed attacks from single IP |
 | Per-lookup_id | 10 | 2/min | Prevents targeted account brute-force |
 
-Configurable via environment variables. Uses `X-Real-IP` header (trusted from nginx).
+Configurable via environment variables. Uses `RemoteAddr` by default; set `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER=X-Real-IP` when behind nginx.
 
 ### 4.5 Threat Model Summary
 
@@ -356,4 +356,4 @@ Internet ──▶ nginx (TLS termination, Let's Encrypt)
 - **Build:** Docker multi-stage (Go alpine builder → alpine runtime)
 - **Deploy:** GitLab CI → SSH → `docker compose build && up -d`
 - **TLS:** nginx handles certificate renewal and HTTPS termination
-- **IP forwarding:** `X-Real-IP` header from nginx to Go for rate limiting
+- **IP forwarding:** Set `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER=X-Real-IP` for nginx to pass real client IP for rate limiting
