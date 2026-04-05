@@ -44,6 +44,11 @@ def test_minimum_length_rejected():
         derive_password(b"secret", "a@b.com", site="example.com", length=7)
 
 
+def test_maximum_length_rejected():
+    with pytest.raises(ValueError):
+        derive_password(b"secret", "a@b.com", site="example.com", length=129)
+
+
 def test_empty_symbols_rejected():
     with pytest.raises(ValueError):
         derive_password(b"secret", "a@b.com", site="example.com", symbols="")

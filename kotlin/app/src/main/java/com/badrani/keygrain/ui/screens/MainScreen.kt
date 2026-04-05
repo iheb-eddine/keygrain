@@ -633,7 +633,7 @@ private fun ServiceListScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(filteredServices, key = { it.id ?: "${it.name}:${it.email}:${it.counter}" }) { service ->
+                    items(filteredServices, key = { it.id!! }) { service ->
                         ServiceCard(
                             service = service,
                             masterSecret = masterSecret,

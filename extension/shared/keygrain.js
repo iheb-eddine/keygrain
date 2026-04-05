@@ -103,6 +103,7 @@ function buildPassword(stream, length, symbols) {
 }
 
 async function derivePassword(secret, email, { site, length = 20, symbols = "!@#$%&*-_=+?", counter = 1 }) {
+  if (length < 8 || length > 128) throw new RangeError("length must be between 8 and 128");
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(secret, email);
   const message = enc.encode(site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + counter);
