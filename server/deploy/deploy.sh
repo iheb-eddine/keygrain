@@ -33,4 +33,7 @@ cd "${APP_DIR}"
 docker compose build
 docker compose up -d
 
+# Reload nginx to pick up any cert changes
+nginx -t && systemctl reload nginx
+
 echo "Keygrain deployed successfully!"

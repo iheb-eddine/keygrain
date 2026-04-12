@@ -68,12 +68,11 @@ EOF
 NGINX_CONF="/etc/nginx/sites-available/keygrain.conf"
 mkdir -p /var/www/certbot
 
-# Get SSL certificate first if needed
-if [ ! -d "/etc/letsencrypt/live/${DOMAIN}" ]; then
-    echo "Obtaining SSL certificate for ${DOMAIN}..."
-    # Temporarily enable HTTP-only nginx for ACME challenge
-    TMP_CONF="/etc/nginx/sites-available/keygrain-http-only.conf"
-    cat > "${TMP_CONF}" <<EOF
+# Ensure valid SSL certificate (obtain if missing, renew if near-expiry, no-op if valid)
+echo "Ensuring valid SSL certificate for ${DOMAIN}..."
+
+# Set up HTTP-only nginx for ACME challenge
+cat > "${NGINX_CONF}" <<EOF
 server {
     listen 80;
     server_name ${DOMAIN};
@@ -81,17 +80,13 @@ server {
     location / { return 444; }
 }
 EOF
-    ln -sf "${TMP_CONF}" /etc/nginx/sites-enabled/keygrain.conf
-    nginx -t && systemctl reload nginx
+ln -sf "${NGINX_CONF}" /etc/nginx/sites-enabled/keygrain.conf
+nginx -t && systemctl reload nginx
 
-    certbot certonly --webroot -w /var/www/certbot \
-        -d "${DOMAIN}" \
-        --email "${CERTBOT_EMAIL}" --agree-tos --no-eff-email --non-interactive
-
-    rm -f "${TMP_CONF}"
-else
-    echo "SSL certificate already exists for ${DOMAIN}, skipping."
-fi
+certbot certonly --webroot -w /var/www/certbot \
+    -d "${DOMAIN}" \
+    --email "${CERTBOT_EMAIL}" --agree-tos --no-eff-email --non-interactive \
+    --keep-until-expiring
 
 # Write full nginx config (with SSL)
 cat > "${NGINX_CONF}" <<EOF

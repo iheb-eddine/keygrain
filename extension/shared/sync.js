@@ -361,15 +361,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     const {merged: mergedWallets, knownWalletKeys: newWKeys} = mergeWallets(localWallets, remoteWallets, knownWKeys);
     const mergedAuditLog = mergeAuditLog(localAuditLog, remoteAuditLog);
 
-    // Step 3: Empty push protection
-    if (merged.length === 0 && remoteMetadata.length > 0) {
-      throw new Error("empty_push_blocked");
-    }
-    if (mergedWallets.length === 0 && remoteWallets.length > 0) {
-      throw new Error("empty_wallet_push_blocked");
-    }
-
-    // Step 4: Build push payload
+    // Step 3: Build push payload
     const contentArray = merged.map(({id, updated_at, ...content}) => content);
     const metadataArray = merged.map(s => ({id: s.id, updated_at: s.updated_at}));
 
@@ -386,7 +378,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     };
     if (etag) putHeaders["If-Match"] = '"' + etag + '"';
 
-    // Step 5: PUT
+    // Step 4: PUT
     let putResp;
     try {
       putResp = await fetch(syncServer + "/api/sync/" + lookupId, {

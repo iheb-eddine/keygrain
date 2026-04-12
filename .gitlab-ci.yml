@@ -61,6 +61,7 @@ test-js:
   script:
     - cd extension/tests
     - node test.mjs | tee test-output.txt
+    - node test-popup-modules.mjs
     - |
       ACTUAL_COUNT=$(grep -o '^[0-9]* tests:' test-output.txt | grep -o '^[0-9]*' || true)
       ACTUAL_COUNT=${ACTUAL_COUNT:-0}
@@ -210,7 +211,7 @@ build-mobile:
 
 deploy:
   stage: deploy
-  image: debian:bullseye
+  image: debian:bookworm
   needs:
     - build-package
     - job: build-mobile

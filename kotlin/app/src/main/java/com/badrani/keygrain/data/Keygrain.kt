@@ -54,10 +54,11 @@ object Keygrain {
         require(length >= 8) { "length must be >= 8" }
         require(length <= 128) { "length must be <= 128" }
         require(symbols.isNotEmpty()) { "symbols must not be empty" }
-        require(site.isNotEmpty()) { "site must not be empty" }
+        val normalizedSite = normalizeSite(site)
+        require(normalizedSite.isNotEmpty()) { "site must not be empty" }
 
         val strengthened = strengthenSecret(secret, email)
-        val message = "${site.lowercase()}:${email.lowercase()}:$length:$counter".toByteArray()
+        val message = "$normalizedSite:${email.lowercase()}:$length:$counter".toByteArray()
         return buildPassword(strengthened, message, length, symbols)
     }
 
@@ -127,6 +128,13 @@ object Keygrain {
     fun secretFingerprint(secret: ByteArray): List<Int> {
         val hash = hmacSha256(secret, "keygrain-fingerprint".toByteArray())
         return (0 until 4).map { (hash[it].toInt() and 0xFF) % 8 }
+    }
+
+    private fun normalizeSite(site: String): String {
+        var s = site.replace(Regex("^https?://", RegexOption.IGNORE_CASE), "")
+        s = s.split("/")[0].split("?")[0].split("#")[0]
+            .trimEnd('/').lowercase()
+        return s.removePrefix("www.")
     }
 
     internal fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {

@@ -68,3 +68,9 @@ Do NOT report these in bug bounties, code reviews, or security audits.
 **Issue:** `rules.json` is verified with Ed25519 signature before use, but `breaches.json` is not. A compromised CDN or MITM could inject fake breach notifications.
 
 **Why accepted:** Transport is HTTPS (TLS protects integrity in transit). Breach notifications only trigger UI warnings — they cannot change passwords, delete data, or exfiltrate secrets. The worst case is a false "your password was breached" notification. Adding signature verification requires a signing workflow and key distribution for breaches.json updates. Will be added when the signing toolchain is extended.
+
+## 12. Kotlin/Android Secret Stored as Immutable String
+
+**Issue:** The master secret in `SecretManager.kt` is stored and returned as a JVM `String`, which is immutable and cannot be zeroed from memory. The secret persists in heap until garbage collection.
+
+**Why accepted:** (1) `EncryptedSharedPreferences.getString()` itself returns `String` — the storage API forces this allocation regardless of downstream handling. (2) The strengthened key (`ByteArray`) IS properly zeroed in `clearStrengthenCache()`. (3) An attacker with JVM heap read access implies a rooted/compromised device where the Android Keystore is also compromised. (4) JS has the identical limitation (item #2 above). (5) Fix would require refactoring the entire UI layer to use `CharArray`/`ByteArray` for marginal gain in a threat model that already implies device compromise.

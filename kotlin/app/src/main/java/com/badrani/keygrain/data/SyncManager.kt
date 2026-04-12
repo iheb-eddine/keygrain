@@ -102,6 +102,63 @@ class SyncManager(
         getPrefs(context).edit().putStringSet("known_uuids", uuids).apply()
     }
 
+    private fun getMetadataCache(context: Context): List<Pair<String?, Long>>? {
+        val json = getPrefs(context).getString("sync_metadata_cache", null) ?: return null
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                val id = if (obj.isNull("id")) null else obj.getString("id")
+                Pair(id, obj.getLong("updated_at"))
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun setMetadataCache(context: Context, metadata: List<Pair<String?, Long>>) {
+        val arr = JSONArray()
+        for ((id, updatedAt) in metadata) {
+            arr.put(JSONObject().apply {
+                put("id", id ?: JSONObject.NULL)
+                put("updated_at", updatedAt)
+            })
+        }
+        getPrefs(context).edit().putString("sync_metadata_cache", arr.toString()).apply()
+    }
+
+    private fun validateMetadataIntegrity(
+        received: List<Pair<String?, Long>>,
+        cached: List<Pair<String?, Long>>
+    ): String? {
+        val receivedById = mutableMapOf<String, Long>()
+        for ((id, ts) in received) { if (id != null) receivedById[id] = ts }
+
+        val cachedOrder = cached.mapNotNull { it.first }
+        val receivedOrder = received.mapNotNull { it.first }
+        val sharedIds = cachedOrder.filter { it in receivedById }.toSet()
+
+        val sharedInCachedOrder = cachedOrder.filter { it in sharedIds }
+        val sharedInReceivedOrder = receivedOrder.filter { it in sharedIds }
+
+        for (i in sharedInCachedOrder.indices) {
+            if (sharedInCachedOrder[i] != sharedInReceivedOrder[i]) {
+                return "order: relative order of UUIDs changed"
+            }
+        }
+
+        val cachedById = mutableMapOf<String, Long>()
+        for ((id, ts) in cached) { if (id != null) cachedById[id] = ts }
+
+        for ((id, ts) in received) {
+            if (id != null && cachedById.containsKey(id)) {
+                if (ts < cachedById[id]!!) {
+                    return "timestamp: UUID $id went from ${cachedById[id]} to $ts"
+                }
+            }
+        }
+
+        return null
+    }
+
     private fun getKnownWalletKeys(context: Context): Set<String> =
         getPrefs(context).getStringSet("known_wallet_keys", emptySet()) ?: emptySet()
 
@@ -257,6 +314,15 @@ class SyncManager(
                     if (remoteMetadata.size != remoteServices.size) {
                         return@withContext SyncResult.IntegrityError("metadata length mismatch")
                     }
+
+                    // Validate metadata integrity
+                    val cachedMeta = getMetadataCache(context)
+                    if (cachedMeta != null) {
+                        val violation = validateMetadataIntegrity(remoteMetadata, cachedMeta)
+                        if (violation != null) {
+                            return@withContext SyncResult.IntegrityError("metadata tamper: $violation")
+                        }
+                    }
                 }
                 is GetResult.NotFound -> { /* No remote state — push all local */ }
                 is GetResult.AuthError -> return@withContext SyncResult.AuthError(getResult.code)
@@ -270,14 +336,6 @@ class SyncManager(
             val localAuditLog = getAuditLog(context)
             val (mergedWallets, newWKeys) = mergeWallets(localWallets, remoteWallets, knownWKeys)
             val mergedAuditLog = mergeAuditLog(localAuditLog, remoteAuditLog)
-
-            // Empty push protection
-            if (merged.isEmpty() && remoteMetadata.isNotEmpty()) {
-                return@withContext SyncResult.IntegrityError("empty push blocked")
-            }
-            if (mergedWallets.isEmpty() && remoteWallets.isNotEmpty()) {
-                return@withContext SyncResult.IntegrityError("empty wallet push blocked")
-            }
 
             // Step 3: Build push payload
             val contentArray = JSONArray()
@@ -316,6 +374,7 @@ class SyncManager(
             when (putResult) {
                 is PutResult.Success -> {
                     serviceManager.replaceAll(merged)
+                    setMetadataCache(context, putResult.services)
 
                     // Update known UUIDs and wallet keys
                     val newKnown = merged.mapNotNull { it.id }.toSet()
@@ -327,7 +386,7 @@ class SyncManager(
                     SyncResult.Success(merged, mergedWallets, mergedAuditLog, status)
                 }
                 is PutResult.Conflict -> {
-                    if (retryCount < 1) {
+                    if (retryCount < 3) {
                         sync(secret, email, serviceManager, context, retryCount + 1)
                     } else {
                         SyncResult.ConflictError

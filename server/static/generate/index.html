@@ -161,7 +161,10 @@
         const stream = await buildStream(strengthened, message, length * 4);
         const fullCharset = UPPER + LOWER + DIGITS + symbols;
         let pos = 0;
-        const nextByte = () => stream[pos++];
+        const nextByte = () => {
+            if (pos >= stream.length) throw new Error("stream exhausted");
+            return stream[pos++];
+        };
 
         function unbiasedIndex(n) {
             const limit = Math.floor(256 / n) * n;
@@ -184,7 +187,6 @@
             const j = unbiasedIndex(i + 1);
             [chars[i], chars[j]] = [chars[j], chars[i]];
         }
-        if (pos > stream.length) throw new Error("stream exhausted");
         return chars.join("");
     }
 

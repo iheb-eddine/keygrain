@@ -26,86 +26,91 @@ class KeygrainAutofillService : AutofillService() {
     }
 
     override fun onFillRequest(request: FillRequest, cancel: CancellationSignal, callback: FillCallback) {
-        if (!SecretManager.sessionActive) {
-            callback.onSuccess(null)
-            return
-        }
-
-        val secretManager = SecretManager(applicationContext)
-        val secret = secretManager.getSecret()
-        if (secret == null) {
-            callback.onSuccess(null)
-            return
-        }
-
-        val structure = request.fillContexts.lastOrNull()?.structure
-        if (structure == null) {
-            callback.onSuccess(null)
-            return
-        }
-
-        val requestingPackage = structure.activityComponent?.packageName
-
-        val domain = extractDomain(structure)
-
-        // If webDomain is present but app is not a trusted browser, refuse to fill
-        if (domain != null && domain.isNotEmpty()) {
-            val trustedBrowsers = getTrustedBrowsers()
-            if (requestingPackage == null || requestingPackage !in trustedBrowsers) {
+        try {
+            val secretManager = SecretManager(applicationContext)
+            val secret = secretManager.getSecret()
+            if (secret == null) {
                 callback.onSuccess(null)
                 return
             }
-        }
 
-        if (domain.isNullOrEmpty()) {
-            callback.onSuccess(null)
-            return
-        }
-
-        val normalizedDomain = ServiceManager.normalizeSite(domain)
-        val serviceManager = ServiceManager(applicationContext)
-        val matches = serviceManager.getServices().filter {
-            ServiceManager.normalizeSite(it.site) == normalizedDomain
-        }
-
-        if (matches.isEmpty()) {
-            callback.onSuccess(null)
-            return
-        }
-
-        val passwordNodes = mutableListOf<AutofillNodeInfo>()
-        for (i in 0 until structure.windowNodeCount) {
-            findPasswordNodes(structure.getWindowNodeAt(i).rootViewNode, passwordNodes)
-        }
-
-        if (passwordNodes.isEmpty()) {
-            callback.onSuccess(null)
-            return
-        }
-
-        val responseBuilder = FillResponse.Builder()
-        for (service in matches) {
-            val password = Keygrain.derivePassword(
-                secret = secret.toByteArray(),
-                email = service.email,
-                site = service.site,
-                length = service.length,
-                symbols = service.symbols,
-                counter = service.counter
-            )
-
-            val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
-                setTextViewText(android.R.id.text1, "Keygrain — ${service.name}")
+            val structure = request.fillContexts.lastOrNull()?.structure
+            if (structure == null) {
+                callback.onSuccess(null)
+                return
             }
 
-            val datasetBuilder = Dataset.Builder()
-            for (node in passwordNodes) {
-                datasetBuilder.setValue(node.id, AutofillValue.forText(password), presentation)
-            }
-            responseBuilder.addDataset(datasetBuilder.build())
-        }
+            val requestingPackage = structure.activityComponent?.packageName
 
-        callback.onSuccess(responseBuilder.build())
+            val domain = extractDomain(structure)
+
+            // If webDomain is present but app is not a trusted browser, refuse to fill
+            if (domain != null && domain.isNotEmpty()) {
+                val trustedBrowsers = getTrustedBrowsers()
+                if (requestingPackage == null || requestingPackage !in trustedBrowsers) {
+                    callback.onSuccess(null)
+                    return
+                }
+            }
+
+            if (domain.isNullOrEmpty()) {
+                callback.onSuccess(null)
+                return
+            }
+
+            val normalizedDomain = ServiceManager.normalizeSite(domain)
+            val psl = PublicSuffixList.getInstance(applicationContext)
+            val visitedRegistrable = psl.extractRegistrableDomain(normalizedDomain)
+            if (visitedRegistrable == null) {
+                callback.onSuccess(null)
+                return
+            }
+            val serviceManager = ServiceManager(applicationContext)
+            val matches = serviceManager.getServices().filter {
+                psl.extractRegistrableDomain(ServiceManager.normalizeSite(it.site)) == visitedRegistrable
+            }
+
+            if (matches.isEmpty()) {
+                callback.onSuccess(null)
+                return
+            }
+
+            val passwordNodes = mutableListOf<AutofillNodeInfo>()
+            for (i in 0 until structure.windowNodeCount) {
+                findPasswordNodes(structure.getWindowNodeAt(i).rootViewNode, passwordNodes)
+            }
+
+            if (passwordNodes.isEmpty()) {
+                callback.onSuccess(null)
+                return
+            }
+
+            val responseBuilder = FillResponse.Builder()
+            for (service in matches) {
+                val password = Keygrain.derivePassword(
+                    secret = secret.toByteArray(),
+                    email = service.email,
+                    site = service.site,
+                    length = service.length,
+                    symbols = service.symbols,
+                    counter = service.counter
+                )
+
+                val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
+                    setTextViewText(android.R.id.text1, "Keygrain — ${service.name}")
+                }
+
+                val datasetBuilder = Dataset.Builder()
+                for (node in passwordNodes) {
+                    datasetBuilder.setValue(node.id, AutofillValue.forText(password), presentation)
+                }
+                responseBuilder.addDataset(datasetBuilder.build())
+            }
+
+            callback.onSuccess(responseBuilder.build())
+        } catch (_: Exception) {
+            callback.onSuccess(null)
+        }
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
@@ -139,6 +144,8 @@ class KeygrainAutofillService : AutofillService() {
                 it.equals("password", ignoreCase = true) ||
                 it.equals(android.view.View.AUTOFILL_HINT_PASSWORD, ignoreCase = true)
             } == true || node.inputType and android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD != 0
+                || (node.inputType and android.text.InputType.TYPE_MASK_CLASS == android.text.InputType.TYPE_CLASS_NUMBER
+                    && node.inputType and android.text.InputType.TYPE_MASK_VARIATION == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD)
             if (isPassword) {
                 results.add(AutofillNodeInfo(autofillId))
             }

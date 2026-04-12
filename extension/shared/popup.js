@@ -251,7 +251,7 @@
       const affectedIndices = new Set();
       actionable.forEach(b => {
         services.forEach((svc, i) => {
-          const name = svc.name.toLowerCase().replace(/^www\./, "");
+          const name = (svc.site || svc.name).toLowerCase().replace(/^www\./, "");
           if (name === b.domain || name.endsWith("." + b.domain)) affectedIndices.add(i);
         });
       });
@@ -395,7 +395,9 @@
     } catch (e) {
       const msg = e.message;
       let errorObj;
-      if (msg === "network_error") {
+      if (e instanceof MetadataTamperError) {
+        errorObj = {type: "integrity", message: "Data integrity error. Please contact support."};
+      } else if (msg === "network_error") {
         errorObj = {type: "network", message: "Connection error"};
       } else if (msg === "server_error") {
         errorObj = {type: "server", message: "Server error"};
