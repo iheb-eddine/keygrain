@@ -3,8 +3,12 @@ package com.badrani.keygrain.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import android.view.autofill.AutofillManager
 import android.util.Log
-import androidx.compose.ui.hapticfeedback.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +46,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.badrani.keygrain.data.Keygrain
+import com.badrani.keygrain.data.PublicSuffixList
 import com.badrani.keygrain.data.SecretManager
 import com.badrani.keygrain.data.ServiceEntry
 import com.badrani.keygrain.data.ServiceManager
@@ -84,7 +89,6 @@ fun MainScreen() {
                     if (secret != null) {
                         masterSecret = secret
                         unlocked = true
-                        SecretManager.sessionActive = true
                     }
                 }
             )
@@ -96,7 +100,6 @@ fun MainScreen() {
                 onUnlocked = { secret ->
                     masterSecret = secret
                     unlocked = true
-                    SecretManager.sessionActive = true
                 },
                 onDemo = {
                     isDemoMode = true
@@ -114,7 +117,6 @@ fun MainScreen() {
                     unlocked = false
                     masterSecret = ""
                     isDemoMode = false
-                    SecretManager.sessionActive = false
                     Keygrain.clearStrengthenCache()
                     if (android.os.Build.VERSION.SDK_INT >= 28) {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -301,6 +303,7 @@ private fun ServiceListScreen(
             .map { it.first }
     }
     var prefillSite by remember { mutableStateOf<String?>(null) }
+    var detectedFullDomain by remember { mutableStateOf<String?>(null) }
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
     var showEditDialog by remember { mutableStateOf<ServiceEntry?>(null) }
     var menuExpanded by remember { mutableStateOf(false) }
@@ -365,9 +368,14 @@ private fun ServiceListScreen(
     // Auto-sync on unlock (initial load)
     LaunchedEffect(Unit) { performAutoSync() }
 
-    // Clear sessionActive if composable is disposed (Activity death)
-    DisposableEffect(Unit) {
-        onDispose { SecretManager.sessionActive = false }
+    // Autofill prompt
+    var showAutofillPrompt by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val afm = context.getSystemService(AutofillManager::class.java) ?: return@LaunchedEffect
+        if (afm.hasEnabledAutofillServices()) return@LaunchedEffect
+        val prefs = context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("autofill_prompt_dismissed", false)) return@LaunchedEffect
+        showAutofillPrompt = true
     }
 
     // Auto-lock timer (15 min)
@@ -548,7 +556,16 @@ private fun ServiceListScreen(
                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 val clipText = clipboard.primaryClip?.getItemAt(0)?.text?.toString()?.trim() ?: ""
                 val urlRegex = Regex("^(https?://\\S+|[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z]{2,}(:\\d+)?(/\\S*)?)$", RegexOption.IGNORE_CASE)
-                prefillSite = if (clipText.matches(urlRegex)) ServiceManager.normalizeSite(clipText) else ""
+                if (clipText.matches(urlRegex)) {
+                    val normalized = ServiceManager.normalizeSite(clipText)
+                    val psl = PublicSuffixList.getInstance(context)
+                    val registrable = psl.extractRegistrableDomain(normalized)
+                    prefillSite = registrable ?: normalized
+                    detectedFullDomain = if (registrable != null && registrable != normalized) normalized else null
+                } else {
+                    prefillSite = ""
+                    detectedFullDomain = null
+                }
             }) {
                 Icon(Icons.Default.Add, contentDescription = "Add service")
             }
@@ -797,7 +814,7 @@ private fun ServiceListScreen(
 
     prefillSite?.let { initialSite ->
         AddServiceDialog(
-            onDismiss = { prefillSite = null },
+            onDismiss = { prefillSite = null; detectedFullDomain = null },
             onAdd = { entry ->
                 if (isDemoMode) {
                     services = services + entry
@@ -807,8 +824,10 @@ private fun ServiceListScreen(
                     triggerDebouncedSync()
                 }
                 prefillSite = null
+                detectedFullDomain = null
             },
-            initialSite = initialSite
+            initialSite = initialSite,
+            detectedFullDomain = detectedFullDomain
         )
     }
 
@@ -847,6 +866,37 @@ private fun ServiceListScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showAutofillPrompt) {
+        AlertDialog(
+            onDismissRequest = {
+                context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
+                    .edit().putBoolean("autofill_prompt_dismissed", true).apply()
+                showAutofillPrompt = false
+            },
+            title = { Text("Enable Autofill?") },
+            text = { Text("Keygrain can automatically fill passwords in other apps. Would you like to enable it?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
+                        .edit().putBoolean("autofill_prompt_dismissed", true).apply()
+                    try {
+                        context.startActivity(Intent(Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE).apply {
+                            data = Uri.parse("package:com.badrani.keygrain")
+                        })
+                    } catch (_: Exception) { /* Custom ROM without autofill settings */ }
+                    showAutofillPrompt = false
+                }) { Text("Open Settings") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
+                        .edit().putBoolean("autofill_prompt_dismissed", true).apply()
+                    showAutofillPrompt = false
+                }) { Text("Not now") }
             }
         )
     }
@@ -1087,7 +1137,8 @@ private fun AddServiceDialog(
     onDismiss: () -> Unit,
     onAdd: (ServiceEntry) -> Unit,
     initialEntry: ServiceEntry? = null,
-    initialSite: String = ""
+    initialSite: String = "",
+    detectedFullDomain: String? = null
 ) {
     var name by remember { mutableStateOf(initialEntry?.name ?: "") }
     var site by remember { mutableStateOf(initialEntry?.site ?: initialSite) }
@@ -1225,6 +1276,9 @@ private fun AddServiceDialog(
                 value = site,
                 onValueChange = { if (!isEdit) site = it },
                 label = { Text("Site") },
+                supportingText = if (detectedFullDomain != null && site == initialSite) {
+                    { Text("Detected $detectedFullDomain \u2014 matches all subdomains") }
+                } else null,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isEdit

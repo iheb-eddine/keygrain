@@ -1,7 +1,7 @@
 function canonicalJSON(obj) {
   if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
   if (Array.isArray(obj)) return "[" + obj.map(canonicalJSON).join(",") + "]";
-  return "{" + Object.keys(obj).sort().map(k => JSON.stringify(k) + ":" + canonicalJSON(obj[k])).join(",") + "}";
+  return "{" + Object.keys(obj).sort().filter(k => obj[k] !== undefined).map(k => JSON.stringify(k) + ":" + canonicalJSON(obj[k])).join(",") + "}";
 }
 
 async function verifyRulesSignature(json, publicKeyBase64) {

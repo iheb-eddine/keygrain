@@ -75,7 +75,10 @@ async function buildStream(key, message, needed) {
 function buildPassword(stream, length, symbols) {
   const fullCharset = UPPER + LOWER + DIGITS + symbols;
   let pos = 0;
-  const nextByte = () => stream[pos++];
+  const nextByte = () => {
+    if (pos >= stream.length) throw new Error("stream exhausted");
+    return stream[pos++];
+  };
 
   function unbiasedIndex(n) {
     const limit = Math.floor(256 / n) * n;
@@ -98,7 +101,6 @@ function buildPassword(stream, length, symbols) {
     const j = unbiasedIndex(i + 1);
     [chars[i], chars[j]] = [chars[j], chars[i]];
   }
-  if (pos > stream.length) throw new Error("stream exhausted");
   return chars.join("");
 }
 
@@ -106,7 +108,9 @@ async function derivePassword(secret, email, { site, length = 20, symbols = "!@#
   if (length < 8 || length > 128) throw new RangeError("length must be between 8 and 128");
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(secret, email);
-  const message = enc.encode(site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + counter);
+  const normalized = normalizeSite(site);
+  if (!normalized) throw new RangeError("site must not be empty");
+  const message = enc.encode(normalized + ":" + email.toLowerCase() + ":" + length + ":" + counter);
   const stream = await buildStream(strengthened, message, length * 4);
   return buildPassword(stream, length, symbols);
 }
