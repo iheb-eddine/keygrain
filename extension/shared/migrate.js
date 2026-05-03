@@ -101,7 +101,7 @@
         oldPassword = r[col("password")] || "";
       }
 
-      results.push({ name: name.trim(), url: url.trim(), email: email.trim(), oldPassword });
+      results.push({ name: name.trim().slice(0, 200), url: url.trim().slice(0, 500), email: email.trim().slice(0, 200), oldPassword });
     }
     return results;
   }

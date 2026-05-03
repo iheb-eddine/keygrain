@@ -418,8 +418,10 @@ class SyncManager(
         }
 
         val localByID = mutableMapOf<String, ServiceEntry>()
+        val localWithoutId = mutableListOf<ServiceEntry>()
         for (svc in local) {
             if (svc.id != null) localByID[svc.id] = svc
+            else localWithoutId.add(svc)
         }
 
         val merged = mutableListOf<ServiceEntry>()
@@ -451,6 +453,11 @@ class SyncManager(
                 // Never seen from server → new local service → preserve
                 merged.add(svc)
             }
+        }
+
+        // Preserve local services without ID (assign UUIDs)
+        for (svc in localWithoutId) {
+            merged.add(svc.copy(id = java.util.UUID.randomUUID().toString()))
         }
 
         return merged

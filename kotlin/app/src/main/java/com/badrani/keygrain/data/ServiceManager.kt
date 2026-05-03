@@ -81,23 +81,29 @@ class ServiceManager(context: Context) {
         }
     }
 
+    private fun nextTimestamp(services: List<ServiceEntry>): Long {
+        val max = services.maxOfOrNull { it.updatedAt } ?: 0L
+        return maxOf(System.currentTimeMillis(), max + 1)
+    }
+
     fun addService(entry: ServiceEntry) {
         val services = getServices().toMutableList()
-        services.add(entry.copy(site = normalizeSite(entry.site), id = UUID.randomUUID().toString(), updatedAt = System.currentTimeMillis()))
+        services.add(entry.copy(site = normalizeSite(entry.site), id = UUID.randomUUID().toString(), updatedAt = nextTimestamp(services)))
         save(services)
     }
 
-    fun deleteService(name: String) {
-        val services = getServices().filter { it.name != name }
+    fun deleteService(id: String) {
+        val services = getServices().filter { it.id != id }
         save(services)
     }
 
     fun updateService(oldName: String, newEntry: ServiceEntry) {
-        val services = getServices().map {
-            if (it.name == oldName) newEntry.copy(site = normalizeSite(newEntry.site), id = it.id, updatedAt = System.currentTimeMillis())
+        val services = getServices().toMutableList()
+        val updated = services.map {
+            if (it.name == oldName) newEntry.copy(site = normalizeSite(newEntry.site), id = it.id, updatedAt = nextTimestamp(services))
             else it
         }
-        save(services)
+        save(updated)
     }
 
     fun replaceAll(services: List<ServiceEntry>) {

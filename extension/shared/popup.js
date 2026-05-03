@@ -900,6 +900,12 @@
         currentEmail = null;
         return;
       }
+      if (!currentEmail && services.length > 0) {
+        const freq = {};
+        services.forEach(s => { freq[s.email] = (freq[s.email] || 0) + 1; });
+        currentEmail = Object.keys(freq).reduce((a, b) => freq[a] >= freq[b] ? a : b);
+        await chrome.storage.local.set({lastEmail: currentEmail});
+      }
       await setSecret(secret);
       await setEmail(currentEmail);
       const syncData = await chrome.storage.local.get(["lastSyncTime", "lastSyncError"]);
@@ -1088,7 +1094,7 @@
     addName.value = "";
     addSite.value = currentHostname || "";
     addSite.disabled = false;
-    addEmail.value = "";
+    addEmail.value = currentEmail || "";
     addLength.value = settings.defaultLength;
     addSymbols.value = settings.defaultSymbols;
     addRuleIndicator.classList.add("hidden");
@@ -1514,4 +1520,5 @@
       }
     }
   }
+  window.addEventListener("unload", () => { chrome.storage.local.set({popupActive: false}); });
 })();

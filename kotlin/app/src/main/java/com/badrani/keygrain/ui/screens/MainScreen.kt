@@ -5,8 +5,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.provider.Settings
-import android.view.autofill.AutofillManager
 import android.util.Log
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -368,16 +366,6 @@ private fun ServiceListScreen(
     // Auto-sync on unlock (initial load)
     LaunchedEffect(Unit) { performAutoSync() }
 
-    // Autofill prompt
-    var showAutofillPrompt by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        val afm = context.getSystemService(AutofillManager::class.java) ?: return@LaunchedEffect
-        if (afm.hasEnabledAutofillServices()) return@LaunchedEffect
-        val prefs = context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("autofill_prompt_dismissed", false)) return@LaunchedEffect
-        showAutofillPrompt = true
-    }
-
     // Auto-lock timer (15 min)
     var lockSecondsRemaining by remember { mutableIntStateOf(15 * 60) }
     var showLockWarning by remember { mutableStateOf(false) }
@@ -654,7 +642,7 @@ private fun ServiceListScreen(
                         ServiceCard(
                             service = service,
                             masterSecret = masterSecret,
-                            onDelete = { showDeleteDialog = service.name },
+                            onDelete = { showDeleteDialog = service.id },
                             onEdit = { showEditDialog = service },
                             onCopy = {
                                 if (isDemoMode) {
@@ -827,7 +815,8 @@ private fun ServiceListScreen(
                 detectedFullDomain = null
             },
             initialSite = initialSite,
-            detectedFullDomain = detectedFullDomain
+            detectedFullDomain = detectedFullDomain,
+            defaultEmail = getMostCommonEmail()
         )
     }
 
@@ -848,16 +837,16 @@ private fun ServiceListScreen(
         )
     }
 
-    showDeleteDialog?.let { name ->
+    showDeleteDialog?.let { id ->
         AlertDialog(
             onDismissRequest = { showDeleteDialog = null },
             title = { Text("Delete $name?") },
             confirmButton = {
                 TextButton(onClick = {
                     if (isDemoMode) {
-                        services = services.filter { it.name != name }
+                        services = services.filter { it.id != id }
                     } else {
-                        serviceManager.deleteService(name)
+                        serviceManager.deleteService(id)
                         services = serviceManager.getServices()
                         triggerDebouncedSync()
                     }
@@ -870,36 +859,6 @@ private fun ServiceListScreen(
         )
     }
 
-    if (showAutofillPrompt) {
-        AlertDialog(
-            onDismissRequest = {
-                context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
-                    .edit().putBoolean("autofill_prompt_dismissed", true).apply()
-                showAutofillPrompt = false
-            },
-            title = { Text("Enable Autofill?") },
-            text = { Text("Keygrain can automatically fill passwords in other apps. Would you like to enable it?") },
-            confirmButton = {
-                TextButton(onClick = {
-                    context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
-                        .edit().putBoolean("autofill_prompt_dismissed", true).apply()
-                    try {
-                        context.startActivity(Intent(Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE).apply {
-                            data = Uri.parse("package:com.badrani.keygrain")
-                        })
-                    } catch (_: Exception) { /* Custom ROM without autofill settings */ }
-                    showAutofillPrompt = false
-                }) { Text("Open Settings") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
-                        .edit().putBoolean("autofill_prompt_dismissed", true).apply()
-                    showAutofillPrompt = false
-                }) { Text("Not now") }
-            }
-        )
-    }
 }
 
 @Composable
@@ -1138,11 +1097,12 @@ private fun AddServiceDialog(
     onAdd: (ServiceEntry) -> Unit,
     initialEntry: ServiceEntry? = null,
     initialSite: String = "",
-    detectedFullDomain: String? = null
+    detectedFullDomain: String? = null,
+    defaultEmail: String = ""
 ) {
     var name by remember { mutableStateOf(initialEntry?.name ?: "") }
     var site by remember { mutableStateOf(initialEntry?.site ?: initialSite) }
-    var email by remember { mutableStateOf(initialEntry?.email ?: "") }
+    var email by remember { mutableStateOf(initialEntry?.email ?: defaultEmail) }
     var length by remember { mutableStateOf(initialEntry?.length?.toString() ?: "20") }
     var symbols by remember { mutableStateOf(initialEntry?.symbols ?: Keygrain.DEFAULT_SYMBOLS) }
     var counter by remember { mutableStateOf(initialEntry?.counter?.toString() ?: "1") }

@@ -121,3 +121,11 @@ class TestDeriveTOTPSeed:
         s1 = derive_totp_seed(b"my-master-secret", "test@gmail.com", "github.com")
         s2 = derive_totp_seed(b"my-master-secret", "test@gmail.com", "google.com")
         assert s1 != s2
+
+    def test_site_normalization_applied(self):
+        """derive_totp_seed must normalize: strip protocol, www, path."""
+        s1 = derive_totp_seed(b"my-master-secret", "test@gmail.com", "github.com")
+        s2 = derive_totp_seed(b"my-master-secret", "test@gmail.com", "https://github.com")
+        s3 = derive_totp_seed(b"my-master-secret", "test@gmail.com", "https://www.github.com/settings")
+        assert s1 == s2
+        assert s1 == s3

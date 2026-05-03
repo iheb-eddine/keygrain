@@ -292,5 +292,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     const password = await derivePassword(sessionSecret, match.email, {site: match.site || match.name, length: match.length || 20, symbols: match.symbols || "!@#$%&*-_=+?", counter: match.counter || 1});
     await browser.tabs.executeScript(tab.id, {file: "content.js"});
     browser.tabs.sendMessage(tab.id, {action: "fillContextMenu", password, email: match.email});
-  } catch {}
+  } catch {} finally {
+    storageKey.fill(0);
+  }
 });

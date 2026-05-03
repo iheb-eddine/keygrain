@@ -13,8 +13,10 @@ for target in chrome firefox; do
 done
 
 cd dist/chrome
-zip -r ../keygrain-chrome.zip .
+find . -exec touch -t 202501010000.00 {} +
+TZ=UTC zip -rX ../keygrain-chrome.zip .
 cd ../firefox
-zip -r ../keygrain-firefox.zip .
+find . -exec touch -t 202501010000.00 {} +
+TZ=UTC zip -rX ../keygrain-firefox.zip .
 cd ..
 echo "Built: dist/keygrain-chrome.zip, dist/keygrain-firefox.zip"

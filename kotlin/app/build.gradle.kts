@@ -20,9 +20,9 @@ android {
         if (keystoreFile.exists()) {
             create("release") {
                 storeFile = keystoreFile
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "keygrain"
-                keyAlias = System.getenv("KEY_ALIAS") ?: "keygrain"
-                keyPassword = System.getenv("KEY_PASSWORD") ?: "keygrain"
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: error("KEYSTORE_PASSWORD required for release signing")
+                keyAlias = System.getenv("KEY_ALIAS") ?: error("KEY_ALIAS required for release signing")
+                keyPassword = System.getenv("KEY_PASSWORD") ?: error("KEY_PASSWORD required for release signing")
             }
         }
     }
@@ -67,6 +67,9 @@ dependencies {
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+
+    // Credential Manager
+    implementation("androidx.credentials:credentials:1.3.0")
 
     // EncryptedSharedPreferences
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
