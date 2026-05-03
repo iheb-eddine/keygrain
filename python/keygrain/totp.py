@@ -86,8 +86,10 @@ def parse_totp_input(input_str: str) -> dict:
 
 def derive_totp_seed(secret: bytes, email: str, site: str) -> bytes:
     """Derive a 32-byte TOTP seed deterministically (Model B)."""
+    from .derive import normalize_site
     strengthened = strengthen_secret(secret, email)
-    message = (site.lower() + ":" + email.lower() + ":keygrain-totp").encode("utf-8")
+    normalized = normalize_site(site)
+    message = (normalized + ":" + email.lower() + ":keygrain-totp").encode("utf-8")
     return hmac.new(strengthened, message, hashlib.sha256).digest()
 
 

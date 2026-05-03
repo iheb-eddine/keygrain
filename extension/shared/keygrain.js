@@ -5,7 +5,6 @@ const DIGITS = "23456789";
 
 // Argon2id strengthen cache (single entry — one active session)
 let _strengthenCache = null;
-let _lastStrengthenTime = 0;
 let _strengthenQueue = null;
 
 async function strengthenSecret(secret, email) {
@@ -13,22 +12,17 @@ async function strengthenSecret(secret, email) {
   if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
     return _strengthenCache.result;
   }
-  // Throttle: max 1 call per 2 seconds
-  const now = Date.now();
-  const elapsed = now - _lastStrengthenTime;
-  if (elapsed < 2000 && _lastStrengthenTime > 0) {
-    if (_strengthenQueue) return _strengthenQueue;
-    _strengthenQueue = new Promise(resolve => setTimeout(() => {
-      _strengthenQueue = null;
-      resolve(strengthenSecret(secret, email));
-    }, 2000 - elapsed));
-    return _strengthenQueue;
+  // Serialize concurrent calls: if a computation is in-flight, wait then re-check cache
+  if (_strengthenQueue) {
+    await _strengthenQueue;
+    if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
+      return _strengthenCache.result;
+    }
   }
-  _lastStrengthenTime = Date.now();
   const enc = new TextEncoder();
   const salt = enc.encode("keygrain-strengthen:" + emailLower);
   const secretBytes = enc.encode(secret);
-  const hash = await hashwasm.argon2id({
+  _strengthenQueue = hashwasm.argon2id({
     password: secretBytes,
     salt: salt,
     parallelism: 1,
@@ -37,6 +31,8 @@ async function strengthenSecret(secret, email) {
     hashLength: 32,
     outputType: "binary",
   });
+  const hash = await _strengthenQueue;
+  _strengthenQueue = null;
   const result = new Uint8Array(hash);
   _strengthenCache = { secret, email: emailLower, result };
   return result;
@@ -106,6 +102,8 @@ function buildPassword(stream, length, symbols) {
 
 async function derivePassword(secret, email, { site, length = 20, symbols = "!@#$%&*-_=+?", counter = 1 }) {
   if (length < 8 || length > 128) throw new RangeError("length must be between 8 and 128");
+  if (!symbols) throw new RangeError("symbols must not be empty");
+  if (UPPER.length + LOWER.length + DIGITS.length + symbols.length > 256) throw new RangeError("symbols too long (full charset exceeds 256 characters)");
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(secret, email);
   const normalized = normalizeSite(site);

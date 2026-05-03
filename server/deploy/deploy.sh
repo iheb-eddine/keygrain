@@ -33,6 +33,9 @@ cd "${APP_DIR}"
 docker compose build
 docker compose up -d
 
+# Remove source files after Docker build (keep only runtime artifacts)
+rm -f "${APP_DIR}"/*.go "${APP_DIR}"/go.mod "${APP_DIR}"/go.sum
+
 # Reload nginx to pick up any cert changes
 nginx -t && systemctl reload nginx
 

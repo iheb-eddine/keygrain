@@ -54,6 +54,11 @@ def test_empty_symbols_rejected():
         derive_password(b"secret", "a@b.com", site="example.com", symbols="")
 
 
+def test_symbols_too_large_rejected():
+    with pytest.raises(ValueError, match="charset size"):
+        derive_password(b"secret", "a@b.com", site="example.com", symbols="!" * 202)
+
+
 def test_empty_site_rejected():
     with pytest.raises(ValueError):
         derive_password(b"secret", "a@b.com", site="")

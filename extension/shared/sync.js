@@ -406,7 +406,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     const status = getResp.status === 404 ? "created" : "synced";
     return {services: merged, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, status, etag: putResult.etag, knownUUIDs: newKnown};
   } finally {
-    encKey.fill(0);
+    if (encKey) encKey.fill(0);
   }
 }
 

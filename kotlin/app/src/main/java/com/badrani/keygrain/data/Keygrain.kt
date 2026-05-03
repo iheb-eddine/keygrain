@@ -19,6 +19,9 @@ object Keygrain {
             if (cachedSecret.contentEquals(secret) && cachedEmail == emailLower) {
                 return cachedResult
             }
+            // Zero old cache entry before replacing
+            cachedSecret.fill(0)
+            cachedResult.fill(0)
         }
         val salt = "keygrain-strengthen:$emailLower".toByteArray(Charsets.UTF_8)
         val params = Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
@@ -54,6 +57,7 @@ object Keygrain {
         require(length >= 8) { "length must be >= 8" }
         require(length <= 128) { "length must be <= 128" }
         require(symbols.isNotEmpty()) { "symbols must not be empty" }
+        require(UPPER.length + LOWER.length + DIGITS.length + symbols.length <= 256) { "symbols too long (full charset exceeds 256 characters)" }
         val normalizedSite = normalizeSite(site)
         require(normalizedSite.isNotEmpty()) { "site must not be empty" }
 
@@ -130,7 +134,7 @@ object Keygrain {
         return (0 until 4).map { (hash[it].toInt() and 0xFF) % 8 }
     }
 
-    private fun normalizeSite(site: String): String {
+    internal fun normalizeSite(site: String): String {
         var s = site.replace(Regex("^https?://", RegexOption.IGNORE_CASE), "")
         s = s.split("/")[0].split("?")[0].split("#")[0]
             .trimEnd('/').lowercase()

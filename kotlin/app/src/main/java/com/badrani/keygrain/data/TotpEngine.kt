@@ -81,7 +81,8 @@ object TotpEngine {
 
     fun deriveTotpSeed(secret: ByteArray, email: String, site: String): ByteArray {
         val strengthened = Keygrain.strengthenSecret(secret, email)
-        val message = "${site.lowercase()}:${email.lowercase()}:keygrain-totp".toByteArray(Charsets.UTF_8)
+        val normalizedSite = Keygrain.normalizeSite(site)
+        val message = "$normalizedSite:${email.lowercase()}:keygrain-totp".toByteArray(Charsets.UTF_8)
         return Keygrain.hmacSha256(strengthened, message)
     }
 

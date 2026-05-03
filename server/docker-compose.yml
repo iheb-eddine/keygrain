@@ -9,6 +9,9 @@ services:
       - "127.0.0.1:9860:9860"
     environment:
       - PORT=9860
+      - KEYGRAIN_DATA_DIR=/app/data
+    env_file:
+      - .env
     volumes:
       - keygrain_data:/app/data
       - ./static:/app/static

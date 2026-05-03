@@ -74,6 +74,10 @@ def derive_password(
         raise ValueError("Error: Password length must not exceed 128.")
     if not symbols:
         raise ValueError("Error: At least one symbol character is required.")
+    if not email or not email.strip():
+        raise ValueError("Error: Email must not be empty.")
+    if len(UPPER) + len(LOWER) + len(DIGITS) + len(symbols) > 256:
+        raise ValueError("Error: Total charset size must not exceed 256.")
 
     email = email.lower()
     site = normalize_site(site)

@@ -103,8 +103,21 @@ type syncServer struct {
 func newSyncServer(dataDir string, ctx context.Context) *syncServer {
 	dir := filepath.Join(dataDir, "sync")
 	s := &syncServer{dataDir: dir, locks: make(map[string]*lockEntry)}
+	s.cleanupTmpFiles()
 	go s.cleanupLocks(ctx, 60*time.Second, 10*time.Minute)
 	return s
+}
+
+func (s *syncServer) cleanupTmpFiles() {
+	entries, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			os.Remove(filepath.Join(s.dataDir, e.Name()))
+		}
+	}
 }
 
 func (s *syncServer) getLock(lookupID string) *lockEntry {
@@ -243,6 +256,7 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 	}
 
 	// Validate timestamps and IDs
+	seenIDs := make(map[string]bool, len(req.Services))
 	for _, svc := range req.Services {
 		if svc.UpdatedAt <= 0 {
 			jsonError(w, `{"error":"validation failed","detail":"invalid timestamp"}`, http.StatusUnprocessableEntity)
@@ -256,6 +270,11 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 			jsonError(w, `{"error":"validation failed","detail":"invalid id format"}`, http.StatusUnprocessableEntity)
 			return
 		}
+		if seenIDs[*svc.ID] {
+			jsonError(w, `{"error":"validation failed","detail":"duplicate id"}`, http.StatusUnprocessableEntity)
+			return
+		}
+		seenIDs[*svc.ID] = true
 	}
 
 	// Validate checksum
@@ -320,7 +339,11 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 	record.EncryptedBlob = req.EncryptedBlob
 	record.Checksum = req.Checksum
 	record.ETag = newETag
-	record.Version = 1
+	if isNew {
+		record.Version = 1
+	} else {
+		record.Version++
+	}
 	record.UpdatedAt = now
 
 	if err := os.MkdirAll(s.dataDir, 0700); err != nil {
@@ -335,7 +358,25 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 	}
 
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		jsonError(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		jsonError(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		jsonError(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmpPath)
 		jsonError(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
 	}

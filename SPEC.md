@@ -215,16 +215,17 @@ Output: 32 raw bytes (not hex-encoded).
 
 ## 7. Visual Fingerprint
 
-A 4-color visual indicator derived from the strengthened key, allowing users to verify they entered the correct secret.
+A 4-color visual indicator derived from the raw secret, allowing users to verify they entered the correct secret. The fingerprint is independent of email — it uses only the secret bytes.
 
 ### 7.1 Derivation
 
 ```
-strengthened = strengthen(secret, email)
 message = UTF8_ENCODE("keygrain-fingerprint")
-hash = HMAC-SHA256(key = strengthened, message = message)
+hash = HMAC-SHA256(key = secret_bytes, message = message)
 color_indices = [hash[0] % 8, hash[1] % 8, hash[2] % 8, hash[3] % 8]
 ```
+
+Note: The fingerprint uses the **raw secret** (not the strengthened key) and does **not** require an email address. This enables instant visual feedback on the lock screen before Argon2id completes.
 
 ### 7.2 Color Palette (Wong)
 
@@ -273,11 +274,13 @@ Vectors 1, 3, and 4 MUST produce identical output (site and email case normaliza
 
 ### 8.3 Visual Fingerprint
 
-| secret (UTF-8) | email | first 4 bytes (hex) | color indices |
-|---|---|---|---|
-| `my-master-secret` | `test@gmail.com` | `ee276b25` | `[6, 7, 3, 5]` |
-| `different-secret` | `test@gmail.com` | `1b7e0c53` | `[3, 6, 4, 3]` |
-| `a` | `test@gmail.com` | `a2ff4deb` | `[2, 7, 5, 3]` |
+| secret (UTF-8) | first 4 bytes (hex) | color indices |
+|---|---|---|
+| `my-master-secret` | `4482716f` | `[4, 2, 1, 7]` |
+| `different-secret` | `d482d679` | `[4, 2, 6, 1]` |
+| `a` | `b57cc734` | `[5, 4, 7, 4]` |
+
+Note: The fingerprint does not use email. Same secret always produces same colors regardless of email.
 
 ---
 
@@ -521,7 +524,7 @@ All derivations use the same strengthened key but produce independent outputs vi
 | Auth ID | `email:keygrain-id` | `:keygrain-id` |
 | Auth password | `email:32:keygrain-auth` | `:keygrain-auth` |
 | Encryption key | `email:keygrain-encryption` | `:keygrain-encryption` |
-| Fingerprint | `keygrain-fingerprint` | (standalone) |
+| Fingerprint | `keygrain-fingerprint` | (standalone, key=raw secret) |
 | TOTP seed | `site:email:keygrain-totp` | `:keygrain-totp` |
 | SSH key | `email:key_name:counter:keygrain-ssh` | `:keygrain-ssh` |
 | Wallet | `email:wallet_name:chain:counter:keygrain-wallet` | `:keygrain-wallet` |

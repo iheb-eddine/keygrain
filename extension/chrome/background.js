@@ -80,6 +80,8 @@ let lockDeferred = false;
 async function backgroundSync() {
   const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
   if (!secret || !email) return;
+  const {popupActive} = await chrome.storage.local.get("popupActive");
+  if (popupActive) return;
   bgSyncInProgress = true;
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(secret, email);

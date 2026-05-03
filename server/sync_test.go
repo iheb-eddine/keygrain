@@ -436,3 +436,48 @@ func TestSync_InvalidLookupID(t *testing.T) {
 		t.Fatalf("expected 400, got %d", resp.StatusCode)
 	}
 }
+
+func TestSync_VersionIncrements(t *testing.T) {
+	ts := setupSyncServer(t)
+	defer ts.Close()
+
+	// Create (version=1)
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "blob1")
+	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
+	resp.Body.Close()
+	etag := strings.Trim(resp.Header.Get("ETag"), `"`)
+
+	// Update (version should become 2)
+	body = syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":2000}]`, "blob2")
+	req := syncPut(ts.URL, validID, "pass", body)
+	req.Header.Set("If-Match", `"`+etag+`"`)
+	resp, _ = http.DefaultClient.Do(req)
+	resp.Body.Close()
+
+	// GET to check version
+	resp, _ = http.DefaultClient.Do(syncGet(ts.URL, validID, "pass"))
+	defer resp.Body.Close()
+
+	var result syncGetResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result.Version != 2 {
+		t.Fatalf("expected version 2 after update, got %d", result.Version)
+	}
+}
+
+func TestSync_PutDuplicateUUID(t *testing.T) {
+	ts := setupSyncServer(t)
+	defer ts.Close()
+
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000},{"id":"`+testUUID(1)+`","updated_at":2000}]`, "data")
+	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", resp.StatusCode)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "duplicate id") {
+		t.Fatalf("expected 'duplicate id' in body: %s", b)
+	}
+}

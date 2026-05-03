@@ -38,7 +38,17 @@ func main() {
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 
 	log.Printf("keygrain server listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, securityHeaders(mux)))
+
+	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux)}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		srv.Shutdown(shutdownCtx)
+	}()
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -72,6 +82,12 @@ func (w *logResponseWriter) Write(b []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(b)
 	w.size += n
 	return n, err
+}
+
+func (w *logResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
