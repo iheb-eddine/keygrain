@@ -204,12 +204,13 @@ function mergeAuditLog(localLog, remoteLog) {
  */
 function parseBlobContent(parsed) {
   if (Array.isArray(parsed)) {
-    return {services: parsed, wallets: [], wallet_audit_log: []};
+    return {services: parsed, wallets: [], wallet_audit_log: [], sync_conflicts: []};
   }
   return {
     services: parsed.services || [],
     wallets: parsed.wallets || [],
-    wallet_audit_log: parsed.wallet_audit_log || []
+    wallet_audit_log: parsed.wallet_audit_log || [],
+    sync_conflicts: parsed.sync_conflicts || []
   };
 }
 
@@ -269,10 +270,32 @@ function mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs
     }
   }
 
-  // New known UUIDs = all UUIDs in merged
+  // knownUUIDs from pre-dedup merged (includes loser UUIDs to prevent resurrection)
   const newKnown = new Set(merged.map(svc => svc.id));
 
-  return {merged, knownUUIDs: newKnown};
+  // Dedup by (normalizeSite(site), email) — last-write-wins, lower UUID breaks ties
+  const seen = new Map();
+  const sync_conflicts = [];
+  for (const svc of merged) {
+    const key = normalizeSite(svc.site) + "\n" + (svc.email || "").toLowerCase();
+    const existing = seen.get(key);
+    if (!existing) { seen.set(key, svc); continue; }
+    let winner, loser;
+    if (svc.updated_at > existing.updated_at || (svc.updated_at === existing.updated_at && svc.id < existing.id)) {
+      winner = svc; loser = existing;
+    } else {
+      winner = existing; loser = svc;
+    }
+    seen.set(key, winner);
+    if (loser.length !== winner.length || loser.symbols !== winner.symbols ||
+        loser.counter !== winner.counter ||
+        JSON.stringify(loser.totp || null) !== JSON.stringify(winner.totp || null) ||
+        JSON.stringify(loser.ssh || null) !== JSON.stringify(winner.ssh || null)) {
+      sync_conflicts.push({winner_id: winner.id, loser, detected_at: new Date().toISOString()});
+    }
+  }
+
+  return {merged: [...seen.values()], knownUUIDs: newKnown, sync_conflicts};
 }
 
 /**
@@ -307,6 +330,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     let remoteServices = [];
     let remoteWallets = [];
     let remoteAuditLog = [];
+    let remoteConflicts = [];
     let remoteMetadata = [];
     let etag = null;
     let knownUUIDs = await getKnownUUIDs();
@@ -339,6 +363,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       remoteServices = blobContent.services;
       remoteWallets = blobContent.wallets;
       remoteAuditLog = blobContent.wallet_audit_log;
+      remoteConflicts = blobContent.sync_conflicts;
 
       // Validate length match (services metadata vs services content)
       if (remoteMetadata.length !== remoteServices.length) throw new Error("metadata_length_mismatch");
@@ -349,7 +374,12 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
         validateMetadataIntegrity(remoteMetadata, cachedMeta);
       }
     } else if (getResp.status === 404) {
-      // No remote state — push everything
+      // No remote state — treat as fresh first sync to prevent data loss
+      // If knownUUIDs is populated, server data was lost; clear to avoid interpreting all local services as "deleted remotely"
+      knownUUIDs = new Set();
+      knownWKeys = new Set();
+      await setKnownUUIDs(knownUUIDs);
+      await setKnownWalletKeys(knownWKeys);
     } else if (getResp.status === 401) {
       throw new Error("auth_failed");
     } else {
@@ -357,15 +387,34 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     }
 
     // Step 2: Merge
-    const {merged, knownUUIDs: newKnown} = mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs);
+    const {merged, knownUUIDs: newKnown, sync_conflicts: newConflicts} = mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs);
     const {merged: mergedWallets, knownWalletKeys: newWKeys} = mergeWallets(localWallets, remoteWallets, knownWKeys);
     const mergedAuditLog = mergeAuditLog(localAuditLog, remoteAuditLog);
+
+    // Empty-push protection: refuse to push empty if remote had data
+    if (merged.length === 0 && remoteMetadata.length > 0) {
+      throw new Error("empty_push_blocked");
+    }
 
     // Step 3: Build push payload
     const contentArray = merged.map(({id, updated_at, ...content}) => content);
     const metadataArray = merged.map(s => ({id: s.id, updated_at: s.updated_at}));
 
-    const blobPayload = {services: contentArray, wallets: mergedWallets, wallet_audit_log: mergedAuditLog};
+    // Merge conflicts: remote + new, dedup by winner_id+loser.id, cap at 50
+    const dismissData = await chrome.storage.local.get("conflictsDismissed");
+    const effectiveRemoteConflicts = dismissData.conflictsDismissed ? [] : remoteConflicts;
+    const conflictKeySet = new Set();
+    const mergedConflicts = [];
+    for (const c of [...effectiveRemoteConflicts, ...newConflicts]) {
+      const ck = c.winner_id + "+" + (c.loser && c.loser.id);
+      if (conflictKeySet.has(ck)) continue;
+      conflictKeySet.add(ck);
+      mergedConflicts.push(c);
+    }
+    mergedConflicts.sort((a, b) => a.detected_at < b.detected_at ? -1 : 1);
+    const sync_conflicts = mergedConflicts.slice(-50);
+
+    const blobPayload = {services: contentArray, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, sync_conflicts};
     const plaintext = new TextEncoder().encode(JSON.stringify(blobPayload));
     const aadEnc = new TextEncoder().encode(lookupId);
     const encrypted = await encryptBlob(encKey, plaintext, aadEnc);
@@ -404,7 +453,8 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     await setKnownWalletKeys(newWKeys);
 
     const status = getResp.status === 404 ? "created" : "synced";
-    return {services: merged, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, status, etag: putResult.etag, knownUUIDs: newKnown};
+    await chrome.storage.local.set({syncConflicts: sync_conflicts, conflictsDismissed: false});
+    return {services: merged, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, sync_conflicts, status, etag: putResult.etag, knownUUIDs: newKnown};
   } finally {
     if (encKey) encKey.fill(0);
   }

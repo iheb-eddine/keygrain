@@ -44,7 +44,7 @@
       const decrypted = await decryptBlob(encKey, blob);
       const data = JSON.parse(new TextDecoder().decode(decrypted));
       parsedServices = data.services || data;
-      parsedServices = parsedServices.map(s => ({...s, site: normalizeSite(s.site || s.name)}));
+      parsedServices = parsedServices.map(s => ({...s, site: normalizeSite(s.site || s.name), id: s.id || crypto.randomUUID(), updated_at: s.updated_at || Date.now()}));
       parsedWallets = data.wallets || null;
       parsedAuditLog = data.wallet_audit_log || null;
       confirmMsg.textContent = "Replace local services with " + parsedServices.length + " from file?";

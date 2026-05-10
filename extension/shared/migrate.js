@@ -143,7 +143,7 @@
   function deduplicateEntries(entries) {
     const seen = new Set();
     return entries.map(e => {
-      const normName = e.serviceName.toLowerCase().trim().replace(/^www\./, "");
+      const normName = normalizeSite(e.serviceName.trim());
       const normEmail = e.email.toLowerCase().trim();
       const key = normName + "\0" + normEmail;
       const isDuplicate = seen.has(key);
@@ -361,6 +361,8 @@
 
   // === Step 3: Confirm ===
   let existingServices = [];
+  let existingWallets = [];
+  let existingAuditLog = [];
   let skipCount = 0;
   let selectedEntries = [];
 
@@ -368,6 +370,8 @@
     // Load existing services
     const data = await chrome.storage.local.get("services");
     existingServices = [];
+    existingWallets = [];
+    existingAuditLog = [];
     if (data.services && data.services.version === 2) {
       const enc = new TextEncoder();
       const strengthened = await strengthenSecret(secret, email);
@@ -380,6 +384,8 @@
         const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: aad }, cryptoKey, ct);
         const parsed = JSON.parse(new TextDecoder().decode(decrypted));
         existingServices = parsed.services || parsed;
+        existingWallets = parsed.wallets || [];
+        existingAuditLog = parsed.wallet_audit_log || [];
       } catch { existingServices = []; } finally { storageKey.fill(0); }
     }
 
@@ -391,7 +397,7 @@
     // Count skips
     skipCount = 0;
     selectedEntries.forEach(e => {
-      const exists = existingServices.some(s => s.name.toLowerCase() === e.serviceName.toLowerCase() && s.email.toLowerCase() === e.email.toLowerCase());
+      const exists = existingServices.some(s => normalizeSite(s.site) === normalizeSite(e.serviceName) && s.email.toLowerCase() === e.email.toLowerCase());
       if (exists) skipCount++;
     });
 
@@ -423,9 +429,9 @@
     // Merge: add new services that don't already exist
     const newServices = [];
     selectedEntries.forEach(e => {
-      const exists = existingServices.some(s => s.name.toLowerCase() === e.serviceName.toLowerCase() && s.email.toLowerCase() === e.email.toLowerCase());
+      const exists = existingServices.some(s => normalizeSite(s.site) === normalizeSite(e.serviceName) && s.email.toLowerCase() === e.email.toLowerCase());
       if (!exists) {
-        newServices.push({ name: e.serviceName, email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, migrating: true });
+        newServices.push({ name: e.serviceName, site: normalizeSite(e.serviceName), email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, counter: 1, migrating: true, id: crypto.randomUUID(), updated_at: Date.now() });
       }
     });
     const merged = existingServices.concat(newServices);
@@ -436,7 +442,7 @@
     const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const aad = enc.encode(email.toLowerCase());
-    const plaintext = enc.encode(JSON.stringify({ version: 1, services: merged }));
+    const plaintext = enc.encode(JSON.stringify({ version: 1, services: merged, wallets: existingWallets, wallet_audit_log: existingAuditLog }));
     const cryptoKey = await crypto.subtle.importKey("raw", storageKey, { name: "AES-GCM" }, false, ["encrypt"]);
     const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: aad }, cryptoKey, plaintext);
     storageKey.fill(0);
@@ -454,6 +460,9 @@
     // Null old passwords — security requirement
     parsedEntries = null;
     selectedEntries = [];
+
+    // Trigger near-immediate background sync so imported services reach the server
+    chrome.alarms.create("syncAlarm", {delayInMinutes: 0.1});
 
     showStep(4);
     renderChecklist(checklist);
@@ -478,8 +487,10 @@
       const match = svcs.find(s => s.name.toLowerCase() === name.toLowerCase() && s.email.toLowerCase() === svcEmail.toLowerCase());
       if (match && match.migrating) {
         delete match.migrating;
+        const wallets = parsed.wallets || [];
+        const walletAuditLog = parsed.wallet_audit_log || [];
         const newIv = crypto.getRandomValues(new Uint8Array(12));
-        const plaintext = enc.encode(JSON.stringify({ version: 1, services: svcs }));
+        const plaintext = enc.encode(JSON.stringify({ version: 1, services: svcs, wallets, wallet_audit_log: walletAuditLog }));
         const encKey = await crypto.subtle.importKey("raw", storageKey, { name: "AES-GCM" }, false, ["encrypt"]);
         const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: newIv, additionalData: aad }, encKey, plaintext);
         await chrome.storage.local.set({ services: { version: 2, iv: arrayBufferToBase64(newIv), ciphertext: arrayBufferToBase64(ciphertext) } });

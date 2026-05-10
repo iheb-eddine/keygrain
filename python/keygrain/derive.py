@@ -68,6 +68,8 @@ def derive_password(
     Returns:
         Password string guaranteed to contain upper, lower, digit, and symbol.
     """
+    if not secret:
+        raise ValueError("Error: Secret must not be empty.")
     if length < 8:
         raise ValueError("Error: Password length must be at least 8.")
     if length > 128:
@@ -76,6 +78,8 @@ def derive_password(
         raise ValueError("Error: At least one symbol character is required.")
     if not email or not email.strip():
         raise ValueError("Error: Email must not be empty.")
+    if counter < 1:
+        raise ValueError("Error: Counter must be at least 1.")
     if len(UPPER) + len(LOWER) + len(DIGITS) + len(symbols) > 256:
         raise ValueError("Error: Total charset size must not exceed 256.")
 

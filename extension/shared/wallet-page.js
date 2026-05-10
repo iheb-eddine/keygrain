@@ -64,7 +64,11 @@
           listBody.innerHTML = "";
           walletsList.forEach(w => {
             const tr = document.createElement("tr");
-            tr.innerHTML = "<td>" + (w.wallet_name || "") + "</td><td>" + (w.chain || "") + "</td><td>" + (w.counter || 1) + "</td><td>" + (w.created_at ? new Date(w.created_at).toLocaleDateString() : "—") + "</td>";
+            const td1 = document.createElement("td"); td1.textContent = w.wallet_name || "";
+            const td2 = document.createElement("td"); td2.textContent = w.chain || "";
+            const td3 = document.createElement("td"); td3.textContent = w.counter || 1;
+            const td4 = document.createElement("td"); td4.textContent = w.created_at ? new Date(w.created_at).toLocaleDateString() : "\u2014";
+            tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
             listBody.appendChild(tr);
           });
         }
@@ -153,7 +157,11 @@
       words.forEach((w, i) => {
         const div = document.createElement("div");
         div.className = "word";
-        div.innerHTML = '<span class="word-num">' + (i + 1) + '.</span> ' + w;
+        const numSpan = document.createElement("span");
+        numSpan.className = "word-num";
+        numSpan.textContent = (i + 1) + ".";
+        div.appendChild(numSpan);
+        div.append(" " + w);
         mnemonicGrid.appendChild(div);
       });
       pathDisplay.textContent = "BIP-44 Path: " + (BIP44_PATHS[chain] || "");

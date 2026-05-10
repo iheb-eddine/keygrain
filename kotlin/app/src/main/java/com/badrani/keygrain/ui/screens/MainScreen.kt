@@ -806,13 +806,14 @@ private fun ServiceListScreen(
             onAdd = { entry ->
                 if (isDemoMode) {
                     services = services + entry
-                } else {
-                    serviceManager.addService(entry)
+                    prefillSite = null; detectedFullDomain = null
+                } else if (serviceManager.addService(entry)) {
                     services = serviceManager.getServices()
                     triggerDebouncedSync()
+                    prefillSite = null; detectedFullDomain = null
+                } else {
+                    scope.launch { snackbarHostState.showSnackbar("A service with that site and email already exists.") }
                 }
-                prefillSite = null
-                detectedFullDomain = null
             },
             initialSite = initialSite,
             detectedFullDomain = detectedFullDomain,
@@ -826,21 +827,24 @@ private fun ServiceListScreen(
             onAdd = { entry ->
                 if (isDemoMode) {
                     services = services.map { if (it.name == editEntry.name) entry else it }
-                } else {
-                    serviceManager.updateService(editEntry.name, entry)
+                    showEditDialog = null
+                } else if (serviceManager.updateService(editEntry.id!!, entry)) {
                     services = serviceManager.getServices()
                     triggerDebouncedSync()
+                    showEditDialog = null
+                } else {
+                    scope.launch { snackbarHostState.showSnackbar("A service with that site and email already exists.") }
                 }
-                showEditDialog = null
             },
             initialEntry = editEntry
         )
     }
 
     showDeleteDialog?.let { id ->
+        val deleteName = services.firstOrNull { it.id == id }?.name ?: ""
         AlertDialog(
             onDismissRequest = { showDeleteDialog = null },
-            title = { Text("Delete $name?") },
+            title = { Text("Delete $deleteName?") },
             confirmButton = {
                 TextButton(onClick = {
                     if (isDemoMode) {

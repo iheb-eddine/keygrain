@@ -29,6 +29,10 @@ def derive_ssh_keypair(
         raise ValueError("key_name must not contain whitespace")
     if counter < 1:
         raise ValueError("counter must be >= 1")
+    if not secret:
+        raise ValueError("secret must not be empty")
+    if not email or not email.strip():
+        raise ValueError("email must not be empty")
     if re.search(r"[\x00-\x1f\x7f]", email):
         raise ValueError("email must not contain control characters")
 

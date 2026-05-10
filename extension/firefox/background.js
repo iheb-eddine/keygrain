@@ -79,6 +79,8 @@ let lockDeferred = false;
 
 async function backgroundSync() {
   if (!sessionSecret || !sessionEmail) return;
+  const {popupActive} = await browser.storage.local.get("popupActive");
+  if (popupActive) return;
   bgSyncInProgress = true;
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(sessionSecret, sessionEmail);
