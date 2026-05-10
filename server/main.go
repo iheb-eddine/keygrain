@@ -39,7 +39,14 @@ func main() {
 
 	log.Printf("keygrain server listening on :%s", port)
 
-	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux)}
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           securityHeaders(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

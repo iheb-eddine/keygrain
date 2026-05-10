@@ -481,3 +481,46 @@ func TestSync_PutDuplicateUUID(t *testing.T) {
 		t.Fatalf("expected 'duplicate id' in body: %s", b)
 	}
 }
+
+func TestSync_PutBodyTooLarge(t *testing.T) {
+	ts := setupSyncServer(t)
+	defer ts.Close()
+
+	// Build a body larger than 1MB
+	largeBlob := strings.Repeat("A", 1<<20+1)
+	encoded := base64.StdEncoding.EncodeToString([]byte(largeBlob))
+	body := `{"services":[{"id":"` + testUUID(1) + `","updated_at":1000}],"encrypted_blob":"` + encoded + `","checksum":"` + strings.Repeat("a", 64) + `"}`
+	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", resp.StatusCode)
+	}
+}
+
+func TestSync_PutEmptyServicesRejectsOverwrite(t *testing.T) {
+	ts := setupSyncServer(t)
+	defer ts.Close()
+
+	// Create with 1 service
+	body := syncPutBody(`[{"id":"`+testUUID(1)+`","updated_at":1000}]`, "blob1")
+	resp, _ := http.DefaultClient.Do(syncPut(ts.URL, validID, "pass", body))
+	resp.Body.Close()
+	etag := strings.Trim(resp.Header.Get("ETag"), `"`)
+
+	// Try to overwrite with empty services — should be rejected
+	body = syncPutBody(`[]`, "blob2")
+	req := syncPut(ts.URL, validID, "pass", body)
+	req.Header.Set("If-Match", `"`+etag+`"`)
+	resp, _ = http.DefaultClient.Do(req)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 422, got %d: %s", resp.StatusCode, b)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "cannot overwrite non-empty record") {
+		t.Fatalf("expected empty-push error, got: %s", b)
+	}
+}

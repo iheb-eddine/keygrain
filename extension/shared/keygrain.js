@@ -10,13 +10,13 @@ let _strengthenQueue = null;
 async function strengthenSecret(secret, email) {
   const emailLower = email.toLowerCase();
   if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
-    return _strengthenCache.result;
+    return new Uint8Array(_strengthenCache.result);
   }
   // Serialize concurrent calls: if a computation is in-flight, wait then re-check cache
   if (_strengthenQueue) {
     await _strengthenQueue;
     if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
-      return _strengthenCache.result;
+      return new Uint8Array(_strengthenCache.result);
     }
   }
   const enc = new TextEncoder();
@@ -101,15 +101,18 @@ function buildPassword(stream, length, symbols) {
 }
 
 async function derivePassword(secret, email, { site, length = 20, symbols = "!@#$%&*-_=+?", counter = 1 }) {
+  if (!secret) throw new RangeError("secret must not be empty");
+  if (!email || !email.trim()) throw new RangeError("email must not be empty");
   if (length < 8 || length > 128) throw new RangeError("length must be between 8 and 128");
   if (!symbols) throw new RangeError("symbols must not be empty");
+  if (counter < 1) throw new RangeError("counter must be at least 1");
   if (UPPER.length + LOWER.length + DIGITS.length + symbols.length > 256) throw new RangeError("symbols too long (full charset exceeds 256 characters)");
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(secret, email);
   const normalized = normalizeSite(site);
   if (!normalized) throw new RangeError("site must not be empty");
   const message = enc.encode(normalized + ":" + email.toLowerCase() + ":" + length + ":" + counter);
-  const stream = await buildStream(strengthened, message, length * 4);
+  const stream = await buildStream(strengthened, message, length * 8);
   return buildPassword(stream, length, symbols);
 }
 
@@ -117,7 +120,7 @@ async function deriveAuthPassword(secret, email) {
   const enc = new TextEncoder();
   const strengthened = await strengthenSecret(secret, email);
   const message = enc.encode(email.toLowerCase() + ":32:keygrain-auth");
-  const stream = await buildStream(strengthened, message, 128);
+  const stream = await buildStream(strengthened, message, 256);
   return buildPassword(stream, 32, "!@#$%&*-_=+?");
 }
 

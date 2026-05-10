@@ -13,12 +13,32 @@ import java.security.MessageDigest
 import javax.crypto.AEADBadTagException
 
 sealed class SyncResult {
-    data class Success(val services: List<ServiceEntry>, val wallets: List<WalletEntry>, val walletAuditLog: List<WalletAuditEntry>, val status: String) : SyncResult()
+    data class Success(val services: List<ServiceEntry>, val wallets: List<WalletEntry>, val walletAuditLog: List<WalletAuditEntry>, val syncConflicts: List<SyncConflict>, val status: String) : SyncResult()
     data class AuthError(val httpCode: Int) : SyncResult()
     data class NetworkError(val cause: Throwable) : SyncResult()
     data class ServerError(val httpCode: Int, val body: String) : SyncResult()
     data class IntegrityError(val detail: String) : SyncResult()
     data object ConflictError : SyncResult()
+}
+
+data class SyncConflict(
+    val winnerId: String,
+    val loser: JSONObject,
+    val detectedAt: String
+) {
+    fun dedupeKey(): String = "$winnerId+${loser.optString("id", "")}"
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("winner_id", winnerId)
+        put("loser", loser)
+        put("detected_at", detectedAt)
+    }
+    companion object {
+        fun fromJson(obj: JSONObject): SyncConflict = SyncConflict(
+            winnerId = obj.optString("winner_id", ""),
+            loser = obj.optJSONObject("loser") ?: JSONObject(),
+            detectedAt = obj.optString("detected_at", "")
+        )
+    }
 }
 
 data class WalletEntry(
@@ -234,23 +254,34 @@ class SyncManager(
         return merged
     }
 
-    private fun parseBlobContent(json: String, serviceManager: ServiceManager): Triple<List<ServiceEntry>, List<WalletEntry>, List<WalletAuditEntry>> {
+    private data class BlobContent(
+        val services: List<ServiceEntry>,
+        val wallets: List<WalletEntry>,
+        val auditLog: List<WalletAuditEntry>,
+        val syncConflicts: List<SyncConflict>
+    )
+
+    private fun parseBlobContent(json: String, serviceManager: ServiceManager): BlobContent {
         val trimmed = json.trim()
         if (trimmed.startsWith("[")) {
-            return Triple(serviceManager.parseJson(trimmed), emptyList(), emptyList())
+            return BlobContent(serviceManager.parseJson(trimmed), emptyList(), emptyList(), emptyList())
         }
         val obj = JSONObject(trimmed)
         val servicesArr = obj.optJSONArray("services") ?: JSONArray()
         val services = serviceManager.parseJson(servicesArr.toString())
         val walletsArr = obj.optJSONArray("wallets") ?: JSONArray()
         val auditArr = obj.optJSONArray("wallet_audit_log") ?: JSONArray()
+        val conflictsArr = obj.optJSONArray("sync_conflicts") ?: JSONArray()
         val wallets = (0 until walletsArr.length()).mapNotNull { i ->
             try { WalletEntry.fromJson(walletsArr.getJSONObject(i)) } catch (_: Exception) { null }
         }
         val auditLog = (0 until auditArr.length()).mapNotNull { i ->
             try { WalletAuditEntry.fromJson(auditArr.getJSONObject(i)) } catch (_: Exception) { null }
         }
-        return Triple(services, wallets, auditLog)
+        val conflicts = (0 until conflictsArr.length()).mapNotNull { i ->
+            try { SyncConflict.fromJson(conflictsArr.getJSONObject(i)) } catch (_: Exception) { null }
+        }
+        return BlobContent(services, wallets, auditLog, conflicts)
     }
 
     suspend fun sync(
@@ -272,11 +303,12 @@ class SyncManager(
             val getResult = doGet(lookupId, authHeader)
             val localServices = serviceManager.getServices()
             val knownUUIDs = getKnownUUIDs(context).toMutableSet()
-            val knownWKeys = getKnownWalletKeys(context)
+            var knownWKeys = getKnownWalletKeys(context)
 
             var remoteServices: List<ServiceEntry> = emptyList()
             var remoteWallets: List<WalletEntry> = emptyList()
             var remoteAuditLog: List<WalletAuditEntry> = emptyList()
+            var remoteConflicts: List<SyncConflict> = emptyList()
             var remoteMetadata: List<Pair<String?, Long>> = emptyList()
             var etag: String? = null
             var status = "created"
@@ -304,10 +336,11 @@ class SyncManager(
                         SyncCrypto.decrypt(encryptionKey, blobBytes)
                     }
                     val json = String(plaintext, Charsets.UTF_8)
-                    val (parsedServices, parsedWallets, parsedAudit) = parseBlobContent(json, serviceManager)
-                    remoteServices = parsedServices
-                    remoteWallets = parsedWallets
-                    remoteAuditLog = parsedAudit
+                    val blobContent = parseBlobContent(json, serviceManager)
+                    remoteServices = blobContent.services
+                    remoteWallets = blobContent.wallets
+                    remoteAuditLog = blobContent.auditLog
+                    remoteConflicts = blobContent.syncConflicts
                     remoteMetadata = getResult.services
 
                     // Validate length
@@ -324,18 +357,35 @@ class SyncManager(
                         }
                     }
                 }
-                is GetResult.NotFound -> { /* No remote state — push all local */ }
+                is GetResult.NotFound -> {
+                    // No remote state — treat as fresh first sync to prevent data loss.
+                    // If knownUUIDs is populated, server data was lost; clear to avoid
+                    // interpreting all local services as "deleted remotely."
+                    // Persist immediately so the fix survives a subsequent PUT failure.
+                    knownUUIDs.clear()
+                    knownWKeys = emptySet()
+                    setKnownUUIDs(context, emptySet())
+                    setKnownWalletKeys(context, emptySet())
+                }
                 is GetResult.AuthError -> return@withContext SyncResult.AuthError(getResult.code)
                 is GetResult.Error -> return@withContext SyncResult.ServerError(getResult.code, getResult.body)
                 is GetResult.NetworkError -> return@withContext SyncResult.NetworkError(getResult.cause)
             }
 
             // Step 2: Merge
-            val merged = mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs)
+            val mergeResult = mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs)
+            val merged = mergeResult.merged
+            val allMergedIds = mergeResult.allMergedIds
+            val newConflicts = mergeResult.syncConflicts
             val localWallets = getWallets(context)
             val localAuditLog = getAuditLog(context)
             val (mergedWallets, newWKeys) = mergeWallets(localWallets, remoteWallets, knownWKeys)
             val mergedAuditLog = mergeAuditLog(localAuditLog, remoteAuditLog)
+
+            // Empty-push protection: refuse to push empty if remote had data
+            if (merged.isEmpty() && remoteMetadata.isNotEmpty()) {
+                return@withContext SyncResult.IntegrityError("empty push blocked: merge produced no services but remote had ${remoteMetadata.size}")
+            }
 
             // Step 3: Build push payload
             val contentArray = JSONArray()
@@ -350,10 +400,24 @@ class SyncManager(
 
             val walletsArray = JSONArray().apply { mergedWallets.forEach { put(it.toJson()) } }
             val auditArray = JSONArray().apply { mergedAuditLog.forEach { put(it.toJson()) } }
+
+            // Merge conflicts: remote + new, dedup by key, cap at 50
+            val conflictsDismissed = getPrefs(context).getBoolean("conflicts_dismissed", false)
+            val effectiveRemoteConflicts = if (conflictsDismissed) emptyList() else remoteConflicts
+            val conflictKeySet = mutableSetOf<String>()
+            val mergedConflicts = mutableListOf<SyncConflict>()
+            for (c in effectiveRemoteConflicts + newConflicts) {
+                if (conflictKeySet.add(c.dedupeKey())) mergedConflicts.add(c)
+            }
+            mergedConflicts.sortBy { it.detectedAt }
+            val syncConflicts = mergedConflicts.takeLast(50)
+
+            val conflictsArray = JSONArray().apply { syncConflicts.forEach { put(it.toJson()) } }
             val blobPayload = JSONObject().apply {
                 put("services", contentArray)
                 put("wallets", walletsArray)
                 put("wallet_audit_log", auditArray)
+                put("sync_conflicts", conflictsArray)
             }
 
             val plaintext = blobPayload.toString().toByteArray(Charsets.UTF_8)
@@ -376,14 +440,14 @@ class SyncManager(
                     serviceManager.replaceAll(merged)
                     setMetadataCache(context, putResult.services)
 
-                    // Update known UUIDs and wallet keys
-                    val newKnown = merged.mapNotNull { it.id }.toSet()
-                    setKnownUUIDs(context, newKnown)
+                    // Update known UUIDs (from pre-dedup set to include loser UUIDs) and wallet keys
+                    setKnownUUIDs(context, allMergedIds)
                     setKnownWalletKeys(context, newWKeys)
                     saveWallets(context, mergedWallets)
                     saveAuditLog(context, mergedAuditLog)
+                    getPrefs(context).edit().putBoolean("conflicts_dismissed", false).apply()
 
-                    SyncResult.Success(merged, mergedWallets, mergedAuditLog, status)
+                    SyncResult.Success(merged, mergedWallets, mergedAuditLog, syncConflicts, status)
                 }
                 is PutResult.Conflict -> {
                     if (retryCount < 3) {
@@ -405,12 +469,18 @@ class SyncManager(
         }
     }
 
+    private data class MergeResult(
+        val merged: List<ServiceEntry>,
+        val allMergedIds: Set<String>,
+        val syncConflicts: List<SyncConflict>
+    )
+
     private fun mergeServices(
         local: List<ServiceEntry>,
         remote: List<ServiceEntry>,
         remoteMeta: List<Pair<String?, Long>>,
         knownUUIDs: Set<String>
-    ): List<ServiceEntry> {
+    ): MergeResult {
         val remoteByID = mutableMapOf<String, Pair<ServiceEntry, Long>>()
         for (i in remoteMeta.indices) {
             val id = remoteMeta[i].first ?: continue
@@ -460,7 +530,37 @@ class SyncManager(
             merged.add(svc.copy(id = java.util.UUID.randomUUID().toString()))
         }
 
-        return merged
+        // Compute all pre-dedup UUIDs (includes losers) for knownUUIDs tracking
+        val allMergedIds = merged.mapNotNull { it.id }.toSet()
+
+        // Dedup by (normalizeSite(site), email) — keep highest updatedAt, lower UUID wins ties
+        val conflicts = mutableListOf<SyncConflict>()
+        val deduped = mutableMapOf<Pair<String, String>, ServiceEntry>()
+        for (svc in merged) {
+            val key = ServiceManager.normalizeSite(svc.site) to svc.email.lowercase()
+            val existing = deduped[key]
+            if (existing == null) { deduped[key] = svc; continue }
+            val winner: ServiceEntry
+            val loser: ServiceEntry
+            if (svc.updatedAt > existing.updatedAt || (svc.updatedAt == existing.updatedAt && (svc.id ?: "") < (existing.id ?: ""))) {
+                winner = svc; loser = existing
+            } else {
+                winner = existing; loser = svc
+            }
+            deduped[key] = winner
+            if (loser.length != winner.length || loser.symbols != winner.symbols ||
+                loser.counter != winner.counter ||
+                (loser.totp?.toString() ?: "") != (winner.totp?.toString() ?: "") ||
+                (loser.ssh?.toString() ?: "") != (winner.ssh?.toString() ?: "")) {
+                val loserJson = loser.toJsonContent().apply {
+                    put("id", loser.id ?: "")
+                    put("updated_at", loser.updatedAt)
+                }
+                conflicts.add(SyncConflict(winner.id ?: "", loserJson, java.time.Instant.now().toString()))
+            }
+        }
+
+        return MergeResult(deduped.values.toList(), allMergedIds, conflicts)
     }
 
     private fun sha256Hex(data: ByteArray): String {

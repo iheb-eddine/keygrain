@@ -237,6 +237,46 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 		return
 	}
 
+	// Authenticate early: acquire lock, read file, verify password BEFORE expensive body parsing.
+	// This prevents unauthenticated requests from consuming server resources.
+	lock := s.getLock(lookupID)
+	lock.mu.Lock()
+	defer s.releaseLock(lookupID, lock)
+
+	path := s.filePath(lookupID)
+	now := time.Now().UTC().Format(time.RFC3339)
+	var record syncRecord
+	isNew := false
+
+	existing, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		isNew = true
+	} else if err != nil {
+		jsonError(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if !isNew {
+		if err := json.Unmarshal(existing, &record); err != nil {
+			jsonError(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(record.AuthPasswordHash), []byte(password)); err != nil {
+			jsonError(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		// ETag check
+		if ifMatchPresent && ifMatchValue != record.ETag {
+			jsonError(w, fmt.Sprintf(`{"error":"conflict","current_etag":"%s"}`, record.ETag), http.StatusConflict)
+			return
+		}
+		if !ifMatchPresent {
+			jsonError(w, fmt.Sprintf(`{"error":"conflict","current_etag":"%s"}`, record.ETag), http.StatusConflict)
+			return
+		}
+	}
+
+	// Body parsing and validation (only reached after authentication succeeds)
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodySize))
 	if err != nil {
 		jsonError(w, `{"error":"payload too large"}`, http.StatusRequestEntityTooLarge)
@@ -252,6 +292,13 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 	// Validate services count
 	if len(req.Services) > 1000 {
 		jsonError(w, `{"error":"validation failed","detail":"too many services"}`, http.StatusUnprocessableEntity)
+		return
+	}
+
+	// Empty-push protection: reject push with 0 services if existing record has services.
+	// This prevents catastrophic data loss from client bugs that send empty service lists.
+	if !isNew && len(req.Services) == 0 && len(record.Services) > 0 {
+		jsonError(w, `{"error":"validation failed","detail":"cannot overwrite non-empty record with empty services"}`, http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -289,42 +336,7 @@ func (s *syncServer) handlePut(w http.ResponseWriter, r *http.Request, lookupID 
 		return
 	}
 
-	lock := s.getLock(lookupID)
-	lock.mu.Lock()
-	defer s.releaseLock(lookupID, lock)
-
-	path := s.filePath(lookupID)
-	now := time.Now().UTC().Format(time.RFC3339)
-	var record syncRecord
-	isNew := false
-
-	existing, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		isNew = true
-	} else if err != nil {
-		jsonError(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	if !isNew {
-		if err := json.Unmarshal(existing, &record); err != nil {
-			jsonError(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-			return
-		}
-		if err := bcrypt.CompareHashAndPassword([]byte(record.AuthPasswordHash), []byte(password)); err != nil {
-			jsonError(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-			return
-		}
-		// ETag check
-		if ifMatchPresent && ifMatchValue != record.ETag {
-			jsonError(w, fmt.Sprintf(`{"error":"conflict","current_etag":"%s"}`, record.ETag), http.StatusConflict)
-			return
-		}
-		if !ifMatchPresent {
-			jsonError(w, fmt.Sprintf(`{"error":"conflict","current_etag":"%s"}`, record.ETag), http.StatusConflict)
-			return
-		}
-	} else {
+	if isNew {
 		hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 		if err != nil {
 			jsonError(w, `{"error":"internal error"}`, http.StatusInternalServerError)

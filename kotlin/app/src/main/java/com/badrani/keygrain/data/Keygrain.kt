@@ -11,13 +11,14 @@ object Keygrain {
     const val DIGITS = "23456789"
     const val DEFAULT_SYMBOLS = "!@#\$%&*-_=+?"
 
+    private val cacheLock = Any()
     private var strengthenCache: Triple<ByteArray, String, ByteArray>? = null
 
-    fun strengthenSecret(secret: ByteArray, email: String): ByteArray {
+    fun strengthenSecret(secret: ByteArray, email: String): ByteArray = synchronized(cacheLock) {
         val emailLower = email.lowercase()
         strengthenCache?.let { (cachedSecret, cachedEmail, cachedResult) ->
             if (cachedSecret.contentEquals(secret) && cachedEmail == emailLower) {
-                return cachedResult
+                return cachedResult.copyOf()
             }
             // Zero old cache entry before replacing
             cachedSecret.fill(0)
@@ -35,10 +36,10 @@ object Keygrain {
         val result = ByteArray(32)
         generator.generateBytes(secret, result)
         strengthenCache = Triple(secret.copyOf(), emailLower, result)
-        return result
+        return result.copyOf()
     }
 
-    fun clearStrengthenCache() {
+    fun clearStrengthenCache() = synchronized(cacheLock) {
         strengthenCache?.let { (cachedSecret, _, cachedResult) ->
             cachedSecret.fill(0)
             cachedResult.fill(0)
@@ -54,21 +55,24 @@ object Keygrain {
         symbols: String = DEFAULT_SYMBOLS,
         counter: Int = 1
     ): String {
+        require(secret.isNotEmpty()) { "secret must not be empty" }
+        require(email.isNotBlank()) { "email must not be empty" }
         require(length >= 8) { "length must be >= 8" }
         require(length <= 128) { "length must be <= 128" }
+        require(counter >= 1) { "counter must be >= 1" }
         require(symbols.isNotEmpty()) { "symbols must not be empty" }
         require(UPPER.length + LOWER.length + DIGITS.length + symbols.length <= 256) { "symbols too long (full charset exceeds 256 characters)" }
         val normalizedSite = normalizeSite(site)
         require(normalizedSite.isNotEmpty()) { "site must not be empty" }
 
         val strengthened = strengthenSecret(secret, email)
-        val message = "$normalizedSite:${email.lowercase()}:$length:$counter".toByteArray()
+        val message = "$normalizedSite:${email.lowercase()}:$length:$counter".toByteArray(Charsets.UTF_8)
         return buildPassword(strengthened, message, length, symbols)
     }
 
     fun deriveAuthPassword(secret: ByteArray, email: String): String {
         val strengthened = strengthenSecret(secret, email)
-        val message = "${email.lowercase()}:32:keygrain-auth".toByteArray()
+        val message = "${email.lowercase()}:32:keygrain-auth".toByteArray(Charsets.UTF_8)
         return buildPassword(strengthened, message, 32, DEFAULT_SYMBOLS)
     }
 
@@ -119,18 +123,18 @@ object Keygrain {
 
     fun deriveLookupId(secret: ByteArray, email: String): String {
         val strengthened = strengthenSecret(secret, email)
-        val message = "${email.lowercase()}:keygrain-id".toByteArray()
+        val message = "${email.lowercase()}:keygrain-id".toByteArray(Charsets.UTF_8)
         return hmacSha256(strengthened, message).joinToString("") { "%02x".format(it) }
     }
 
     fun deriveEncryptionKey(secret: ByteArray, email: String): ByteArray {
         val strengthened = strengthenSecret(secret, email)
-        val message = "${email.lowercase()}:keygrain-encryption".toByteArray()
+        val message = "${email.lowercase()}:keygrain-encryption".toByteArray(Charsets.UTF_8)
         return hmacSha256(strengthened, message)
     }
 
     fun secretFingerprint(secret: ByteArray): List<Int> {
-        val hash = hmacSha256(secret, "keygrain-fingerprint".toByteArray())
+        val hash = hmacSha256(secret, "keygrain-fingerprint".toByteArray(Charsets.UTF_8))
         return (0 until 4).map { (hash[it].toInt() and 0xFF) % 8 }
     }
 

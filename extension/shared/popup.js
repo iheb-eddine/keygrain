@@ -108,6 +108,7 @@
   const siteSuggestion = document.getElementById("site-suggestion");
   const quickFill = document.getElementById("quick-fill");
   const breachWarnings = document.getElementById("breach-warnings");
+  const conflictBanner = document.getElementById("conflict-banner");
 
   // === Focus trap ===
   let settingsState = null;
@@ -392,6 +393,7 @@
       lastSyncError = null;
       await chrome.storage.local.set({lastSyncTime, lastSyncError: null});
       await chrome.storage.local.remove("syncRetryState");
+      renderConflictBanner();
     } catch (e) {
       const msg = e.message;
       let errorObj;
@@ -437,6 +439,27 @@
     }
   }
 
+  async function renderConflictBanner() {
+    const data = await chrome.storage.local.get("syncConflicts");
+    const conflicts = data.syncConflicts || [];
+    if (conflicts.length === 0) { conflictBanner.classList.add("hidden"); return; }
+    conflictBanner.className = "conflict-banner";
+    conflictBanner.innerHTML = "";
+    const text = document.createElement("span");
+    text.className = "conflict-text";
+    text.textContent = "\u26A0 " + conflicts.length + " sync conflict" + (conflicts.length > 1 ? "s" : "") + " detected (duplicate entries with different settings)";
+    const dismiss = document.createElement("button");
+    dismiss.className = "conflict-dismiss";
+    dismiss.textContent = "\u00D7";
+    dismiss.setAttribute("aria-label", "Dismiss sync conflicts");
+    dismiss.addEventListener("click", async () => {
+      await chrome.storage.local.set({syncConflicts: [], conflictsDismissed: true});
+      conflictBanner.classList.add("hidden");
+      syncGeneration++;
+    });
+    conflictBanner.appendChild(text);
+    conflictBanner.appendChild(dismiss);
+  }
 
 
   // === Rendering ===
@@ -474,6 +497,7 @@
     serviceList.setAttribute("role", "listbox");
     renderServiceList();
     startTOTPInterval();
+    renderConflictBanner();
     if (!syncIndicatorInterval) {
       syncIndicatorInterval = setInterval(updateSyncIndicator, 1000);
     }
@@ -1035,7 +1059,9 @@
     const url = setServerUrl.value.trim();
     if (!timeout || timeout < 1) { showStatus(statusEl, "Timeout must be at least 1 minute.", statusTimerState); return; }
     if (!length || length < 8) { showStatus(statusEl, "Length must be at least 8.", statusTimerState); return; }
+    if (length > 128) { showStatus(statusEl, "Length must not exceed 128.", statusTimerState); return; }
     if (!symbols) { showStatus(statusEl, "At least one symbol is required.", statusTimerState); return; }
+    if (24 + 24 + 8 + symbols.length > 256) { showStatus(statusEl, "Symbol charset too long (max " + (256 - 24 - 24 - 8) + " characters).", statusTimerState); return; }
     if (!url.startsWith("https://")) { showStatus(statusEl, "Server URL must start with https://", statusTimerState); return; }
     settings = {autoLockMinutes: timeout, defaultLength: length, defaultSymbols: symbols, serverUrl: url};
     await chrome.storage.local.set({settings});
@@ -1137,11 +1163,15 @@
     if (!site) { showStatus(statusEl, "Site is required.", statusTimerState); return; }
     const length = parseInt(addLength.value, 10);
     if (length < 8) { showStatus(statusEl, "Length must be at least 8.", statusTimerState); return; }
+    if (length > 128) { showStatus(statusEl, "Length must not exceed 128.", statusTimerState); return; }
     const symbols = addSymbols.value;
     if (!symbols) { showStatus(statusEl, "At least one symbol is required.", statusTimerState); return; }
-    // Name collision check
-    const duplicate = services.some((s, i) => s.name === name && i !== editIndex);
-    if (duplicate) { showStatus(statusEl, "A service with that name already exists.", statusTimerState); return; }
+    if (24 + 24 + 8 + symbols.length > 256) { showStatus(statusEl, "Symbol charset too long (max " + (256 - 24 - 24 - 8) + " characters).", statusTimerState); return; }
+    // Duplicate check: same (site, email) pair must not exist
+    const normalizedSite = normalizeSite(site);
+    const emailLower = email.toLowerCase();
+    const duplicate = services.some((s, i) => i !== editIndex && normalizeSite(s.site) === normalizedSite && s.email.toLowerCase() === emailLower);
+    if (duplicate) { showStatus(statusEl, "A service with that site and email already exists.", statusTimerState); return; }
     // Build TOTP config
     let totp = null;
     const totpMode = addTotpMode.value;

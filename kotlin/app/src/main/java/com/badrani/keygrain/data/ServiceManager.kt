@@ -86,10 +86,15 @@ class ServiceManager(context: Context) {
         return maxOf(System.currentTimeMillis(), max + 1)
     }
 
-    fun addService(entry: ServiceEntry) {
+    fun addService(entry: ServiceEntry): Boolean {
         val services = getServices().toMutableList()
-        services.add(entry.copy(site = normalizeSite(entry.site), id = UUID.randomUUID().toString(), updatedAt = nextTimestamp(services)))
+        val normalizedSite = normalizeSite(entry.site)
+        val emailLower = entry.email.lowercase()
+        val duplicate = services.any { normalizeSite(it.site) == normalizedSite && it.email.lowercase() == emailLower }
+        if (duplicate) return false
+        services.add(entry.copy(site = normalizedSite, id = UUID.randomUUID().toString(), updatedAt = nextTimestamp(services)))
         save(services)
+        return true
     }
 
     fun deleteService(id: String) {
@@ -97,13 +102,18 @@ class ServiceManager(context: Context) {
         save(services)
     }
 
-    fun updateService(oldName: String, newEntry: ServiceEntry) {
+    fun updateService(id: String, newEntry: ServiceEntry): Boolean {
         val services = getServices().toMutableList()
+        val normalizedSite = normalizeSite(newEntry.site)
+        val emailLower = newEntry.email.lowercase()
+        val duplicate = services.any { it.id != id && normalizeSite(it.site) == normalizedSite && it.email.lowercase() == emailLower }
+        if (duplicate) return false
         val updated = services.map {
-            if (it.name == oldName) newEntry.copy(site = normalizeSite(newEntry.site), id = it.id, updatedAt = nextTimestamp(services))
+            if (it.id == id) newEntry.copy(site = normalizedSite, id = it.id, updatedAt = nextTimestamp(services))
             else it
         }
         save(updated)
+        return true
     }
 
     fun replaceAll(services: List<ServiceEntry>) {

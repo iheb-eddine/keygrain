@@ -284,3 +284,8 @@ button { cursor: pointer; }
 .btn-danger:hover { background: #c82333; }
 .btn-danger:disabled { opacity: 0.5; cursor: default; }
 .reset-warning { font-size: 0.85rem; color: var(--error); margin-bottom: 8px; }
+
+/* Sync conflict banner */
+.conflict-banner { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning-text); border-radius: var(--radius-lg); margin-bottom: 6px; font-size: 0.82rem; }
+.conflict-banner .conflict-text { flex: 1; font-weight: 600; }
+.conflict-banner .conflict-dismiss { background: none; border: none; color: var(--warning-text); font-size: 1.1rem; cursor: pointer; padding: 0 4px; }

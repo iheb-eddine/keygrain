@@ -68,6 +68,15 @@ def _cmd_ssh(args):
 
 
 def _cmd_wallet(args):
+    # --path doesn't need secret or confirmation
+    if args.path:
+        chain = args.chain.lower()
+        if chain not in SUPPORTED_CHAINS:
+            print(f"Error: Unsupported chain {chain!r}.", file=sys.stderr)
+            sys.exit(1)
+        print(BIP44_PATHS[chain])
+        return
+
     secret = _get_secret(args.secret_env)
 
     # Interactive confirmation unless bypassed
@@ -103,12 +112,6 @@ def _cmd_wallet(args):
             )
             seed = mnemonic_to_seed(mnemonic)
             print(seed.hex())
-        elif args.path:
-            chain = args.chain.lower()
-            if chain not in SUPPORTED_CHAINS:
-                print(f"Error: Unsupported chain {chain!r}.", file=sys.stderr)
-                sys.exit(1)
-            print(BIP44_PATHS[chain])
         else:
             mnemonic = derive_wallet_mnemonic(
                 secret, args.email, wallet_name=args.name, chain=args.chain, counter=args.counter
@@ -168,6 +171,7 @@ def _cmd_totp(args):
         seed = derive_totp_seed(secret, args.email, normalize_site(args.site))
         digits = args.digits or 6
         period = args.period or 30
+        algorithm = "SHA1"
     else:
         if not args.seed:
             print("Error: --seed is required (or use --derive with --email and --site)", file=sys.stderr)
@@ -180,9 +184,10 @@ def _cmd_totp(args):
         seed = params["seed"]
         digits = args.digits if args.digits is not None else params["digits"]
         period = args.period if args.period is not None else params["period"]
+        algorithm = params.get("algorithm", "SHA1")
 
     try:
-        code = generate_totp(seed, int(time.time()), digits=digits, period=period)
+        code = generate_totp(seed, int(time.time()), digits=digits, period=period, algorithm=algorithm)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -217,6 +222,7 @@ def main():
         ssh_parser.add_argument("--counter", type=int, default=1, help="Rotation counter (default: 1)")
         ssh_parser.add_argument("--private", action="store_true", help="Output private key (OpenSSH PEM)")
         ssh_parser.add_argument("--agent", action="store_true", help="Add key to ssh-agent")
+        ssh_parser.add_argument("--secret-env", default="KEYGRAIN_SECRET", help="Env var holding the master secret")
 
         wallet_parser = subparsers.add_parser("wallet", help="Derive a wallet mnemonic")
         wallet_parser.add_argument("email", help="Email address")
@@ -227,6 +233,7 @@ def main():
         wallet_parser.add_argument("--seed", action="store_true", help="Output 64-byte BIP-32 seed as hex")
         wallet_parser.add_argument("--path", action="store_true", help="Show BIP-44 derivation path")
         wallet_parser.add_argument("--yes-i-understand-the-risks", action="store_true", help="Skip interactive confirmation")
+        wallet_parser.add_argument("--secret-env", default="KEYGRAIN_SECRET", help="Env var holding the master secret")
 
         bip85_parser = subparsers.add_parser("wallet-bip85", help="Derive child mnemonic via BIP-85")
         bip85_parser.add_argument("--mnemonic", required=True, help="Master BIP-39 mnemonic (12 or 24 words)")

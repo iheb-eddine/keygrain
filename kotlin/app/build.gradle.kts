@@ -17,12 +17,12 @@ android {
 
     signingConfigs {
         val keystoreFile = file("${rootProject.projectDir}/release.keystore")
-        if (keystoreFile.exists()) {
+        if (keystoreFile.exists() && System.getenv("KEYSTORE_PASSWORD") != null) {
             create("release") {
                 storeFile = keystoreFile
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: error("KEYSTORE_PASSWORD required for release signing")
-                keyAlias = System.getenv("KEY_ALIAS") ?: error("KEY_ALIAS required for release signing")
-                keyPassword = System.getenv("KEY_PASSWORD") ?: error("KEY_PASSWORD required for release signing")
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS") ?: "release"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD")
             }
         }
     }
