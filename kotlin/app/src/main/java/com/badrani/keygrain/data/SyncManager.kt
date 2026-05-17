@@ -115,6 +115,13 @@ class SyncManager(
     private fun getPrefs(context: Context) =
         context.getSharedPreferences("keygrain_sync", Context.MODE_PRIVATE)
 
+    fun getSyncEmail(context: Context): String? =
+        getPrefs(context).getString("sync_email", null)
+
+    fun setSyncEmail(context: Context, email: String) {
+        getPrefs(context).edit().putString("sync_email", email).apply()
+    }
+
     private fun getKnownUUIDs(context: Context): Set<String> =
         getPrefs(context).getStringSet("known_uuids", emptySet()) ?: emptySet()
 
@@ -537,7 +544,8 @@ class SyncManager(
         val conflicts = mutableListOf<SyncConflict>()
         val deduped = mutableMapOf<Pair<String, String>, ServiceEntry>()
         for (svc in merged) {
-            val key = ServiceManager.normalizeSite(svc.site) to svc.email.lowercase()
+            val normalized = ServiceManager.normalizeSite(svc.site)
+            val key = (normalized.ifEmpty { svc.id ?: svc.site }) to svc.email.lowercase()
             val existing = deduped[key]
             if (existing == null) { deduped[key] = svc; continue }
             val winner: ServiceEntry

@@ -54,6 +54,7 @@
     <a href="/" class="back">← Back to Keygrain</a>
     <h1>Keygrain vs. Traditional Vaults</h1>
     <p class="subtitle">Different approach, different trade-offs. Traditional password managers like 1Password, Bitwarden, and LastPass store your passwords in an encrypted vault. Keygrain doesn't store anything — it derives passwords on the fly.</p>
+    <p style="color: var(--text-secondary); font-size: 15px; margin-bottom: 32px;">Keygrain trades vault features (sharing, custom passwords, recovery) for a simpler threat model: if there is no password database, there is no password database to breach. The limitations below are architectural decisions, not missing features.</p>
 
     <table>
         <thead>
@@ -81,7 +82,7 @@
             </tr>
             <tr>
                 <td>Recovery</td>
-                <td>No recovery if secret is lost — permanent</td>
+                <td>No recovery if secret is lost — <strong>by design.</strong> Deterministic derivation eliminates server-side recovery. Your secret IS your vault — there is no secondary copy to fall back on.</td>
                 <td>Recovery options exist (emergency contacts, reset flows)</td>
             </tr>
             <tr>
@@ -101,12 +102,12 @@
             </tr>
             <tr>
                 <td>Password sharing</td>
-                <td>Not possible</td>
+                <td>Not possible — <strong>by design.</strong> There is no vault to share from. Giving someone ongoing access to your passwords would require revealing your master secret, so Keygrain eliminates the sharing attack surface entirely.</td>
                 <td>Supported (family/team vaults)</td>
             </tr>
             <tr>
                 <td>Custom passwords</td>
-                <td>Not supported — passwords are deterministic</td>
+                <td>Not supported — <strong>by design.</strong> Deterministic derivation means every password is reproducible from inputs alone. Storing custom passwords would require a vault, defeating the core architecture.</td>
                 <td>Fully supported</td>
             </tr>
         </tbody>
@@ -129,6 +130,7 @@
         <li>Anyone who relies on <strong>breach monitoring</strong> to know when credentials are compromised</li>
     </ul>
     <p>There's no wrong choice — only different priorities. Many people use both: Keygrain for personal accounts, a vault for team credentials.</p>
+    <p style="text-align: center; color: var(--text-secondary); font-size: 13px; margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border);">Last reviewed: June 2026</p>
 </div>
 
 <footer>

@@ -388,7 +388,7 @@
       walletAuditLog = result.wallet_audit_log;
       await saveServices();
       await setKnownUUIDs(result.knownUUIDs);
-      renderServiceList();
+      if (!serviceList.querySelector(".password-display")) renderServiceList();
       lastSyncTime = Date.now();
       lastSyncError = null;
       await chrome.storage.local.set({lastSyncTime, lastSyncError: null});
@@ -399,6 +399,8 @@
       let errorObj;
       if (e instanceof MetadataTamperError) {
         errorObj = {type: "integrity", message: "Data integrity error. Please contact support."};
+      } else if (msg === "rate_limited") {
+        errorObj = {type: "rate_limited", message: "Rate limited. Retrying soon.", retryAfter: e.retryAfter || 60};
       } else if (msg === "network_error") {
         errorObj = {type: "network", message: "Connection error"};
       } else if (msg === "server_error") {
@@ -410,8 +412,8 @@
       }
       lastSyncError = errorObj;
       await chrome.storage.local.set({lastSyncError: errorObj});
-      if (errorObj.type === "network" || errorObj.type === "server") {
-        sendMsg({action: "scheduleSyncRetry", errorType: errorObj.type});
+      if (errorObj.type === "network" || errorObj.type === "server" || errorObj.type === "rate_limited") {
+        sendMsg({action: "scheduleSyncRetry", errorType: errorObj.type, retryAfter: errorObj.retryAfter});
       }
     } finally {
       syncInProgress = false;
@@ -607,9 +609,30 @@
         const totpRow = document.createElement("div");
         totpRow.className = "totp-row";
         totpRow.dataset.serviceIdx = String(realIdx);
+        totpRow.dataset.totpRevealed = "false";
+        const revealBtn = document.createElement("button");
+        revealBtn.className = "totp-reveal-btn";
+        revealBtn.title = "Show TOTP";
+        revealBtn.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3C4.36 3 1.26 5.28 0 8.5c1.26 3.22 4.36 5.5 8 5.5s6.74-2.28 8-5.5C14.74 5.28 11.64 3 8 3zm0 9.17a3.67 3.67 0 1 1 0-7.34 3.67 3.67 0 0 1 0 7.34zM8 6a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>';
+        revealBtn.setAttribute("aria-label", "Show TOTP code for " + svc.name);
+        revealBtn.addEventListener("click", async () => {
+          const revealed = totpRow.dataset.totpRevealed === "true";
+          totpRow.dataset.totpRevealed = String(!revealed);
+          if (!revealed) {
+            try {
+              const {code} = await getTOTPCode(svc, currentSecret);
+              const formatted = code.length === 8 ? code.slice(0, 4) + " " + code.slice(4) : code.slice(0, 3) + " " + code.slice(3);
+              codeSpan.textContent = formatted;
+            } catch { codeSpan.textContent = "Error"; }
+            revealBtn.setAttribute("aria-label", "Hide TOTP code for " + svc.name);
+          } else {
+            codeSpan.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022";
+            revealBtn.setAttribute("aria-label", "Show TOTP code for " + svc.name);
+          }
+        });
         const codeSpan = document.createElement("span");
         codeSpan.className = "totp-code";
-        codeSpan.textContent = "••••••";
+        codeSpan.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022";
         const countdown = document.createElement("div");
         countdown.className = "totp-countdown";
         const bar = document.createElement("div");
@@ -624,9 +647,14 @@
           try {
             const {code} = await getTOTPCode(svc, currentSecret);
             await navigator.clipboard.writeText(code);
+            if (clearTimer) clearTimeout(clearTimer);
+            clearTimer = setTimeout(async () => {
+              try { await navigator.clipboard.writeText(""); } catch (_) {}
+            }, 30000);
             showStatus(statusEl, "TOTP copied", statusTimerState);
           } catch (e) { showStatus(statusEl, "TOTP error: " + e.message, statusTimerState); }
         });
+        totpRow.appendChild(revealBtn);
         totpRow.appendChild(codeSpan);
         totpRow.appendChild(countdown);
         totpRow.appendChild(copyTotpBtn);
@@ -679,12 +707,14 @@
       if (!svc || !svc.totp) continue;
       try {
         const {code, remaining} = await getTOTPCode(svc, currentSecret);
-        const formatted = code.length === 8
-          ? code.slice(0, 4) + " " + code.slice(4)
-          : code.slice(0, 3) + " " + code.slice(3);
-        row.querySelector(".totp-code").textContent = formatted;
         const period = svc.totp.period || 30;
         row.querySelector(".totp-countdown-bar").style.width = (remaining / period * 100) + "%";
+        if (row.dataset.totpRevealed === "true") {
+          const formatted = code.length === 8
+            ? code.slice(0, 4) + " " + code.slice(4)
+            : code.slice(0, 3) + " " + code.slice(3);
+          row.querySelector(".totp-code").textContent = formatted;
+        }
       } catch { /* ignore */ }
     }
   }
@@ -811,7 +841,7 @@
           dot.style.background = WONG_PALETTE[i];
           fpContainer.appendChild(dot);
         });
-      } catch (e) { fpContainer.textContent = ""; console.error("fingerprint error:", e); }
+      } catch (e) { fpContainer.textContent = ""; }
     }, 500);
   });
 
@@ -1257,11 +1287,13 @@
     markRotatedBtn.classList.toggle("hidden", !svc.migrating);
     // Populate TOTP
     if (svc.totp) {
+      document.getElementById("add-totp-section").open = true;
       addTotpMode.value = svc.totp.mode;
       originalTotpSeed = svc.totp.mode === "stored" ? (svc.totp.seed || "") : "";
       addTotpSeed.value = originalTotpSeed;
       addTotpSeedGroup.classList.toggle("hidden", svc.totp.mode === "derived");
     } else {
+      document.getElementById("add-totp-section").open = false;
       addTotpMode.value = "";
       addTotpSeed.value = "";
       originalTotpSeed = "";
@@ -1321,8 +1353,7 @@
     await saveServices();
     if (clearTimer) clearTimeout(clearTimer);
     clearTimer = setTimeout(async () => {
-      await navigator.clipboard.writeText("");
-      showStatus(statusEl, "Clipboard cleared.", statusTimerState);
+      try { await navigator.clipboard.writeText(""); } catch (_) {}
     }, 30000);
   }
 

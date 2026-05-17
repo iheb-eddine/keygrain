@@ -144,7 +144,8 @@ func (rl *rateLimitMiddleware) reject(w http.ResponseWriter, retryAfter time.Dur
 
 func (rl *rateLimitMiddleware) extractIP(r *http.Request) string {
 	if rl.trustedHeader != "" {
-		if ip := r.Header.Get(rl.trustedHeader); ip != "" {
+		if val := r.Header.Get(rl.trustedHeader); val != "" {
+			ip := strings.TrimSpace(strings.Split(val, ",")[0])
 			return normalizeIP(ip)
 		}
 	}

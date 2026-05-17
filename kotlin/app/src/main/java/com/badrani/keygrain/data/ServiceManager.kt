@@ -89,6 +89,7 @@ class ServiceManager(context: Context) {
     fun addService(entry: ServiceEntry): Boolean {
         val services = getServices().toMutableList()
         val normalizedSite = normalizeSite(entry.site)
+        if (normalizedSite.isEmpty()) return false
         val emailLower = entry.email.lowercase()
         val duplicate = services.any { normalizeSite(it.site) == normalizedSite && it.email.lowercase() == emailLower }
         if (duplicate) return false
@@ -105,6 +106,7 @@ class ServiceManager(context: Context) {
     fun updateService(id: String, newEntry: ServiceEntry): Boolean {
         val services = getServices().toMutableList()
         val normalizedSite = normalizeSite(newEntry.site)
+        if (normalizedSite.isEmpty()) return false
         val emailLower = newEntry.email.lowercase()
         val duplicate = services.any { it.id != id && normalizeSite(it.site) == normalizedSite && it.email.lowercase() == emailLower }
         if (duplicate) return false
@@ -164,9 +166,11 @@ class ServiceManager(context: Context) {
                 val obj = arr.getJSONObject(i)
                 val name = obj.optString("name", "").ifEmpty { return@mapNotNull null }
                 val email = obj.optString("email", "").ifEmpty { return@mapNotNull null }
+                val site = normalizeSite(obj.optString("site", name))
+                if (site.isEmpty()) return@mapNotNull null
                 ServiceEntry(
                     name = name,
-                    site = normalizeSite(obj.optString("site", name)),
+                    site = site,
                     email = email,
                     length = obj.optInt("length", 20),
                     symbols = obj.optString("symbols", Keygrain.DEFAULT_SYMBOLS),

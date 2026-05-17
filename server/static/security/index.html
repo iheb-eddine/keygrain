@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Design — Keygrain</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:title" content="Keygrain — Security Design">
+    <meta property="og:description" content="How Keygrain derives passwords deterministically using Argon2id and HMAC-SHA256. No vault. No database. Just math.">
+    <meta property="og:image" content="https://keygrain.com/og-image.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --red: #ef4444;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --font: system-ui, -apple-system, sans-serif;
+            --max-w: 720px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); }
+        .container { max-width: var(--max-w); margin: 0 auto; padding: 48px 24px; }
+        h1 { font-size: 32px; margin-bottom: 8px; }
+        h2 { font-size: 22px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        h3 { font-size: 17px; margin: 24px 0 8px; }
+        p { margin-bottom: 12px; color: var(--text-secondary); }
+        ul, ol { margin: 0 0 16px 24px; color: var(--text-secondary); }
+        li { margin-bottom: 6px; }
+        strong { color: var(--text); }
+        code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 14px; }
+        pre { background: var(--surface); padding: 16px; border-radius: 8px; overflow-x: auto; margin: 16px 0; font-size: 14px; line-height: 1.5; }
+        pre code { background: none; padding: 0; }
+        .back { display: inline-block; margin-bottom: 32px; font-size: 14px; }
+        .hero { text-align: center; padding: 32px 0 48px; }
+        .hero h1 { font-size: 36px; margin-bottom: 16px; }
+        .hero p { font-size: 18px; color: var(--text-secondary); max-width: 560px; margin: 0 auto; }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+        th { color: var(--text); font-weight: 600; }
+        td { color: var(--text-secondary); }
+        .flow { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 24px 0; padding: 24px 16px; background: var(--surface); border-radius: 8px; }
+        .flow-step { background: var(--bg); border: 1px solid var(--border); padding: 10px 16px; border-radius: 6px; font-size: 14px; font-weight: 600; text-align: center; }
+        .flow-step small { display: block; font-weight: 400; color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+        .flow-arrow { color: var(--accent); font-size: 18px; font-weight: 700; }
+        .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
+        .tag-risk { background: #2d1515; color: var(--red); }
+        .reviewed { text-align: center; color: var(--text-secondary); font-size: 13px; margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); }
+        footer { border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+        @media (max-width: 600px) {
+            .flow { flex-direction: column; }
+            .flow-arrow { transform: rotate(90deg); }
+        }
+    </style>
+    <link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+
+<div class="container">
+    <a href="/" class="back">← Back to Keygrain</a>
+
+    <div class="hero">
+        <h1>Your passwords exist nowhere — until you need them</h1>
+        <p>Keygrain derives passwords on demand from your master secret using key-stretching and HMAC. Nothing is stored. Nothing can be breached. The same inputs always produce the same output.</p>
+    </div>
+
+    <h2>How Derivation Works</h2>
+
+    <p>Every password is computed fresh from three inputs: your secret, your email, and the site name. The derivation pipeline uses two cryptographic primitives — Argon2id for key strengthening and HMAC-SHA256 for deterministic derivation.</p>
+
+    <div class="flow">
+        <div class="flow-step">Master Secret<small>your passphrase</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step">Argon2id<small>64 MiB · 3 iterations</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step">Strengthened Key<small>32 bytes</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step">HMAC-SHA256<small>site:email:length:counter</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step">Stream + Rejection Sampling<small>unbiased selection</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step">Password<small>deterministic output</small></div>
+    </div>
+
+    <h3>Step by step</h3>
+    <ol>
+        <li><strong>Key strengthening.</strong> Your master secret is processed through Argon2id (RFC 9106) with 64 MiB of memory and 3 iterations. Your email is baked into the salt, so an attacker cannot amortize the cost across multiple users. This produces a 32-byte strengthened key.</li>
+        <li><strong>HMAC derivation.</strong> The strengthened key feeds into HMAC-SHA256 with a message containing the site, email, password length, and counter. This produces a 32-byte per-site key.</li>
+        <li><strong>Stream extension.</strong> Additional bytes are generated on demand by chaining HMAC-SHA256 with a 4-byte big-endian counter. This gives the character selection algorithm as many pseudorandom bytes as it needs.</li>
+        <li><strong>Rejection sampling.</strong> Characters are selected from the stream using rejection sampling — bytes that would introduce modular bias are discarded. This ensures every character position is uniformly distributed across the charset.</li>
+        <li><strong>Category enforcement + shuffle.</strong> The first four positions are forced to contain one uppercase, one lowercase, one digit, and one symbol. Then a Fisher-Yates shuffle randomizes the final order.</li>
+    </ol>
+
+    <p>The result: a deterministic, high-entropy password that meets site requirements and is reproducible from the same inputs on any platform.</p>
+
+    <h2>What the Server Sees</h2>
+
+    <p>If you use optional encrypted sync, here is the exact trust boundary between your device and the Keygrain server:</p>
+
+    <svg viewBox="0 0 720 320" width="100%" role="img" aria-label="Trust boundary diagram showing what stays on your device versus what the server sees">
+        <style>
+            .tb-text { font-family: system-ui, -apple-system, sans-serif; font-size: 12px; fill: currentColor; }
+            .tb-title { font-family: system-ui, -apple-system, sans-serif; font-size: 14px; font-weight: 600; fill: currentColor; }
+            .tb-label { font-family: system-ui, -apple-system, sans-serif; font-size: 11px; fill: var(--text-secondary); }
+            .tb-item { font-family: system-ui, -apple-system, sans-serif; font-size: 11px; fill: var(--text-secondary); }
+            .tb-device { fill: none; stroke: var(--green); stroke-width: 2; rx: 12; }
+            .tb-server { fill: none; stroke: var(--border); stroke-width: 2; rx: 12; }
+            .tb-wall { fill: var(--surface); stroke: var(--border); stroke-width: 2; }
+            .tb-wall-label { font-family: system-ui, -apple-system, sans-serif; font-size: 10px; font-weight: 600; fill: var(--accent); }
+            .tb-arrow { fill: none; stroke: var(--accent); stroke-width: 1.5; marker-end: url(#arrowhead); }
+            .tb-zone { fill: var(--surface); opacity: 0.4; }
+        </style>
+        <defs>
+            <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="var(--accent)"/>
+            </marker>
+        </defs>
+        <!-- Device zone -->
+        <rect class="tb-device" x="20" y="20" width="280" height="280"/>
+        <rect class="tb-zone" x="20" y="20" width="280" height="280" rx="12"/>
+        <text class="tb-title" x="160" y="50" text-anchor="middle" fill="var(--green)">Your Device</text>
+        <text class="tb-item" x="50" y="85">● Master secret</text>
+        <text class="tb-item" x="50" y="115">● Strengthened key (32 bytes)</text>
+        <text class="tb-item" x="50" y="145">● Plaintext service configs</text>
+        <text class="tb-item" x="50" y="175">● Derived passwords</text>
+        <text class="tb-item" x="50" y="205">● Email addresses</text>
+        <text class="tb-item" x="50" y="235">● Password parameters</text>
+        <text class="tb-label" x="160" y="275" text-anchor="middle">All crypto happens here</text>
+        <!-- Wall / barrier -->
+        <rect class="tb-wall" x="330" y="20" width="60" height="280" rx="4"/>
+        <text class="tb-wall-label" x="360" y="155" text-anchor="middle">TLS</text>
+        <text class="tb-wall-label" x="360" y="172" text-anchor="middle">+</text>
+        <text class="tb-wall-label" x="360" y="189" text-anchor="middle">AES-256</text>
+        <text class="tb-wall-label" x="360" y="206" text-anchor="middle">-GCM</text>
+        <!-- Server zone -->
+        <rect class="tb-server" x="420" y="20" width="280" height="280"/>
+        <rect class="tb-zone" x="420" y="20" width="280" height="280" rx="12"/>
+        <text class="tb-title" x="560" y="50" text-anchor="middle" fill="var(--text-secondary)">Server</text>
+        <text class="tb-item" x="450" y="85">● Encrypted blob (opaque)</text>
+        <text class="tb-item" x="450" y="115">● Lookup ID (pseudonymous)</text>
+        <text class="tb-item" x="450" y="145">● Timestamps</text>
+        <text class="tb-item" x="450" y="175">● Blob size</text>
+        <text class="tb-item" x="450" y="205">● Service count</text>
+        <text class="tb-label" x="560" y="275" text-anchor="middle">Cannot decrypt anything</text>
+        <!-- Arrows showing what crosses -->
+        <path class="tb-arrow" d="M 300 90 L 330 90"/>
+        <path class="tb-arrow" d="M 390 90 L 420 90"/>
+        <path class="tb-arrow" d="M 300 120 L 330 120"/>
+        <path class="tb-arrow" d="M 390 120 L 420 120"/>
+        <text class="tb-label" x="360" y="80" text-anchor="middle">encrypted</text>
+        <text class="tb-label" x="360" y="135" text-anchor="middle">blob + ID</text>
+    </svg>
+
+    <p>All cryptographic operations happen on your device. The server receives only AES-256-GCM ciphertext encrypted with a key derived from your secret — a key the server never sees. Even a complete server compromise yields nothing but opaque blobs.</p>
+
+    <h2>Security Properties</h2>
+
+    <table>
+        <thead>
+            <tr><th>Property</th><th>Implementation</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Key strengthening</strong></td>
+                <td>Argon2id — 64 MiB memory, 3 iterations, parallelism 1</td>
+                <td>~1 second per guess on consumer hardware. Resists GPU/ASIC attacks via memory-hardness.</td>
+            </tr>
+            <tr>
+                <td><strong>Per-user salt</strong></td>
+                <td><code>"keygrain-strengthen:" + email</code></td>
+                <td>Prevents multi-target amortization. Each user requires independent attack effort.</td>
+            </tr>
+            <tr>
+                <td><strong>Password derivation</strong></td>
+                <td>HMAC-SHA256 keyed by strengthened key</td>
+                <td>Knowing one derived password does not reveal the strengthened key or other passwords.</td>
+            </tr>
+            <tr>
+                <td><strong>Domain separation</strong></td>
+                <td>Unique message suffixes per derivation type</td>
+                <td>Password, auth, encryption, TOTP, SSH, and wallet derivations are cryptographically independent.</td>
+            </tr>
+            <tr>
+                <td><strong>Unbiased selection</strong></td>
+                <td>Rejection sampling (discard bytes ≥ floor(256/n)*n)</td>
+                <td>No modular bias in character selection. Every position is uniformly distributed.</td>
+            </tr>
+            <tr>
+                <td><strong>Sync encryption</strong></td>
+                <td>AES-256-GCM — 32-byte key, 12-byte random nonce, 16-byte auth tag</td>
+                <td>Authenticated encryption. Server cannot read or tamper with service data.</td>
+            </tr>
+            <tr>
+                <td><strong>Auth to server</strong></td>
+                <td>Derived 32-character password, bcrypt cost-12 server-side</td>
+                <td>Server stores only a hash. Compromised server cannot authenticate as the user elsewhere.</td>
+            </tr>
+            <tr>
+                <td><strong>Determinism</strong></td>
+                <td>Same inputs → identical output, cross-platform</td>
+                <td>No sync required for basic use. Any correct implementation reproduces the same passwords.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>Honest Limitations</h2>
+
+    <h3><span class="tag tag-risk">Risk</span> Master secret compromise</h3>
+    <p>If your secret is exposed — through phishing, a keylogger, or shoulder surfing — <strong>all your passwords are compromised simultaneously</strong>. This is the fundamental trade-off of deterministic derivation: one secret protects everything. Use Keygrain only on trusted devices, and choose a high-entropy secret (6+ random words recommended).</p>
+
+    <h3><span class="tag tag-risk">Risk</span> Weak secrets are brute-forceable</h3>
+    <p>Argon2id costs ~1 second per guess. A 4-digit PIN has 10,000 candidates — exhaustible in ~3 hours. A short dictionary word falls similarly fast. The strengthening buys time, not invulnerability. Your security is bounded by your secret's entropy.</p>
+
+    <h3><span class="tag tag-risk">Risk</span> No breach monitoring</h3>
+    <p>Keygrain does not check whether derived passwords have appeared in data breaches. If a site is compromised and stores your password in plaintext, you must manually rotate by incrementing the counter for that site.</p>
+
+    <h3><span class="tag tag-risk">Risk</span> Compromised device</h3>
+    <p>If malware has access to your device's memory or keyboard input, it can capture your secret as you type. No software can protect against a hostile operating environment. Keygrain assumes your device is trustworthy.</p>
+
+    <h3><span class="tag tag-risk">Risk</span> Server replay</h3>
+    <p>A malicious sync server could serve stale encrypted payloads, reverting your configuration to an older state. It cannot forge new content (it lacks the encryption key), but it can replay valid old ciphertext. ETag-based locking mitigates unintentional replays.</p>
+
+    <h2>Verify It Yourself</h2>
+
+    <p>Keygrain's algorithm is fully specified with test vectors. You can verify that any implementation produces correct output by running the reference tests:</p>
+
+    <pre><code>git clone https://dev.secbytech.com/tools/keygrain
+cd keygrain/python
+pip install -e .
+python -m pytest tests/</code></pre>
+
+    <p>The repository root contains <code>vectors.json</code> with machine-readable test vectors. Every implementation (Python, JavaScript, Kotlin) must produce byte-identical output for the same inputs. The <a href="https://dev.secbytech.com/tools/keygrain/blob/main/SPEC.md">full algorithm specification</a> is public — there is no secret sauce, only well-understood cryptographic primitives composed carefully.</p>
+
+    <h2>Further Reading</h2>
+
+    <ul>
+        <li><a href="/threat-model/">Threat Model</a> — what Keygrain protects against and what it does not</li>
+        <li><a href="https://dev.secbytech.com/tools/keygrain/blob/main/SPEC.md">Algorithm Specification (SPEC.md)</a> — the complete, implementation-ready specification with test vectors</li>
+    </ul>
+
+    <p class="reviewed">Last reviewed: June 2026</p>
+</div>
+
+<footer>
+    <a href="/">Keygrain</a> · <a href="/privacy.html">Privacy</a> · <a href="https://dev.secbytech.com/tools/keygrain">Source Code</a> · © 2026 SecByTech
+</footer>
+
+</body>
+</html>

@@ -130,9 +130,16 @@ cd server && go build && go test ./...
 
 ## Documentation
 
-- [Algorithm Specification](SPEC.md)
-- [Design Documents](designs/) — 33 design docs covering every feature
-- [Handover & Developer Guide](HANDOVER.md)
+- [Algorithm Specification](SPEC.md) — complete, implementation-ready spec with test vectors
+- [Security Design](https://keygrain.com/security/) — how Keygrain protects your data
+- [CLI & Integration Guide](docs/cli-and-integration.md) — command reference and Python library usage
+- [Self-Hosting Guide](docs/self-hosting.md) — deploy your own sync server
+- [Advanced Features](docs/advanced-features.md) — SSH keys, HD wallets, TOTP seeds
+- [Architecture](docs/architecture.md) — system design and security model
+- [Terminology & Style](docs/GLOSSARY.md) — canonical terms and documentation governance
+- [User Guide: Extension](docs/user-guide-extension.md)
+- [User Guide: Android](docs/user-guide-mobile.md)
+- [Design Documents](designs/) — 80+ design docs covering every feature
 
 ## License
 

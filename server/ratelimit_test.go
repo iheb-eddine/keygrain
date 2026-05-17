@@ -330,3 +330,15 @@ func TestExtractIP_SpoofAttemptBlocked(t *testing.T) {
 		t.Fatalf("spoof not blocked: expected 10.0.0.1, got %s", ip)
 	}
 }
+
+func TestExtractIP_CommaSeparated(t *testing.T) {
+	rl := &rateLimitMiddleware{trustedHeader: "X-Real-IP"}
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-Real-IP", "1.2.3.4, 5.6.7.8")
+	r.RemoteAddr = "10.0.0.1:9999"
+
+	ip := rl.extractIP(r)
+	if ip != "1.2.3.4" {
+		t.Fatalf("expected 1.2.3.4 from comma-separated, got %s", ip)
+	}
+}

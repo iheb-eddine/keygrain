@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Switching to Keygrain — Migration Guide</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:title" content="Keygrain — Migration Guide">
+    <meta property="og:description" content="Switch from LastPass, Bitwarden, 1Password, Chrome, or Firefox to Keygrain. Keep your old manager running while you transition at your own pace.">
+    <meta property="og:image" content="https://keygrain.com/og-image.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --red: #ef4444;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --font: system-ui, -apple-system, sans-serif;
+            --max-w: 720px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); }
+        .container { max-width: var(--max-w); margin: 0 auto; padding: 48px 24px; }
+        h1 { font-size: 32px; margin-bottom: 8px; }
+        h2 { font-size: 22px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        h3 { font-size: 17px; margin: 24px 0 8px; }
+        p { margin-bottom: 12px; color: var(--text-secondary); }
+        ul, ol { margin: 0 0 16px 24px; color: var(--text-secondary); }
+        li { margin-bottom: 6px; }
+        strong { color: var(--text); }
+        .back { display: inline-block; margin-bottom: 32px; font-size: 14px; }
+        .hero { text-align: center; padding: 32px 0 48px; }
+        .hero h1 { font-size: 36px; margin-bottom: 16px; }
+        .hero p { font-size: 18px; color: var(--text-secondary); max-width: 560px; margin: 0 auto; }
+        .flow { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 24px 0; padding: 24px 16px; background: var(--surface); border-radius: 8px; }
+        .flow-step { background: var(--bg); border: 1px solid var(--border); padding: 10px 16px; border-radius: 6px; font-size: 14px; font-weight: 600; text-align: center; }
+        .flow-step small { display: block; font-weight: 400; color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+        .flow-arrow { color: var(--accent); font-size: 18px; font-weight: 700; }
+        .sources { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 16px 0; }
+        .source { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; font-size: 14px; font-weight: 600; }
+        .cta { display: block; text-align: center; background: var(--accent); color: #fff; padding: 14px 32px; border-radius: 8px; font-size: 16px; font-weight: 600; margin: 32px auto; max-width: 320px; }
+        .cta:hover { background: var(--accent-hover); color: #fff; }
+        .reviewed { text-align: center; color: var(--text-secondary); font-size: 13px; margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); }
+        footer { border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+        @media (max-width: 600px) {
+            .flow { flex-direction: column; }
+            .flow-arrow { transform: rotate(90deg); }
+        }
+    </style>
+    <link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+
+<div class="container">
+    <a href="/" class="back">← Back to Keygrain</a>
+
+    <div class="hero">
+        <h1>Switching to Keygrain</h1>
+        <p>You do not have to change everything at once. Keep your current manager running while you transition one site at a time.</p>
+    </div>
+
+    <h2>Three Steps</h2>
+
+    <div class="flow">
+        <div class="flow-step">Export<small>from your old manager</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step">Import<small>into Keygrain</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-step">Rotate<small>one site at a time</small></div>
+    </div>
+
+    <p>The migration wizard reads your export file, creates a service entry for each site, and queues them for password rotation. You work through the queue at your own pace — there is no deadline.</p>
+
+    <h2>Supported Sources</h2>
+
+    <div class="sources">
+        <div class="source">LastPass</div>
+        <div class="source">Bitwarden</div>
+        <div class="source">1Password</div>
+        <div class="source">Chrome</div>
+        <div class="source">Firefox</div>
+    </div>
+
+    <p>Each source uses a standard CSV or JSON export format. The migration wizard auto-detects the format and maps fields to Keygrain services.</p>
+
+    <h2>How the Migration Wizard Works</h2>
+
+    <ol>
+        <li><strong>Export</strong> your passwords from your current manager (CSV or JSON).</li>
+        <li><strong>Open the wizard</strong> in the Keygrain extension or web app.</li>
+        <li><strong>Drop in the file.</strong> The wizard parses it locally — nothing is uploaded.</li>
+        <li><strong>Review the list.</strong> Duplicates and invalid entries are flagged.</li>
+        <li><strong>Save.</strong> Each site becomes a Keygrain service with a counter of 1.</li>
+    </ol>
+
+    <p>From here, visit each site and update your password to the Keygrain-derived one. The extension prompts you when it detects a site that still uses your old password.</p>
+
+    <h2>What About My Old Passwords?</h2>
+
+    <p>Keygrain derives fresh passwords — it does not reuse your imported ones. Your old passwords continue working on each site until you change them. This means you can run both managers side-by-side for as long as you need. There is no cliff edge.</p>
+
+    <p>As you rotate each site, the extension marks it as migrated. You can see your progress at a glance and pick up where you left off.</p>
+
+    <a href="https://dev.secbytech.com/tools/keygrain" class="cta">Install the extension to get started</a>
+
+    <p class="reviewed">Last reviewed: June 2026</p>
+</div>
+
+<footer>
+    <a href="/">Keygrain</a> · <a href="/privacy.html">Privacy</a> · <a href="https://dev.secbytech.com/tools/keygrain">Source Code</a> · © 2026 SecByTech
+</footer>
+
+</body>
+</html>

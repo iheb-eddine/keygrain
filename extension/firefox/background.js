@@ -107,12 +107,15 @@ async function backgroundSync() {
     await browser.storage.local.remove("syncRetryState");
     browser.alarms.clear("syncRetry");
   } catch (e) {
-    console.error("[keygrain] background sync error:", e?.message || e);
     if (e instanceof MetadataTamperError || e?.message === "checksum_mismatch") {
       browser.alarms.clear("syncAlarm");
     }
     const errType = e?.message;
-    if (errType === "network_error" || errType === "server_error") {
+    if (errType === "rate_limited") {
+      const delay = (e.retryAfter || 60) / 60;
+      await browser.storage.local.set({lastSyncError: {type: "rate_limited", message: "Rate limited. Retrying soon."}});
+      browser.alarms.create("syncRetry", {delayInMinutes: delay});
+    } else if (errType === "network_error" || errType === "server_error") {
       const data = await browser.storage.local.get("syncRetryState");
       const state = data.syncRetryState || {attempt: 0, nextRetryAt: null, errorType: null};
       state.attempt++;
@@ -141,6 +144,7 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
     }
     lockDeferred = false;
     browser.alarms.clear("syncAlarm");
+    clearStrengthenCache();
     sessionSecret = null;
     sessionEmail = null;
     const [tab] = await browser.tabs.query({active: true, currentWindow: true});

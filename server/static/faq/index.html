@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAQ — Keygrain</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:title" content="Keygrain — FAQ">
+    <meta property="og:description" content="Answers to common questions about Keygrain's deterministic password derivation.">
+    <meta property="og:image" content="https://keygrain.com/og-image.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --red: #ef4444;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --font: system-ui, -apple-system, sans-serif;
+            --max-w: 720px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg); }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-hover); }
+        .container { max-width: var(--max-w); margin: 0 auto; padding: 48px 24px; }
+        h1 { font-size: 32px; margin-bottom: 8px; }
+        h2 { font-size: 22px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        p { margin-bottom: 12px; color: var(--text-secondary); }
+        strong { color: var(--text); }
+        .back { display: inline-block; margin-bottom: 32px; font-size: 14px; }
+        .hero { text-align: center; padding: 32px 0 48px; }
+        .hero h1 { font-size: 36px; margin-bottom: 16px; }
+        .hero p { font-size: 18px; color: var(--text-secondary); max-width: 560px; margin: 0 auto; }
+        details { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
+        summary { cursor: pointer; padding: 16px 20px; font-weight: 600; font-size: 16px; list-style: none; }
+        summary::-webkit-details-marker { display: none; }
+        summary::before { content: "▸ "; color: var(--accent); }
+        details[open] summary::before { content: "▾ "; }
+        details .answer { padding: 0 20px 16px; color: var(--text-secondary); }
+        details .answer p { margin-bottom: 8px; }
+        details .answer p:last-child { margin-bottom: 0; }
+        .reviewed { text-align: center; color: var(--text-secondary); font-size: 13px; margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); }
+        footer { border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+    </style>
+    <link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+
+<div class="container">
+    <a href="/" class="back">← Back to Keygrain</a>
+
+    <div class="hero">
+        <h1>Frequently Asked Questions</h1>
+        <p>Quick answers to the most common questions. Each links to a detailed page if you want to go deeper.</p>
+    </div>
+
+    <details>
+        <summary>What if I forget my master secret?</summary>
+        <div class="answer">
+            <p>If this happens, your passwords cannot be recovered. Keygrain derives every password from your master secret — there is no server-side copy, no recovery email, no reset flow. This is by design, not an oversight.</p>
+            <p>Write your master secret down physically and store it somewhere safe. The <strong>visual fingerprint</strong> (4-color indicator) catches typos the moment you enter your secret, so you will know immediately if something is wrong.</p>
+            <p><a href="/security/">Read the security design →</a></p>
+        </div>
+    </details>
+
+    <details>
+        <summary>How is this different from Bitwarden or 1Password?</summary>
+        <div class="answer">
+            <p>Traditional managers store encrypted passwords in a vault. Keygrain derives passwords on demand from your master secret — nothing is stored, so nothing can be breached. The trade-off is that you cannot store arbitrary passwords you did not derive.</p>
+            <p><a href="/compare/">See the full comparison →</a></p>
+        </div>
+    </details>
+
+    <details>
+        <summary>Is my data safe if the server is hacked?</summary>
+        <div class="answer">
+            <p>Yes. The server holds only an encrypted blob it cannot decrypt. All cryptographic operations happen on your device. A complete server compromise yields opaque ciphertext and pseudonymous lookup IDs — no passwords, no service names, no email addresses.</p>
+            <p><a href="/security/">Read the trust boundary analysis →</a></p>
+        </div>
+    </details>
+
+    <details>
+        <summary>Can I use Keygrain offline?</summary>
+        <div class="answer">
+            <p>Yes. Password derivation is entirely local — it requires only your master secret, your email, and the site name. No network connection is needed. The server is only involved if you choose to sync your service list across devices.</p>
+        </div>
+    </details>
+
+    <details>
+        <summary>What if a site gets breached?</summary>
+        <div class="answer">
+            <p>Increment the counter for that site. This produces a completely unrelated new password from the same inputs. Your other passwords are unaffected because each derivation is cryptographically independent.</p>
+            <p><a href="/guide/">See the user guide →</a></p>
+        </div>
+    </details>
+
+    <details>
+        <summary>How do I switch from another password manager?</summary>
+        <div class="answer">
+            <p>Export your data from your current manager, import it into Keygrain's migration wizard, then rotate passwords at your own pace. You can run both managers side-by-side during the transition — no cliff edge.</p>
+            <p><a href="/migrate/">Read the migration guide →</a></p>
+        </div>
+    </details>
+
+    <details>
+        <summary>What platforms are supported?</summary>
+        <div class="answer">
+            <p>Browser extension (Chrome, Firefox, Edge), Android app, web PWA that works offline, and a Python CLI for automation and scripting. All produce identical output from the same inputs.</p>
+        </div>
+    </details>
+
+    <details>
+        <summary>Is Keygrain open source?</summary>
+        <div class="answer">
+            <p>Yes. The full source code is MIT-licensed. The algorithm specification, test vectors, and all implementations are public.</p>
+            <p><a href="https://dev.secbytech.com/tools/keygrain">View the source code →</a></p>
+        </div>
+    </details>
+
+    <details>
+        <summary>Can I use this for SSH keys, wallets, or TOTP?</summary>
+        <div class="answer">
+            <p>Yes. Keygrain supports deterministic derivation of SSH keys, cryptocurrency wallet seeds, and TOTP secrets using domain-separated derivation paths. Each type is cryptographically independent from your passwords.</p>
+            <p><a href="https://dev.secbytech.com/tools/keygrain/blob/main/SPEC.md">See the algorithm specification →</a></p>
+        </div>
+    </details>
+
+    <p class="reviewed">Last reviewed: June 2026</p>
+</div>
+
+<footer>
+    <a href="/">Keygrain</a> · <a href="/privacy.html">Privacy</a> · <a href="https://dev.secbytech.com/tools/keygrain">Source Code</a> · © 2026 SecByTech
+</footer>
+
+</body>
+</html>

@@ -125,7 +125,7 @@ button { cursor: pointer; }
 
 /* Service list */
 #service-list { max-height: 380px; overflow-y: auto; padding: 2px; }
-.service-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 6px; border-bottom: 1px solid var(--border); transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast); }
+.service-item { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 8px 6px; border-bottom: 1px solid var(--border); transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast); }
 .service-item:hover { background: var(--bg-secondary); transform: translateY(-1px); box-shadow: var(--shadow-sm); border-radius: var(--radius-md); border-bottom-color: transparent; }
 .service-item:last-child { border-bottom: none; }
 .service-item.focused { background: var(--bg-secondary); transform: translateY(-1px); box-shadow: var(--shadow-sm); border-radius: var(--radius-md); border-bottom-color: transparent; }
@@ -254,12 +254,14 @@ button { cursor: pointer; }
 }
 
 /* TOTP display */
-.totp-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); margin-top: var(--space-xs); background: var(--bg-secondary); border-radius: var(--radius-sm); }
+.totp-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); margin-top: var(--space-xs); background: var(--bg-secondary); border-radius: var(--radius-sm); flex-basis: 100%; }
 .totp-code { font-family: monospace; font-size: 1.1rem; font-weight: 600; letter-spacing: 0.05em; color: var(--accent); min-width: 5.5em; }
 .totp-countdown { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .totp-countdown-bar { height: 100%; background: var(--accent); transition: width 1s linear; }
 .totp-copy-btn { background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-secondary); border-radius: var(--radius-sm); }
 .totp-copy-btn:hover { color: var(--accent); background: var(--bg-secondary); }
+.totp-reveal-btn { background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-secondary); border-radius: var(--radius-sm); }
+.totp-reveal-btn:hover { color: var(--accent); background: var(--bg-secondary); }
 
 /* TOTP dialog section */
 #add-totp-section { margin-top: var(--space-sm); }
@@ -268,7 +270,7 @@ button { cursor: pointer; }
 #add-totp-seed-group { margin-top: var(--space-xs); }
 
 /* SSH row in service card */
-.ssh-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); margin-top: var(--space-xs); background: var(--bg-secondary); border-radius: var(--radius-sm); }
+.ssh-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); margin-top: var(--space-xs); background: var(--bg-secondary); border-radius: var(--radius-sm); flex-basis: 100%; }
 .ssh-badge { font-size: 0.7rem; font-weight: 700; background: var(--accent); color: #fff; padding: 2px 6px; border-radius: var(--radius-sm); text-transform: uppercase; }
 .ssh-keyname { font-family: monospace; font-size: 0.85rem; color: var(--text-secondary); flex: 1; }
 .ssh-copy-btn { background: none; border: none; cursor: pointer; padding: 4px 8px; color: var(--text-secondary); border-radius: var(--radius-sm); font-size: 0.8rem; display: flex; align-items: center; gap: 4px; }
