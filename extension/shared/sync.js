@@ -277,7 +277,7 @@ function mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs
   const seen = new Map();
   const sync_conflicts = [];
   for (const svc of merged) {
-    const key = normalizeSite(svc.site) + "\n" + (svc.email || "").toLowerCase();
+    const key = (normalizeSite(svc.site) || svc.id) + "\n" + (svc.email || "").toLowerCase();
     const existing = seen.get(key);
     if (!existing) { seen.set(key, svc); continue; }
     let winner, loser;
@@ -382,6 +382,10 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       await setKnownWalletKeys(knownWKeys);
     } else if (getResp.status === 401) {
       throw new Error("auth_failed");
+    } else if (getResp.status === 429) {
+      const err = new Error("rate_limited");
+      err.retryAfter = parseInt(getResp.headers.get("Retry-After"), 10) || 60;
+      throw err;
     } else {
       throw new Error("server_error");
     }
@@ -444,6 +448,11 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       throw new Error("conflict");
     }
     if (putResp.status === 401) throw new Error("auth_failed");
+    if (putResp.status === 429) {
+      const err = new Error("rate_limited");
+      err.retryAfter = parseInt(putResp.headers.get("Retry-After"), 10) || 60;
+      throw err;
+    }
     if (putResp.status !== 200 && putResp.status !== 201) throw new Error("server_error");
 
     const putResult = await putResp.json();

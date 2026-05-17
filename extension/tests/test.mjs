@@ -379,6 +379,31 @@ await test('parseBlobContent: new format', async () => {
   assert.deepEqual(result.wallets, [{ wallet_name: 'x' }]);
 });
 
+await test('mergeServices: empty-normalizing sites use id as dedup key, no collision', async () => {
+  const local = [
+    { id: 'x1', site: 'www.', email: 'a@b.com', updated_at: 100 },
+    { id: 'x2', site: 'https://', email: 'a@b.com', updated_at: 200 }
+  ];
+  const remote = [];
+  const meta = [];
+  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();
+  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
+  assert.equal(result.merged.length, 2);
+});
+
+await test('mergeServices: same non-empty normalized site still deduplicates', async () => {
+  const local = [
+    { id: 'y1', site: 'https://example.com/path', email: 'a@b.com', updated_at: 100 },
+    { id: 'y2', site: 'http://www.example.com', email: 'a@b.com', updated_at: 200 }
+  ];
+  const remote = [];
+  const meta = [];
+  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();
+  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].id, 'y2');
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

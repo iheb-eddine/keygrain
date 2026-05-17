@@ -329,7 +329,7 @@ private fun ServiceListScreen(
 
     fun performAutoSync() {
         if (isDemoMode || isSyncing) return
-        val email = getMostCommonEmail()
+        val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
         if (email.isBlank()) return
         isSyncing = true
         val gen = syncGeneration
@@ -340,6 +340,7 @@ private fun ServiceListScreen(
                     when (val r = syncManager.sync(secretBytes, email, serviceManager, context)) {
                         is SyncResult.Success -> {
                             if (syncGeneration != gen) return@launch
+                            syncManager.setSyncEmail(context, email)
                             skipNextDebounce = true
                             services = serviceManager.getServices()
                             lastSyncTime = System.currentTimeMillis()
@@ -491,8 +492,9 @@ private fun ServiceListScreen(
                                 text = { Text("Sync") },
                                 onClick = {
                                     menuExpanded = false
-                                    syncEmail = services.groupingBy { it.email }.eachCount()
-                                        .maxByOrNull { it.value }?.key ?: ""
+                                    syncEmail = syncManager.getSyncEmail(context)
+                                        ?: services.groupingBy { it.email }.eachCount()
+                                            .maxByOrNull { it.value }?.key ?: ""
                                     showSyncEmailDialog = true
                                 }
                             )
@@ -638,7 +640,7 @@ private fun ServiceListScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(filteredServices, key = { it.id!! }) { service ->
+                    items(filteredServices, key = { it.id ?: it.name }) { service ->
                         ServiceCard(
                             service = service,
                             masterSecret = masterSecret,
@@ -694,6 +696,7 @@ private fun ServiceListScreen(
                             val msg = try {
                                 when (val r = syncManager.sync(secretBytes, syncEmail, serviceManager, context)) {
                                     is SyncResult.Success -> {
+                                        syncManager.setSyncEmail(context, syncEmail)
                                         skipNextDebounce = true
                                         services = serviceManager.getServices()
                                         lastSyncTime = System.currentTimeMillis()

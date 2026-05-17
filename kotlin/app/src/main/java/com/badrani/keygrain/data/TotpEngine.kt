@@ -1,6 +1,5 @@
 package com.badrani.keygrain.data
 
-import java.net.URI
 import java.net.URLDecoder
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -100,11 +99,25 @@ object TotpEngine {
     }
 
     private fun parseOtpauth(uri: String): TotpParams {
-        val parsed = URI(uri)
-        require(parsed.scheme == "otpauth") { "Not an otpauth URI" }
-        require(parsed.host == "totp") { "Only TOTP is supported (not HOTP)" }
+        // java.net.URI is strict and rejects common otpauth labels with unencoded chars.
+        // Parse manually: scheme://type/label?params
+        require(uri.startsWith("otpauth://")) { "Not an otpauth URI" }
+        val afterScheme = uri.removePrefix("otpauth://")
+        val slashIdx = afterScheme.indexOf('/')
+        val type = if (slashIdx >= 0) afterScheme.substring(0, slashIdx) else afterScheme.substringBefore('?')
+        require(type == "totp") { "Only TOTP is supported (not HOTP)" }
 
-        val params = parseQueryParams(parsed.rawQuery ?: "")
+        val queryIdx = uri.indexOf('?')
+        val fragmentIdx = uri.indexOf('#')
+        val queryEnd = if (fragmentIdx > queryIdx) fragmentIdx else uri.length
+        val rawQuery = if (queryIdx >= 0) uri.substring(queryIdx + 1, queryEnd) else ""
+        val afterSlash = if (slashIdx >= 0) afterScheme.substring(slashIdx + 1) else ""
+        val label = if (afterSlash.isNotEmpty()) {
+            val labelStr = afterSlash.substringBefore('?')
+            if (labelStr.isNotEmpty()) try { URLDecoder.decode(labelStr, "UTF-8") } catch (_: Exception) { labelStr } else null
+        } else null
+
+        val params = parseQueryParams(rawQuery)
         val secretParam = params["secret"] ?: throw IllegalArgumentException("Missing secret parameter")
         val seed = base32Decode(secretParam)
 
@@ -118,7 +131,6 @@ object TotpEngine {
         require(period in 1..300) { "period must be 1-300, got $period" }
 
         val issuer = params["issuer"]
-        val label = if (parsed.path?.length ?: 0 > 1) URLDecoder.decode(parsed.path.removePrefix("/"), "UTF-8") else null
 
         return TotpParams(seed, digits, period, algo, issuer, label)
     }

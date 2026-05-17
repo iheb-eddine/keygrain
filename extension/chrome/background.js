@@ -109,12 +109,15 @@ async function backgroundSync() {
     await chrome.storage.local.remove("syncRetryState");
     chrome.alarms.clear("syncRetry");
   } catch (e) {
-    console.error("[keygrain] background sync error:", e?.message || e);
     if (e instanceof MetadataTamperError || e?.message === "checksum_mismatch") {
       chrome.alarms.clear("syncAlarm");
     }
     const errType = e?.message;
-    if (errType === "network_error" || errType === "server_error") {
+    if (errType === "rate_limited") {
+      const delay = (e.retryAfter || 60) / 60;
+      await chrome.storage.local.set({lastSyncError: {type: "rate_limited", message: "Rate limited. Retrying soon."}});
+      chrome.alarms.create("syncRetry", {delayInMinutes: delay});
+    } else if (errType === "network_error" || errType === "server_error") {
       const data = await chrome.storage.local.get("syncRetryState");
       const state = data.syncRetryState || {attempt: 0, nextRetryAt: null, errorType: null};
       state.attempt++;
@@ -143,6 +146,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
     lockDeferred = false;
     chrome.alarms.clear("syncAlarm");
+    clearStrengthenCache();
     chrome.storage.session.remove(["secret", "email"]);
     const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
     if (tab) chrome.action.setBadgeText({text: "", tabId: tab.id});

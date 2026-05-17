@@ -148,4 +148,27 @@ class TotpEngineTest {
     fun testRejectInvalidDigitsInUri() {
         TotpEngine.parseTotpInput("otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP&digits=7")
     }
+
+    @Test
+    fun testParseOtpauthSpaceInLabel() {
+        // Real-world QR codes often have unencoded chars that break java.net.URI
+        val result = TotpEngine.parseTotpInput("otpauth://totp/My Service:user@email.com?secret=JBSWY3DPEHPK3PXP&digits=6")
+        assertEquals(6, result.digits)
+        assertEquals(30, result.period)
+    }
+
+    @Test
+    fun testParseOtpauthWithFragment() {
+        // Fragment must not corrupt the last query parameter
+        val result = TotpEngine.parseTotpInput("otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP&period=60#fragment")
+        assertEquals(60, result.period)
+    }
+
+    @Test
+    fun testParseOtpauthNoSlash() {
+        // No slash between type and query (uncommon but valid)
+        val result = TotpEngine.parseTotpInput("otpauth://totp?secret=JBSWY3DPEHPK3PXP")
+        assertEquals(6, result.digits)
+        assertEquals(30, result.period)
+    }
 }
