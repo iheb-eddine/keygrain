@@ -54,10 +54,11 @@
     <a href="/" class="back">← Back to Keygrain</a>
     <h1>Getting Started</h1>
     <p>You've installed Keygrain — here's how to use it.</p>
+    <p>This guide covers the <strong>browser extension</strong>. Also available: <a href="/#download">Android app</a>, <a href="/generate/">web generator</a>, and <a href="https://pypi.org/project/keygrain/">Python CLI</a>.</p>
 
     <h2>What is Keygrain?</h2>
     <p>Keygrain is a deterministic password manager. It doesn't store your passwords — it <strong>derives</strong> them on the fly from a secret you memorize and the site you're logging into.</p>
-    <div class="formula">your secret + site name → unique password</div>
+    <div class="formula">your secret + email + site name → unique password</div>
     <p>Same inputs always produce the same output. No vault. No database. Nothing to breach.</p>
 
     <div class="callout">
@@ -95,6 +96,10 @@
 
     <h2>Non-Website Passwords</h2>
     <p>Keygrain works for any secret, not just website passwords. Use the Site field for any memorable label: <code>wifi-home</code>, <code>android-keystore</code>, <code>vpn-work</code>, <code>nas-admin</code>. Autofill won't trigger for non-domain names, but the password is generated the same way.</p>
+
+    <h2>Rotating a Password</h2>
+    <p>If a site is breached or forces you to change your password, increment the <strong>counter</strong> for that service. This produces a completely new password from the same inputs — your other passwords are unaffected.</p>
+    <p>In the extension: click the service → Edit → increase the counter → Save. Then update your password on the site.</p>
 </div>
 
 <footer>

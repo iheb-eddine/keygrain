@@ -82,8 +82,8 @@
     <details>
         <summary>Is my data safe if the server is hacked?</summary>
         <div class="answer">
-            <p>Yes. The server holds only an encrypted blob it cannot decrypt. All cryptographic operations happen on your device. A complete server compromise yields opaque ciphertext and pseudonymous lookup IDs — no passwords, no service names, no email addresses.</p>
-            <p><a href="/security/">Read the trust boundary analysis →</a></p>
+            <p>Yes. The server holds only an encrypted blob it cannot decrypt. All cryptographic operations happen on your device. A complete server compromise yields opaque ciphertext, pseudonymous lookup IDs, per-service timestamps, and payload size — no passwords, no service names, no email addresses.</p>
+            <p><a href="/security/">Read the trust boundary analysis →</a> The <a href='/security/'>security page</a> includes a visual trust boundary diagram showing exactly what crosses the wire.</p>
         </div>
     </details>
 
@@ -95,10 +95,17 @@
     </details>
 
     <details>
+        <summary>Why does Keygrain ask for my email?</summary>
+        <div class="answer">
+            <p>Your email is used as a cryptographic salt — it ensures that two people with the same master secret still get completely different passwords. It is not sent to any server or used to create an account. You can use any email address, real or not, as long as you use the same one consistently.</p>
+        </div>
+    </details>
+
+    <details>
         <summary>What if a site gets breached?</summary>
         <div class="answer">
             <p>Increment the counter for that site. This produces a completely unrelated new password from the same inputs. Your other passwords are unaffected because each derivation is cryptographically independent.</p>
-            <p><a href="/guide/">See the user guide →</a></p>
+            <p><a href="/guide/">See Getting Started →</a></p>
         </div>
     </details>
 
@@ -113,7 +120,7 @@
     <details>
         <summary>What platforms are supported?</summary>
         <div class="answer">
-            <p>Browser extension (Chrome, Firefox, Edge), Android app, web PWA that works offline, and a Python CLI for automation and scripting. All produce identical output from the same inputs.</p>
+            <p>Browser extension (Chrome and Firefox — store submissions pending; install from source in the meantime), Android app, web PWA that works offline, and a Python CLI for automation and scripting. All produce identical output from the same inputs.</p>
         </div>
     </details>
 

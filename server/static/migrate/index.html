@@ -93,6 +93,15 @@
 
     <p>Each source uses a standard CSV or JSON export format. The migration wizard auto-detects the format and maps fields to Keygrain services.</p>
 
+    <h3>Export Instructions</h3>
+    <ul>
+        <li><strong>LastPass:</strong> Settings → Advanced Options → Export → CSV</li>
+        <li><strong>Bitwarden:</strong> Tools → Export Vault → File format: .csv</li>
+        <li><strong>1Password:</strong> File → Export → All Items → CSV format</li>
+        <li><strong>Chrome:</strong> Settings → Passwords → ⋮ → Export passwords → CSV</li>
+        <li><strong>Firefox:</strong> Settings → Passwords → ⋮ → Export Logins → CSV</li>
+    </ul>
+
     <h2>How the Migration Wizard Works</h2>
 
     <ol>
@@ -100,16 +109,18 @@
         <li><strong>Open the wizard</strong> in the Keygrain extension or web app.</li>
         <li><strong>Drop in the file.</strong> The wizard parses it locally — nothing is uploaded.</li>
         <li><strong>Review the list.</strong> Duplicates and invalid entries are flagged.</li>
-        <li><strong>Save.</strong> Each site becomes a Keygrain service with a counter of 1.</li>
+        <li><strong>Save.</strong> Each site becomes a Keygrain service with a counter of 1 (the starting version — increment it later if you need to rotate a password).</li>
     </ol>
 
     <p>From here, visit each site and update your password to the Keygrain-derived one. The extension prompts you when it detects a site that still uses your old password.</p>
 
     <h2>What About My Old Passwords?</h2>
 
-    <p>Keygrain derives fresh passwords — it does not reuse your imported ones. Your old passwords continue working on each site until you change them. This means you can run both managers side-by-side for as long as you need. There is no cliff edge.</p>
+    <p>Keygrain derives fresh passwords — it does not reuse your imported ones. Your old passwords continue working on each site until you change them. This means you can run both managers side-by-side for as long as you need. Nothing breaks until you are ready.</p>
 
     <p>As you rotate each site, the extension marks it as migrated. You can see your progress at a glance and pick up where you left off.</p>
+
+    <p><strong>Security note:</strong> After importing, delete your export file. It contains your old passwords in plaintext.</p>
 
     <a href="https://dev.secbytech.com/tools/keygrain" class="cta">Install the extension to get started</a>
 

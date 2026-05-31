@@ -172,8 +172,8 @@
         <tbody>
             <tr>
                 <td><strong>Key strengthening</strong></td>
-                <td>Argon2id — 64 MiB memory, 3 iterations, parallelism 1</td>
-                <td>~1 second per guess on consumer hardware. Resists GPU/ASIC attacks via memory-hardness.</td>
+                <td><a href='https://www.rfc-editor.org/rfc/rfc9106'>Argon2id</a> (RFC 9106) — 64 MiB memory, 3 iterations, parallelism 1</td>
+                <td>~1 second per guess on a single CPU core. Memory-hardness increases cost on GPUs/ASICs, but does not eliminate the advantage of high-bandwidth-memory hardware.</td>
             </tr>
             <tr>
                 <td><strong>Per-user salt</strong></td>
@@ -227,6 +227,9 @@
     <h3><span class="tag tag-risk">Risk</span> Compromised device</h3>
     <p>If malware has access to your device's memory or keyboard input, it can capture your secret as you type. No software can protect against a hostile operating environment. Keygrain assumes your device is trustworthy.</p>
 
+    <h3><span class="tag tag-risk">Risk</span> Visual fingerprint is not a security mechanism</h3>
+    <p>The 4-color fingerprint has only 4,096 possible combinations (8⁴). It catches typos — it does not authenticate you. An attacker who observes your fingerprint pattern can confirm a guessed secret or narrow the search space.</p>
+
     <h3><span class="tag tag-risk">Risk</span> Server replay</h3>
     <p>A malicious sync server could serve stale encrypted payloads, reverting your configuration to an older state. It cannot forge new content (it lacks the encryption key), but it can replay valid old ciphertext. ETag-based locking mitigates unintentional replays.</p>
 
@@ -239,7 +242,7 @@ cd keygrain/python
 pip install -e .
 python -m pytest tests/</code></pre>
 
-    <p>The repository root contains <code>vectors.json</code> with machine-readable test vectors. Every implementation (Python, JavaScript, Kotlin) must produce byte-identical output for the same inputs. The <a href="https://dev.secbytech.com/tools/keygrain/blob/main/SPEC.md">full algorithm specification</a> is public — there is no secret sauce, only well-understood cryptographic primitives composed carefully.</p>
+    <p>The repository root contains <code>vectors.json</code> with machine-readable test vectors. Every implementation (Python, JavaScript, Kotlin) must produce byte-identical output. The <a href="https://dev.secbytech.com/tools/keygrain/blob/main/SPEC.md">full algorithm specification</a> is MIT-licensed — there is no secret sauce, only well-understood cryptographic primitives composed carefully.</p>
 
     <h2>Further Reading</h2>
 
