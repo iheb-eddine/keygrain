@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,6 +13,9 @@ import (
 	"syscall"
 	"time"
 )
+
+//go:embed VERSION
+var version string
 
 func main() {
 	port := os.Getenv("PORT")
@@ -37,7 +41,7 @@ func main() {
 	mux.HandleFunc("/api/stats", rl.Wrap(statsSrv.statsHandler))
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 
-	log.Printf("keygrain server listening on :%s", port)
+	log.Printf("keygrain server v%s listening on :%s", strings.TrimSpace(version), port)
 
 	srv := &http.Server{
 		Addr:              ":" + port,
@@ -71,7 +75,7 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, `{"status":"ok"}`)
+	fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, strings.TrimSpace(version))
 }
 
 type logResponseWriter struct {

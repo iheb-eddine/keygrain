@@ -72,6 +72,11 @@ mkdir -p /var/www/certbot
 # Ensure valid SSL certificate (obtain if missing, renew if near-expiry, no-op if valid)
 echo "Ensuring valid SSL certificate for ${DOMAIN}..."
 
+# Backup existing config before overwriting (safety net for certbot failure)
+if [ -f "${NGINX_CONF}" ]; then
+    cp "${NGINX_CONF}" "${NGINX_CONF}.pre-certbot"
+fi
+
 # Set up HTTP-only nginx for ACME challenge
 cat > "${NGINX_CONF}" <<EOF
 server {
@@ -84,10 +89,19 @@ EOF
 ln -sf "${NGINX_CONF}" /etc/nginx/sites-enabled/keygrain.conf
 nginx -t && systemctl reload nginx
 
-certbot certonly --webroot -w /var/www/certbot \
+if ! certbot certonly --webroot -w /var/www/certbot \
     -d "${DOMAIN}" \
     --email "${CERTBOT_EMAIL}" --agree-tos --no-eff-email --non-interactive \
-    --keep-until-expiring
+    --keep-until-expiring; then
+    echo "ERROR: certbot failed. Restoring previous nginx config."
+    if [ -f "${NGINX_CONF}.pre-certbot" ]; then
+        cp "${NGINX_CONF}.pre-certbot" "${NGINX_CONF}"
+        nginx -t && systemctl reload nginx
+    fi
+    rm -f "${NGINX_CONF}.pre-certbot"
+    exit 1
+fi
+rm -f "${NGINX_CONF}.pre-certbot"
 
 # Write full nginx config (with SSL)
 cat > "${NGINX_CONF}" <<EOF

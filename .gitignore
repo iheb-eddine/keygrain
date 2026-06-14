@@ -17,3 +17,4 @@ release.keystore
 server/keygrain-server
 server/tools/rules-signing.key
 SESSION_HANDOVER.md
+.kiro/

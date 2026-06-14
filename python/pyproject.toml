@@ -1,6 +1,6 @@
 [project]
 name = "keygrain"
-version = "0.1.0"
+version = "0.9.0"
 description = "Deterministic password, SSH key, and wallet derivation from a master secret"
 requires-python = ">=3.10"
 license = "MIT"
@@ -29,8 +29,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://keygrain.com"
-Source = "https://dev.secbytech.com/tools/keygrain"
-Issues = "https://dev.secbytech.com/tools/keygrain/-/issues"
+Source = "https://dev.secbytech.com/opensource/keygrain"
+Issues = "https://dev.secbytech.com/opensource/keygrain/-/issues"
 
 [project.scripts]
 keygrain = "keygrain.cli:main"

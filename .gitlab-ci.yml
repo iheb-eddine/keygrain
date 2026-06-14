@@ -33,6 +33,14 @@ checksum-gate:
   rules:
     - if: $CI_COMMIT_BRANCH
 
+version-check:
+  stage: test
+  image: alpine:3.19
+  script:
+    - sh ci/version-check.sh
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
 test-python:
   stage: test
   image: python:3.11-slim
@@ -126,8 +134,8 @@ build-extension:
     - bash build.sh
   artifacts:
     paths:
-      - extension/dist/keygrain-chrome.zip
-      - extension/dist/keygrain-firefox.zip
+      - extension/dist/keygrain-chrome-*.zip
+      - extension/dist/keygrain-firefox-*.zip
     expire_in: 1 week
   rules:
     - if: $CI_COMMIT_BRANCH
@@ -146,6 +154,7 @@ build-package:
     - cp go.mod ../build/app/
     - cp go.sum ../build/app/ 2>/dev/null || true
     - cp *.go ../build/app/
+    - cp VERSION ../build/app/
     - cp -r deploy ../build/app/
     - cd ../build && tar -czf ../${APP_NAME}.tar.gz app
     - |
@@ -184,8 +193,7 @@ build-mobile:
           printf '%s' "$RELEASE_KEYSTORE" | tr -d '\n\r ' | base64 -d > release.keystore
         fi
       fi
-    - 'sed -i "s/versionName = \"1.0.0\"/versionName = \"1.0.0-${CI_COMMIT_SHORT_SHA}\"/" app/build.gradle.kts'
-    - ./gradlew testReleaseUnitTest --no-daemon --max-workers=1
+    - ./gradlew testReleaseUnitTest --no-daemon --max-workers=1 -PversionSuffix=${CI_COMMIT_SHORT_SHA}
     - |
       ACTUAL_COUNT=$(find app/build/test-results/testReleaseUnitTest -name "*.xml" -exec grep -c "<testcase" {} + | awk -F: '{sum+=$NF} END {print sum}')
       ACTUAL_COUNT=${ACTUAL_COUNT:-0}
@@ -197,7 +205,7 @@ build-mobile:
         exit 1
       fi
       echo "Test count OK: kotlin $ACTUAL_COUNT >= $BASELINE"
-    - ./gradlew assembleRelease --no-daemon --max-workers=1
+    - ./gradlew assembleRelease --no-daemon --max-workers=1 -PversionSuffix=${CI_COMMIT_SHORT_SHA}
     - cp app/build/outputs/apk/release/app-release.apk keygrain.apk || cp app/build/outputs/apk/release/app-release-unsigned.apk keygrain.apk
   artifacts:
     paths:

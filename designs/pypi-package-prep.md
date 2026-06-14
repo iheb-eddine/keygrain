@@ -59,8 +59,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://keygrain.secbytech.com"
-Source = "https://dev.secbytech.com/tools/keygrain"
-Issues = "https://dev.secbytech.com/tools/keygrain/-/issues"
+Source = "https://dev.secbytech.com/opensource/keygrain"
+Issues = "https://dev.secbytech.com/opensource/keygrain/-/issues"
 
 [project.scripts]
 keygrain = "keygrain.cli:main"
@@ -119,8 +119,8 @@ Deterministic password, SSH key, and wallet derivation from a master secret.
 
 ## Documentation
 
-- [Algorithm Specification](https://dev.secbytech.com/tools/keygrain/-/blob/main/SPEC.md)
-- [API Reference](https://dev.secbytech.com/tools/keygrain/-/blob/main/API.md)
+- [Algorithm Specification](https://dev.secbytech.com/opensource/keygrain/-/blob/main/SPEC.md)
+- [API Reference](https://dev.secbytech.com/opensource/keygrain/-/blob/main/API.md)
 
 ## License
 

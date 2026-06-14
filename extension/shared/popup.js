@@ -57,6 +57,7 @@
   const setServerUrl = document.getElementById("set-server-url");
   const settingsCancel = document.getElementById("settings-cancel");
   const settingsSave = document.getElementById("settings-save");
+  const versionDisplay = document.getElementById("version-display");
 
   // Reset DOM refs
   const resetBtn = document.getElementById("reset-btn");
@@ -143,6 +144,25 @@
 
   // === Helpers ===
 
+  const SVG_INFO = "M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.75 12h-1.5V7h1.5v5zm0-6.5h-1.5V4h1.5v1.5z";
+  const SVG_WARNING = "M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z";
+  const SVG_ROTATE = "M13.65 2.35A7.96 7.96 0 0 0 8 0C3.58 0 0 3.58 0 8s3.58 8 8 8a7.99 7.99 0 0 0 7.56-5.34h-2.03A6 6 0 1 1 8 2a5.98 5.98 0 0 1 4.24 1.76L9 7h7V0l-2.35 2.35z";
+  const SVG_CHECK = "M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.35 6.35l-4 4a.5.5 0 0 1-.7 0l-2-2a.5.5 0 1 1 .7-.7L7 9.29l3.65-3.64a.5.5 0 1 1 .7.7z";
+
+  function createSvgIcon(pathD, className) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", className);
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("fill", "currentColor");
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", pathD);
+    svg.appendChild(p);
+    return svg;
+  }
+
   async function loadSettings() {
     const data = await chrome.storage.local.get("settings");
     if (data.settings) Object.assign(settings, data.settings);
@@ -174,11 +194,11 @@
       const div = document.createElement("div");
       div.className = "breach-banner " + b.severity;
       div.setAttribute("tabindex", "0");
-      const icon = b.severity === "info" ? '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.75 12h-1.5V7h1.5v5zm0-6.5h-1.5V4h1.5v1.5z"/></svg>' : '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg>';
       const dateStr = new Date(b.date + "T00:00:00").toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric"});
       const headline = document.createElement("div");
       headline.className = "breach-headline";
-      headline.innerHTML = icon + " " + esc(b.domain) + " was breached (" + dateStr + ")";
+      headline.appendChild(createSvgIcon(b.severity === "info" ? SVG_INFO : SVG_WARNING, "icon"));
+      headline.append(" " + b.domain + " was breached (" + dateStr + ")");
       div.appendChild(headline);
       const desc = document.createElement("div");
       desc.className = "breach-desc";
@@ -214,11 +234,11 @@
           const div = document.createElement("div");
           div.className = "breach-banner " + b.severity;
           div.setAttribute("tabindex", "0");
-          const icon = b.severity === "info" ? '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.75 12h-1.5V7h1.5v5zm0-6.5h-1.5V4h1.5v1.5z"/></svg>' : '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg>';
           const dateStr = new Date(b.date + "T00:00:00").toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric"});
           const headline = document.createElement("div");
           headline.className = "breach-headline";
-          headline.innerHTML = icon + " " + esc(b.domain) + " was breached (" + dateStr + ")";
+          headline.appendChild(createSvgIcon(b.severity === "info" ? SVG_INFO : SVG_WARNING, "icon"));
+          headline.append(" " + b.domain + " was breached (" + dateStr + ")");
           div.appendChild(headline);
           const desc = document.createElement("div");
           desc.className = "breach-desc";
@@ -259,8 +279,8 @@
       if (affectedIndices.size > 0) {
         const btn = document.createElement("button");
         btn.className = "breach-rotate-all";
-        btn.textContent = "";
-        btn.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13.65 2.35A7.96 7.96 0 0 0 8 0C3.58 0 0 3.58 0 8s3.58 8 8 8a7.99 7.99 0 0 0 7.56-5.34h-2.03A6 6 0 1 1 8 2a5.98 5.98 0 0 1 4.24 1.76L9 7h7V0l-2.35 2.35z"/></svg> Rotate all affected (' + affectedIndices.size + ')';
+        btn.appendChild(createSvgIcon(SVG_ROTATE, "icon"));
+        btn.append(" Rotate all affected (" + affectedIndices.size + ")");
         btn.addEventListener("click", async () => {
           if (!confirm("This will generate new passwords for " + affectedIndices.size + " service" + (affectedIndices.size > 1 ? "s" : "") + ". You\u2019ll need to update them on each site.")) return;
           affectedIndices.forEach(i => {
@@ -275,7 +295,8 @@
           breachWarnings.textContent = "";
           const summary = document.createElement("div");
           summary.className = "breach-banner info";
-          summary.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.35 6.35l-4 4a.5.5 0 0 1-.7 0l-2-2a.5.5 0 1 1 .7-.7L7 9.29l3.65-3.64a.5.5 0 1 1 .7.7z"/></svg> Rotated ' + affectedIndices.size + ' password' + (affectedIndices.size > 1 ? 's' : '') + '. Update them on each site.';
+          summary.appendChild(createSvgIcon(SVG_CHECK, "icon"));
+          summary.append(" Rotated " + affectedIndices.size + " password" + (affectedIndices.size > 1 ? "s" : "") + ". Update them on each site.");
           breachWarnings.appendChild(summary);
           renderServiceList();
         });
@@ -430,14 +451,22 @@
         syncIndicator.classList.toggle("hidden", !status.visible);
         syncTimeEl.textContent = status.text;
         syncErrorEl.classList.toggle("hidden", !status.errorHtml);
-        if (status.errorHtml) syncErrorEl.innerHTML = status.errorHtml;
+        if (status.errorText) {
+          syncErrorEl.textContent = "";
+          syncErrorEl.appendChild(createSvgIcon(SVG_WARNING, "icon"));
+          syncErrorEl.append(" " + status.errorText);
+        }
       });
     } else {
       const status = computeSyncStatus(syncInProgress, lastSyncError, lastSyncTime, null);
       syncIndicator.classList.toggle("hidden", !status.visible);
       syncTimeEl.textContent = status.text;
       syncErrorEl.classList.toggle("hidden", !status.errorHtml);
-      if (status.errorHtml) syncErrorEl.innerHTML = status.errorHtml;
+      if (status.errorText) {
+        syncErrorEl.textContent = "";
+        syncErrorEl.appendChild(createSvgIcon(SVG_WARNING, "icon"));
+        syncErrorEl.append(" " + status.errorText);
+      }
     }
   }
 
@@ -658,6 +687,27 @@
         totpRow.appendChild(codeSpan);
         totpRow.appendChild(countdown);
         totpRow.appendChild(copyTotpBtn);
+        if (svc.totp.mode === "derived") {
+          const copySeedBtn = document.createElement("button");
+          copySeedBtn.title = "Copy TOTP seed (base32)";
+          copySeedBtn.className = "totp-copy-seed-btn";
+          copySeedBtn.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 0 0-4 4v3H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-1V5a4 4 0 0 0-4-4zm2 7V5a2 2 0 1 0-4 0v3h4z"/></svg> Copy seed';
+          copySeedBtn.setAttribute("aria-label", "Copy TOTP seed for " + svc.name);
+          copySeedBtn.addEventListener("click", async () => {
+            try {
+              const seed = await deriveTOTPSeed(currentSecret, svc.email, svc.site);
+              const base32 = seedToBase32(seed);
+              seed.fill(0);
+              await navigator.clipboard.writeText(base32);
+              if (clearTimer) clearTimeout(clearTimer);
+              clearTimer = setTimeout(async () => {
+                try { await navigator.clipboard.writeText(""); } catch (_) {}
+              }, 30000);
+              showStatus(statusEl, "TOTP seed copied", statusTimerState);
+            } catch (e) { showStatus(statusEl, "Seed error: " + e.message, statusTimerState); }
+          });
+          totpRow.appendChild(copySeedBtn);
+        }
         row.appendChild(totpRow);
       }
 
@@ -1076,6 +1126,7 @@
     setSymbols.value = settings.defaultSymbols;
     setServerUrl.value = settings.serverUrl;
     settingsState = openDialog(settingsPanel);
+    versionDisplay.textContent = "Keygrain v" + chrome.runtime.getManifest().version;
   });
 
   settingsCancel.addEventListener("click", () => {

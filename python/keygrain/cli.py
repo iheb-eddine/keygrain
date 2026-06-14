@@ -6,6 +6,13 @@ import subprocess
 import sys
 import time
 
+from importlib.metadata import version as pkg_version, PackageNotFoundError
+
+try:
+    __version__ = pkg_version("keygrain")
+except PackageNotFoundError:
+    __version__ = "dev"
+
 from .derive import derive_password, normalize_site, DEFAULT_SYMBOLS
 from .ssh import derive_ssh_keypair, format_openssh_private_key, format_authorized_keys
 from .wallet import (
@@ -210,6 +217,7 @@ def main():
 
     if first_positional in subcommands:
         parser = argparse.ArgumentParser(prog="keygrain", description="Deterministic password, SSH key, and wallet derivation")
+        parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
         parser.add_argument("--secret-env", default="KEYGRAIN_SECRET", help="Env var holding the master secret")
         subparsers = parser.add_subparsers(dest="command")
 
@@ -253,6 +261,7 @@ def main():
         args = parser.parse_args()
     else:
         parser = argparse.ArgumentParser(prog="keygrain", description="Derive a deterministic password")
+        parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
         _build_password_parser(parser)
         args = parser.parse_args()
         args.command = "password"

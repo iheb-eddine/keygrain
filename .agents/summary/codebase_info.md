@@ -7,7 +7,7 @@
 - **Author:** Iheb Eddine Badrani
 - **License:** MIT
 - **Homepage:** https://keygrain.com
-- **Repository:** https://dev.secbytech.com/tools/keygrain
+- **Repository:** https://dev.secbytech.com/opensource/keygrain
 
 ## Languages and Platforms
 

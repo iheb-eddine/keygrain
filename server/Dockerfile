@@ -2,6 +2,7 @@ FROM golang:1.22-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 COPY *.go ./
+COPY VERSION ./
 RUN CGO_ENABLED=0 go build -o keygrain-server .
 
 FROM alpine:3.21

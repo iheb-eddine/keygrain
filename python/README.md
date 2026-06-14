@@ -41,8 +41,8 @@ password = derive_password(
 
 ## Documentation
 
-- [Algorithm Specification](https://dev.secbytech.com/tools/keygrain/-/blob/main/SPEC.md)
-- [API Reference](https://dev.secbytech.com/tools/keygrain/-/blob/main/API.md)
+- [Algorithm Specification](https://dev.secbytech.com/opensource/keygrain/-/blob/main/SPEC.md)
+- [API Reference](https://dev.secbytech.com/opensource/keygrain/-/blob/main/API.md)
 
 ## License
 

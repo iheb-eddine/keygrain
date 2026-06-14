@@ -8,7 +8,7 @@ let _strengthenCache = null;
 let _strengthenQueue = null;
 
 async function strengthenSecret(secret, email) {
-  const emailLower = email.toLowerCase();
+  const emailLower = (email || "").toLowerCase();
   if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
     return new Uint8Array(_strengthenCache.result);
   }

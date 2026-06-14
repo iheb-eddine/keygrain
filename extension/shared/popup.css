@@ -291,3 +291,6 @@ button { cursor: pointer; }
 .conflict-banner { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning-text); border-radius: var(--radius-lg); margin-bottom: 6px; font-size: 0.82rem; }
 .conflict-banner .conflict-text { flex: 1; font-weight: 600; }
 .conflict-banner .conflict-dismiss { background: none; border: none; color: var(--warning-text); font-size: 1.1rem; cursor: pointer; padding: 0 4px; }
+
+/* Version info */
+.version-info { font-size: 0.7rem; color: var(--text-secondary); text-align: center; margin: 12px 0 0; }

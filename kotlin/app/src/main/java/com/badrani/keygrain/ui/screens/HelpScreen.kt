@@ -16,7 +16,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.badrani.keygrain.BuildConfig
 
 private data class FaqItem(val title: String, val content: String)
 
@@ -81,6 +83,15 @@ fun HelpScreen(onBack: () -> Unit) {
         ) {
             items(faqItems) { item ->
                 FaqCard(item)
+            }
+            item {
+                Text(
+                    text = "Keygrain v${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
