@@ -59,7 +59,7 @@ Keygrain derives unique, strong passwords from your master secret and site infor
 ### Python CLI
 
 ```bash
-pip install git+ssh://git@dev.secbytech.com/tools/keygrain.git#subdirectory=python
+pip install git+ssh://git@dev.secbytech.com/opensource/keygrain.git#subdirectory=python
 
 keygrain me@example.com --site github.com
 ```

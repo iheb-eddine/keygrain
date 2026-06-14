@@ -4,7 +4,7 @@
 
 ```bash
 # From the Git repository (SSH)
-pip install "git+ssh://git@dev.secbytech.com/tools/keygrain.git#subdirectory=python"
+pip install "git+ssh://git@dev.secbytech.com/opensource/keygrain.git#subdirectory=python"
 
 # Local development
 pip install -e python/

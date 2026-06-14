@@ -3,6 +3,16 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val versionFile = rootProject.projectDir.resolve("../VERSION")
+val versionString = versionFile.readText().trim()
+val versionParts = versionString.split(".")
+require(versionParts.size == 3) { "VERSION file must be major.minor.patch, got: $versionString" }
+require(versionParts[1].toInt() < 100 && versionParts[2].toInt() < 100) {
+    "MINOR and PATCH must be < 100 for versionCode formula (got $versionString)"
+}
+val computedVersionCode = versionParts[0].toInt() * 10000 + versionParts[1].toInt() * 100 + versionParts[2].toInt()
+val suffix = findProperty("versionSuffix")?.toString()?.let { "-$it" } ?: ""
+
 android {
     namespace = "com.badrani.keygrain"
     compileSdk = 34
@@ -11,8 +21,8 @@ android {
         applicationId = "com.badrani.keygrain"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = computedVersionCode
+        versionName = versionString + suffix
     }
 
     signingConfigs {
@@ -45,6 +55,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
