@@ -31,7 +31,7 @@ function computeSyncStatus(syncInProgress, lastSyncError, lastSyncTime, retrySta
     } else {
       msg = errObj.message || "Sync failed";
     }
-    return {visible: true, text: "", errorHtml: '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> ' + esc(msg)};
+    return {visible: true, text: "", errorHtml: '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> ' + esc(msg), errorText: msg};
   }
   if (lastSyncTime) return {visible: true, text: "Last synced: " + formatRelativeTime(lastSyncTime), errorHtml: null};
   return {visible: false, text: "", errorHtml: null};

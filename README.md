@@ -51,7 +51,7 @@ Keygrain derives unique, strong passwords from your master secret and site infor
 
 ### Browser Extension
 
-1. Download from the [Chrome Web Store](#) or [Firefox Add-ons](#), or load unpacked from `extension/dist/chrome/`
+1. Download from the [Chrome Web Store](https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha) or [Firefox Add-ons](https://addons.mozilla.org/addon/keygrain/), or load unpacked from `extension/dist/chrome/`
 2. Click the Keygrain icon → enter your master secret and email
 3. Add a site → your password is derived instantly
 4. Click **Fill** or press `Ctrl+Shift+K` to autofill the active page
@@ -93,7 +93,7 @@ Full specification: [SPEC.md](SPEC.md)
 
 | Platform | Description | Access |
 |----------|-------------|--------|
-| Browser extension | Chrome (MV3) + Firefox (MV2) | [Extension store](#) or build from `extension/` |
+| Browser extension | Chrome (MV3) + Firefox (MV2) | [Chrome Web Store](https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha) / [Firefox Add-ons](https://addons.mozilla.org/addon/keygrain/) or build from `extension/` |
 | Android app | Kotlin + Jetpack Compose | [APK download](https://keygrain.com) |
 | Web generator | Client-side PWA | [keygrain.com/generate](https://keygrain.com/generate/) |
 | Python library + CLI | Library and command-line tool | `pip install` from repo |
