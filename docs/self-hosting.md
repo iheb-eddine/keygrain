@@ -10,7 +10,7 @@
 
 ```bash
 # 1. Clone and enter the server directory
-git clone git@dev.secbytech.com:tools/keygrain.git
+git clone https://github.com/iheb-eddine/keygrain.git
 cd keygrain/server
 
 # 2. Configure

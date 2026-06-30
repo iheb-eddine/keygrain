@@ -37,7 +37,7 @@ SECURITY:
 • Master secret never leaves your browser
 • Sync data encrypted locally before transmission — server cannot decrypt
 • No analytics, no tracking, no cookies
-• Open source: https://dev.secbytech.com/opensource/keygrain
+• Open source: https://github.com/iheb-eddine/keygrain
 
 ## Category
 

@@ -29,8 +29,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://keygrain.com"
-Source = "https://dev.secbytech.com/opensource/keygrain"
-Issues = "https://dev.secbytech.com/opensource/keygrain/-/issues"
+Source = "https://github.com/iheb-eddine/keygrain"
+Issues = "https://github.com/iheb-eddine/keygrain/issues"
 
 [project.scripts]
 keygrain = "keygrain.cli:main"
