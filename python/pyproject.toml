@@ -1,6 +1,6 @@
 [project]
 name = "keygrain"
-version = "0.9.1"
+version = "0.10.0"
 description = "Deterministic password, SSH key, and wallet derivation from a master secret"
 requires-python = ">=3.10"
 license = "MIT"
