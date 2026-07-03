@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.badrani.keygrain.BuildConfig
@@ -64,6 +65,7 @@ private val faqItems = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HelpScreen(onBack: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
     Scaffold(
         topBar = {
             TopAppBar(
@@ -90,6 +92,16 @@ fun HelpScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = "Open source · MIT Licensed",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .clickable { uriHandler.openUri("https://github.com/iheb-eddine/keygrain") },
                     textAlign = TextAlign.Center
                 )
             }
