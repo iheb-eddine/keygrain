@@ -8,6 +8,15 @@
   Deterministic password derivation. One secret, all your passwords — no vault needed.
 </p>
 
+<p align="center">
+  <a href="https://github.com/iheb-eddine/keygrain/actions/workflows/tests.yml"><img src="https://github.com/iheb-eddine/keygrain/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/iheb-eddine/keygrain/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha"><img src="https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white" alt="Chrome"></a>
+  <a href="https://addons.mozilla.org/addon/keygrain/"><img src="https://img.shields.io/badge/Firefox-Add--on-FF7139?logo=firefox&logoColor=white" alt="Firefox"></a>
+  <a href="https://keygrain.com"><img src="https://img.shields.io/badge/Android-APK-3DDC84?logo=android&logoColor=white" alt="Android"></a>
+  <a href="https://pypi.org/project/keygrain/"><img src="https://img.shields.io/badge/Python-CLI-3776AB?logo=python&logoColor=white" alt="Python"></a>
+</p>
+
 ---
 
 ## What is Keygrain?
