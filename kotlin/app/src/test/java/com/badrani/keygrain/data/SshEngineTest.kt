@@ -140,4 +140,165 @@ class SshEngineTest {
     fun testRejectCounterLessThanOne() {
         SshEngine.deriveSshKeypair("secret".toByteArray(), "a@b.com", "github", 0)
     }
+
+    // --- Private Key PEM Format ---
+
+    @Test
+    fun testFormatOpensshPrivateKeyMatchesVector() {
+        val json = loadVectors()
+        val vectors = json.getJSONObject("derivation_vectors").getJSONArray("vectors")
+        val v = vectors.getJSONObject(0) // Vector 1 has private_key_pem
+        val seed = hexToBytes(v.getString("seed_hex"))
+        val publicKey = hexToBytes(v.getString("public_key_hex"))
+        val comment = "${v.getString("email").lowercase()}:${v.getString("key_name").lowercase()}"
+        val expectedPem = v.getString("private_key_pem")
+
+        // Cannot call SshEngine.formatOpensshPrivateKey directly (uses android.util.Base64)
+        // Instead, replicate the algorithm with java.util.Base64 to verify correctness
+        val checkBytes = Keygrain.hmacSha256(seed, "openssh-check".toByteArray(Charsets.UTF_8))
+        val checkInt = ((checkBytes[0].toInt() and 0xFF) shl 24) or
+                ((checkBytes[1].toInt() and 0xFF) shl 16) or
+                ((checkBytes[2].toInt() and 0xFF) shl 8) or
+                (checkBytes[3].toInt() and 0xFF)
+
+        val keyType = "ssh-ed25519".toByteArray(Charsets.UTF_8)
+
+        // Public key blob
+        val pubBlob = ByteArray(4 + keyType.size + 4 + publicKey.size)
+        var po = 0
+        putUint32Test(pubBlob, po, keyType.size); po += 4
+        keyType.copyInto(pubBlob, po); po += keyType.size
+        putUint32Test(pubBlob, po, publicKey.size); po += 4
+        publicKey.copyInto(pubBlob, po)
+
+        // Private section
+        val commentBytes = comment.toByteArray(Charsets.UTF_8)
+        val privLen = 4 + 4 + (4 + keyType.size) + (4 + publicKey.size) + (4 + 64) + (4 + commentBytes.size)
+        val padLen = (8 - privLen % 8) % 8
+        val privSection = ByteArray(privLen + padLen)
+        var ps = 0
+        putUint32Test(privSection, ps, checkInt); ps += 4
+        putUint32Test(privSection, ps, checkInt); ps += 4
+        putUint32Test(privSection, ps, keyType.size); ps += 4
+        keyType.copyInto(privSection, ps); ps += keyType.size
+        putUint32Test(privSection, ps, publicKey.size); ps += 4
+        publicKey.copyInto(privSection, ps); ps += publicKey.size
+        putUint32Test(privSection, ps, 64); ps += 4
+        seed.copyInto(privSection, ps); ps += seed.size
+        publicKey.copyInto(privSection, ps); ps += publicKey.size
+        putUint32Test(privSection, ps, commentBytes.size); ps += 4
+        commentBytes.copyInto(privSection, ps); ps += commentBytes.size
+        for (i in 0 until padLen) privSection[ps + i] = (i + 1).toByte()
+
+        // Outer structure
+        val authMagic = "openssh-key-v1".toByteArray(Charsets.UTF_8)
+        val cipherName = "none".toByteArray(Charsets.UTF_8)
+        val kdfName = "none".toByteArray(Charsets.UTF_8)
+        val outerLen = authMagic.size + 1 + (4 + cipherName.size) + (4 + kdfName.size) + (4 + 0) + 4 + (4 + pubBlob.size) + (4 + privSection.size)
+        val outer = ByteArray(outerLen)
+        var oo = 0
+        authMagic.copyInto(outer, oo); oo += authMagic.size
+        outer[oo] = 0; oo += 1
+        putUint32Test(outer, oo, cipherName.size); oo += 4
+        cipherName.copyInto(outer, oo); oo += cipherName.size
+        putUint32Test(outer, oo, kdfName.size); oo += 4
+        kdfName.copyInto(outer, oo); oo += kdfName.size
+        putUint32Test(outer, oo, 0); oo += 4
+        putUint32Test(outer, oo, 1); oo += 4
+        putUint32Test(outer, oo, pubBlob.size); oo += 4
+        pubBlob.copyInto(outer, oo); oo += pubBlob.size
+        putUint32Test(outer, oo, privSection.size); oo += 4
+        privSection.copyInto(outer, oo)
+
+        val b64 = Base64.getEncoder().encodeToString(outer)
+        val lines = b64.chunked(70).joinToString("\n")
+        val pem = "-----BEGIN OPENSSH PRIVATE KEY-----\n$lines\n-----END OPENSSH PRIVATE KEY-----\n"
+
+        assertEquals("PEM mismatch against vector", expectedPem, pem)
+    }
+
+    @Test
+    fun testFormatOpensshPrivateKeyCheckInt() {
+        val seed = hexToBytes("15d7cd5c74358c1cd7f7f93ef45d074afcf6fd9e008a94de9e8608a330d96dc1")
+        val checkBytes = Keygrain.hmacSha256(seed, "openssh-check".toByteArray(Charsets.UTF_8))
+        val checkInt = ((checkBytes[0].toInt() and 0xFF) shl 24) or
+                ((checkBytes[1].toInt() and 0xFF) shl 16) or
+                ((checkBytes[2].toInt() and 0xFF) shl 8) or
+                (checkBytes[3].toInt() and 0xFF)
+        assertEquals("check_int must match expected value", 0x4A134E13, checkInt)
+    }
+
+    @Test
+    fun testFormatOpensshPrivateKeyPemStructure() {
+        val seed = hexToBytes("15d7cd5c74358c1cd7f7f93ef45d074afcf6fd9e008a94de9e8608a330d96dc1")
+        val publicKey = hexToBytes("f2aadbd608703b65bb87d3d1c746c48dfed9095a2b7ae4c8ada057afa6bf9032")
+        val comment = "test@gmail.com:github"
+
+        // Build PEM using test helper (same algo as testFormatOpensshPrivateKeyMatchesVector)
+        val checkBytes = Keygrain.hmacSha256(seed, "openssh-check".toByteArray(Charsets.UTF_8))
+        val checkInt = ((checkBytes[0].toInt() and 0xFF) shl 24) or
+                ((checkBytes[1].toInt() and 0xFF) shl 16) or
+                ((checkBytes[2].toInt() and 0xFF) shl 8) or
+                (checkBytes[3].toInt() and 0xFF)
+        val keyType = "ssh-ed25519".toByteArray(Charsets.UTF_8)
+        val pubBlob = ByteArray(4 + keyType.size + 4 + publicKey.size)
+        var po = 0
+        putUint32Test(pubBlob, po, keyType.size); po += 4
+        keyType.copyInto(pubBlob, po); po += keyType.size
+        putUint32Test(pubBlob, po, publicKey.size); po += 4
+        publicKey.copyInto(pubBlob, po)
+        val commentBytes = comment.toByteArray(Charsets.UTF_8)
+        val privLen = 4 + 4 + (4 + keyType.size) + (4 + publicKey.size) + (4 + 64) + (4 + commentBytes.size)
+        val padLen = (8 - privLen % 8) % 8
+        val privSection = ByteArray(privLen + padLen)
+        var ps = 0
+        putUint32Test(privSection, ps, checkInt); ps += 4
+        putUint32Test(privSection, ps, checkInt); ps += 4
+        putUint32Test(privSection, ps, keyType.size); ps += 4
+        keyType.copyInto(privSection, ps); ps += keyType.size
+        putUint32Test(privSection, ps, publicKey.size); ps += 4
+        publicKey.copyInto(privSection, ps); ps += publicKey.size
+        putUint32Test(privSection, ps, 64); ps += 4
+        seed.copyInto(privSection, ps); ps += seed.size
+        publicKey.copyInto(privSection, ps); ps += publicKey.size
+        putUint32Test(privSection, ps, commentBytes.size); ps += 4
+        commentBytes.copyInto(privSection, ps); ps += commentBytes.size
+        for (i in 0 until padLen) privSection[ps + i] = (i + 1).toByte()
+        val authMagic = "openssh-key-v1".toByteArray(Charsets.UTF_8)
+        val cipherName = "none".toByteArray(Charsets.UTF_8)
+        val kdfName = "none".toByteArray(Charsets.UTF_8)
+        val outerLen = authMagic.size + 1 + (4 + cipherName.size) + (4 + kdfName.size) + (4 + 0) + 4 + (4 + pubBlob.size) + (4 + privSection.size)
+        val outer = ByteArray(outerLen)
+        var oo = 0
+        authMagic.copyInto(outer, oo); oo += authMagic.size
+        outer[oo] = 0; oo += 1
+        putUint32Test(outer, oo, cipherName.size); oo += 4
+        cipherName.copyInto(outer, oo); oo += cipherName.size
+        putUint32Test(outer, oo, kdfName.size); oo += 4
+        kdfName.copyInto(outer, oo); oo += kdfName.size
+        putUint32Test(outer, oo, 0); oo += 4
+        putUint32Test(outer, oo, 1); oo += 4
+        putUint32Test(outer, oo, pubBlob.size); oo += 4
+        pubBlob.copyInto(outer, oo); oo += pubBlob.size
+        putUint32Test(outer, oo, privSection.size); oo += 4
+        privSection.copyInto(outer, oo)
+        val b64 = Base64.getEncoder().encodeToString(outer)
+        val lines = b64.chunked(70).joinToString("\n")
+        val pem = "-----BEGIN OPENSSH PRIVATE KEY-----\n$lines\n-----END OPENSSH PRIVATE KEY-----\n"
+
+        // Verify structure
+        assert(pem.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----\n"))
+        assert(pem.endsWith("\n-----END OPENSSH PRIVATE KEY-----\n"))
+        val bodyLines = pem.split("\n").drop(1).dropLast(2)
+        for (line in bodyLines) {
+            assert(line.length <= 70) { "Line exceeds 70 chars: ${line.length}" }
+        }
+    }
+
+    private fun putUint32Test(buf: ByteArray, offset: Int, value: Int) {
+        buf[offset] = (value shr 24 and 0xFF).toByte()
+        buf[offset + 1] = (value shr 16 and 0xFF).toByte()
+        buf[offset + 2] = (value shr 8 and 0xFF).toByte()
+        buf[offset + 3] = (value and 0xFF).toByte()
+    }
 }

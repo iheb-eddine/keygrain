@@ -892,6 +892,9 @@ private fun ServiceCard(
     var passwordCopied by remember { mutableStateOf(false) }
     var totpCopied by remember { mutableStateOf(false) }
     var sshCopied by remember { mutableStateOf(false) }
+    var sshPrivCopied by remember { mutableStateOf(false) }
+    var sshPrivConfirmed by remember { mutableStateOf(false) }
+    var showSshPrivDialog by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
 
     LaunchedEffect(passwordCopied) {
@@ -902,6 +905,9 @@ private fun ServiceCard(
     }
     LaunchedEffect(sshCopied) {
         if (sshCopied) { delay(1500); sshCopied = false }
+    }
+    LaunchedEffect(sshPrivCopied) {
+        if (sshPrivCopied) { delay(1500); sshPrivCopied = false }
     }
 
     fun copyAndClear(label: String, text: String) {
@@ -1088,6 +1094,58 @@ private fun ServiceCard(
                             Icon(
                                 if (sshCopied) Icons.Default.Check else Icons.Default.ContentCopy,
                                 contentDescription = if (sshCopied) "Copied" else "Copy SSH public key"
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(onClick = {
+                            if (sshPrivCopied) return@IconButton
+                            if (!sshPrivConfirmed) { showSshPrivDialog = true; return@IconButton }
+                            try {
+                                val sshCounter = service.ssh.optInt("counter", 1)
+                                val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
+                                try {
+                                    val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
+                                    val pem = SshEngine.formatOpensshPrivateKey(kp.seed, kp.publicKey, comment)
+                                    val clip = ClipData.newPlainText("ssh-privkey", pem)
+                                    if (android.os.Build.VERSION.SDK_INT >= 33) {
+                                        clip.description.extras = android.os.PersistableBundle().apply {
+                                            putBoolean("android.content.extra.IS_SENSITIVE", true)
+                                        }
+                                    }
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(clip)
+                                    if (android.os.Build.VERSION.SDK_INT >= 28) {
+                                        scope.launch { delay(30_000); clipboard.clearPrimaryClip() }
+                                    }
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    sshPrivCopied = true
+                                    android.widget.Toast.makeText(context, "Private key copied", android.widget.Toast.LENGTH_SHORT).show()
+                                } finally {
+                                    kp.seed.fill(0)
+                                }
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Icon(
+                                if (sshPrivCopied) Icons.Default.Check else Icons.Default.VpnKey,
+                                contentDescription = if (sshPrivCopied) "Copied" else "Copy SSH private key"
+                            )
+                        }
+                        if (showSshPrivDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showSshPrivDialog = false },
+                                title = { Text("Copy Private Key") },
+                                text = { Text("The private key will be copied to clipboard and cleared after 30 seconds. Continue?") },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        showSshPrivDialog = false
+                                        sshPrivConfirmed = true
+                                    }) { Text("Copy") }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showSshPrivDialog = false }) { Text("Cancel") }
+                                }
                             )
                         }
                     }

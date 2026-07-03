@@ -205,6 +205,55 @@ for (const v of sshVectors.derivation_vectors.vectors) {
   });
 }
 
+// formatOpensshPrivateKey tests
+await test('formatOpensshPrivateKey: matches vector PEM exactly', async () => {
+  const v = sshVectors.derivation_vectors.vectors[0];
+  const seed = hexToBytes(v.seed_hex);
+  const pubKey = hexToBytes(v.public_key_hex);
+  const comment = v.email.toLowerCase() + ':' + v.key_name.toLowerCase();
+  ctx._seed = seed; ctx._pubKey = pubKey; ctx._comment = comment;
+  const result = await runInContext(`formatOpensshPrivateKey(_seed, _pubKey, _comment)`, ctx);
+  assert.equal(result, v.private_key_pem);
+});
+
+await test('formatOpensshPrivateKey: PEM header and footer', async () => {
+  const v = sshVectors.derivation_vectors.vectors[0];
+  const seed = hexToBytes(v.seed_hex);
+  const pubKey = hexToBytes(v.public_key_hex);
+  ctx._seed = seed; ctx._pubKey = pubKey; ctx._comment = 'test';
+  const result = await runInContext(`formatOpensshPrivateKey(_seed, _pubKey, _comment)`, ctx);
+  assert.ok(result.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----\n'));
+  assert.ok(result.endsWith('\n-----END OPENSSH PRIVATE KEY-----\n'));
+});
+
+await test('formatOpensshPrivateKey: 70-char line limit', async () => {
+  const v = sshVectors.derivation_vectors.vectors[0];
+  const seed = hexToBytes(v.seed_hex);
+  const pubKey = hexToBytes(v.public_key_hex);
+  ctx._seed = seed; ctx._pubKey = pubKey; ctx._comment = 'test';
+  const result = await runInContext(`formatOpensshPrivateKey(_seed, _pubKey, _comment)`, ctx);
+  const lines = result.split('\n').slice(1, -2); // skip header and footer
+  for (const line of lines) assert.ok(line.length <= 70, `Line exceeds 70 chars: ${line.length}`);
+});
+
+await test('formatOpensshPrivateKey: deterministic (same inputs = same output)', async () => {
+  const v = sshVectors.derivation_vectors.vectors[0];
+  const seed = hexToBytes(v.seed_hex);
+  const pubKey = hexToBytes(v.public_key_hex);
+  const comment = v.email.toLowerCase() + ':' + v.key_name.toLowerCase();
+  ctx._seed = seed; ctx._pubKey = pubKey; ctx._comment = comment;
+  const r1 = await runInContext(`formatOpensshPrivateKey(_seed, _pubKey, _comment)`, ctx);
+  const r2 = await runInContext(`formatOpensshPrivateKey(_seed, _pubKey, _comment)`, ctx);
+  assert.equal(r1, r2);
+});
+
+await test('formatOpensshPrivateKey: rejects control chars in comment', async () => {
+  const seed = hexToBytes(sshVectors.derivation_vectors.vectors[0].seed_hex);
+  const pubKey = hexToBytes(sshVectors.derivation_vectors.vectors[0].public_key_hex);
+  ctx._seed = seed; ctx._pubKey = pubKey;
+  await assert.rejects(() => runInContext(`formatOpensshPrivateKey(_seed, _pubKey, "bad\\x01comment")`, ctx), /control characters/);
+});
+
 // ============================================================
 // WALLET TESTS
 // ============================================================

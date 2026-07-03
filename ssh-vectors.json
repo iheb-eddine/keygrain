@@ -14,6 +14,7 @@
         "seed_hex": "15d7cd5c74358c1cd7f7f93ef45d074afcf6fd9e008a94de9e8608a330d96dc1",
         "public_key_hex": "f2aadbd608703b65bb87d3d1c746c48dfed9095a2b7ae4c8ada057afa6bf9032",
         "authorized_keys": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPKq29YIcDtlu4fT0cdGxI3+2QlaK3rkyK2gV6+mv5Ay test@gmail.com:github",
+        "private_key_pem": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACDyqtvWCHA7ZbuH09HHRsSN/tkJWit65MitoFevpr+QMgAAAJhKE04TShNO\nEwAAAAtzc2gtZWQyNTUxOQAAACDyqtvWCHA7ZbuH09HHRsSN/tkJWit65MitoFevpr+QMg\nAAAEAV181cdDWMHNf3+T70XQdK/Pb9ngCKlN6ehgijMNltwfKq29YIcDtlu4fT0cdGxI3+\n2QlaK3rkyK2gV6+mv5AyAAAAFXRlc3RAZ21haWwuY29tOmdpdGh1Yg==\n-----END OPENSSH PRIVATE KEY-----\n",
         "_note": "Base case"
       },
       {

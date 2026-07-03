@@ -102,6 +102,7 @@
   let lastSyncTime = null;
   let lastSyncError = null;
   let syncIndicatorInterval = null;
+  let sessionPrivKeyConfirmed = false;
 
   const autolockWarning = document.getElementById("autolock-warning");
   const autolockExtend = document.getElementById("autolock-extend");
@@ -141,6 +142,34 @@
   });
 
 
+
+  // === Private key confirmation dialog ===
+  function showPrivKeyConfirmDialog() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "privkey-confirm-overlay";
+      const dialog = document.createElement("div");
+      dialog.className = "privkey-confirm-dialog";
+      dialog.setAttribute("role", "alertdialog");
+      dialog.setAttribute("aria-labelledby", "privkey-confirm-title");
+      dialog.setAttribute("aria-describedby", "privkey-confirm-desc");
+      dialog.innerHTML = '<h3 id="privkey-confirm-title">Export private key?</h3>' +
+        '<p id="privkey-confirm-desc">Private keys are sensitive. The key will be copied to your clipboard and auto-cleared after 30 seconds.</p>' +
+        '<div class="privkey-confirm-actions">' +
+        '<button class="privkey-confirm-cancel">Cancel</button>' +
+        '<button class="privkey-confirm-ok">Copy to clipboard</button></div>';
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+      const cancel = dialog.querySelector(".privkey-confirm-cancel");
+      const ok = dialog.querySelector(".privkey-confirm-ok");
+      function cleanup(result) { overlay.remove(); resolve(result); }
+      cancel.addEventListener("click", () => cleanup(false));
+      ok.addEventListener("click", () => cleanup(true));
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) cleanup(false); });
+      dialog.addEventListener("keydown", (e) => { if (e.key === "Escape") cleanup(false); });
+      ok.focus();
+    });
+  }
 
   // === Helpers ===
 
@@ -739,6 +768,36 @@
         sshRow.appendChild(keyLabel);
         sshRow.appendChild(copySshBtn);
         row.appendChild(sshRow);
+
+        // Private key export button (separate row)
+        const sshPrivRow = document.createElement("div");
+        sshPrivRow.className = "ssh-privkey-row";
+        const exportBtn = document.createElement("button");
+        exportBtn.className = "ssh-privkey-btn";
+        exportBtn.title = "Export SSH private key to clipboard";
+        exportBtn.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a4 4 0 0 0-4 4c0 1.2.5 2.3 1.4 3l-.4.5V10a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V8.5l-.4-.5A4 4 0 0 0 8 1zm0 2a2 2 0 0 1 2 2 2 2 0 0 1-.6 1.4l-.4.4V9H7V6.8l-.4-.4A2 2 0 0 1 6 5a2 2 0 0 1 2-2z"/><rect x="6" y="12" width="4" height="1" rx=".5"/><rect x="6.5" y="14" width="3" height="1" rx=".5"/></svg> Export private key';
+        exportBtn.setAttribute("aria-label", "Export SSH private key for " + svc.name);
+        exportBtn.addEventListener("click", async () => {
+          try {
+            if (!sessionPrivKeyConfirmed) {
+              const confirmed = await showPrivKeyConfirmDialog();
+              if (!confirmed) return;
+              sessionPrivKeyConfirmed = true;
+            }
+            const kp = await deriveSshKeypair(currentSecret, svc.email, {keyName: svc.ssh.key_name, counter: svc.ssh.counter || 1});
+            const comment = svc.email.toLowerCase() + ":" + svc.ssh.key_name.toLowerCase();
+            const pem = await formatOpensshPrivateKey(kp.seed, kp.publicKey, comment);
+            kp.seed.fill(0);
+            await navigator.clipboard.writeText(pem);
+            if (clearTimer) clearTimeout(clearTimer);
+            clearTimer = setTimeout(async () => {
+              try { await navigator.clipboard.writeText(""); } catch (_) {}
+            }, 30000);
+            showStatus(statusEl, "Private key copied (clears in 30s)", statusTimerState);
+          } catch (e) { showStatus(statusEl, "SSH error: " + e.message, statusTimerState); }
+        });
+        sshPrivRow.appendChild(exportBtn);
+        row.appendChild(sshPrivRow);
       }
 
       serviceList.appendChild(row);
