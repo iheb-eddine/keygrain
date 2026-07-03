@@ -275,6 +275,16 @@ button { cursor: pointer; }
 .ssh-keyname { font-family: monospace; font-size: 0.85rem; color: var(--text-secondary); flex: 1; }
 .ssh-copy-btn { background: none; border: none; cursor: pointer; padding: 4px 8px; color: var(--text-secondary); border-radius: var(--radius-sm); font-size: 0.8rem; display: flex; align-items: center; gap: 4px; }
 .ssh-copy-btn:hover { color: var(--accent); background: var(--bg-secondary); }
+.ssh-privkey-row { display: flex; padding: var(--space-xs) var(--space-sm); margin-top: 2px; flex-basis: 100%; }
+.ssh-privkey-btn { background: none; border: 1px solid var(--warning-border); cursor: pointer; padding: 4px 8px; color: var(--warning-text); border-radius: var(--radius-sm); font-size: 0.8rem; display: flex; align-items: center; gap: 4px; }
+.ssh-privkey-btn:hover { background: var(--warning-bg); border-color: var(--warning-text); }
+.privkey-confirm-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.privkey-confirm-dialog { background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-lg); max-width: 280px; box-shadow: var(--shadow-lg); }
+.privkey-confirm-dialog h3 { margin: 0 0 var(--space-sm); font-size: 0.95rem; color: var(--text); }
+.privkey-confirm-dialog p { margin: 0 0 var(--space-md); font-size: 0.85rem; color: var(--text-secondary); line-height: 1.4; }
+.privkey-confirm-actions { display: flex; gap: var(--space-sm); justify-content: flex-end; }
+.privkey-confirm-cancel { background: none; border: 1px solid var(--border); padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.85rem; color: var(--text-secondary); }
+.privkey-confirm-ok { background: var(--warning-bg); border: 1px solid var(--warning-border); padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.85rem; color: var(--warning-text); font-weight: 600; }
 
 /* SSH dialog section */
 #add-ssh-section { margin-top: var(--space-sm); }
