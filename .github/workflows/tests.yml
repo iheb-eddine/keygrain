@@ -38,8 +38,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install -e . && pip install pytest && pytest -q
+      - name: Install and run tests
         working-directory: python
+        run: |
+          pip install -e .
+          pip install pytest
+          pytest -q | tee test-output.txt
+      - name: Check test count baseline
+        working-directory: python
+        run: |
+          ACTUAL_COUNT=$(grep -oP '^\d+(?= passed)' test-output.txt || true)
+          ACTUAL_COUNT=${ACTUAL_COUNT:-0}
+          BASELINE=$(grep '^python=' ../.test-baselines | cut -d= -f2)
+          if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
+            echo "::error::TEST COUNT REGRESSION: python (actual: $ACTUAL_COUNT, baseline: $BASELINE)"
+            exit 1
+          fi
+          echo "Test count OK: python $ACTUAL_COUNT >= $BASELINE"
 
   test-js:
     runs-on: ubuntu-latest
@@ -48,8 +63,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: node test.mjs && node test-popup-modules.mjs
+      - name: Run tests
         working-directory: extension/tests
+        run: node test.mjs | tee test-output.txt
+      - name: Run popup module tests
+        working-directory: extension/tests
+        run: node test-popup-modules.mjs
+      - name: Check test count baseline
+        working-directory: extension/tests
+        run: |
+          ACTUAL_COUNT=$(grep -o '^[0-9]* tests:' test-output.txt | grep -o '^[0-9]*' || true)
+          ACTUAL_COUNT=${ACTUAL_COUNT:-0}
+          BASELINE=$(grep '^js=' ../../.test-baselines | cut -d= -f2)
+          if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
+            echo "::error::TEST COUNT REGRESSION: js (actual: $ACTUAL_COUNT, baseline: $BASELINE)"
+            exit 1
+          fi
+          echo "Test count OK: js $ACTUAL_COUNT >= $BASELINE"
+
+  test-js-slow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run slow strengthen tests
+        working-directory: extension/tests
+        run: node test-strengthen-slow.mjs
 
   test-go:
     runs-on: ubuntu-latest
@@ -61,4 +103,96 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-      - run: go test ./...
+      - name: Run tests
+        run: go test -v ./... 2>&1 | tee test-output.txt
+      - name: Check test count baseline
+        run: |
+          ACTUAL_COUNT=$(grep -c "^--- PASS:" test-output.txt || true)
+          ACTUAL_COUNT=${ACTUAL_COUNT:-0}
+          BASELINE=$(grep '^go=' ../.test-baselines | cut -d= -f2)
+          if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
+            echo "::error::TEST COUNT REGRESSION: go (actual: $ACTUAL_COUNT, baseline: $BASELINE)"
+            exit 1
+          fi
+          echo "Test count OK: go $ACTUAL_COUNT >= $BASELINE"
+
+  test-cross-platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Python package
+        run: pip install ./python
+      - name: Run cross-platform check
+        run: bash ci/cross-platform-check.sh
+
+  build-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build extension
+        working-directory: extension
+        run: bash build.sh
+      - name: Upload Chrome extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: keygrain-chrome
+          path: extension/dist/keygrain-chrome-*.zip
+      - name: Upload Firefox extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: keygrain-firefox
+          path: extension/dist/keygrain-firefox-*.zip
+
+  build-mobile:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /opt/android-sdk
+      GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx2048m"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK
+        run: |
+          mkdir -p $ANDROID_HOME/cmdline-tools
+          wget -q -O /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q /tmp/cmdline-tools.zip -d $ANDROID_HOME/cmdline-tools
+          mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+          rm /tmp/cmdline-tools.zip
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "build-tools;34.0.0" "platforms;android-34"
+      - name: Run unit tests
+        working-directory: kotlin
+        run: |
+          chmod +x gradlew
+          ./gradlew testReleaseUnitTest --no-daemon --max-workers=1
+      - name: Check kotlin test count baseline
+        working-directory: kotlin
+        run: |
+          ACTUAL_COUNT=$(find app/build/test-results/testReleaseUnitTest -name "*.xml" -exec grep -c "<testcase" {} + | awk -F: '{sum+=$NF} END {print sum}')
+          ACTUAL_COUNT=${ACTUAL_COUNT:-0}
+          BASELINE=$(grep '^kotlin=' ../.test-baselines | cut -d= -f2)
+          if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
+            echo "::error::TEST COUNT REGRESSION: kotlin (actual: $ACTUAL_COUNT, baseline: $BASELINE)"
+            exit 1
+          fi
+          echo "Test count OK: kotlin $ACTUAL_COUNT >= $BASELINE"
+      - name: Build release APK
+        working-directory: kotlin
+        run: ./gradlew assembleRelease --no-daemon --max-workers=1
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: keygrain-apk
+          path: |
+            kotlin/app/build/outputs/apk/release/app-release.apk
+            kotlin/app/build/outputs/apk/release/app-release-unsigned.apk
