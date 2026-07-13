@@ -1,12 +1,15 @@
 # Keygrain Developer Guide
 
-How to build, test, deploy, and contribute to Keygrain.
+How to build, test, and contribute to the Keygrain clients.
+
+> The hosted sync service is a separate, closed-source component. Its HTTP
+> interface is fully documented in [API.md](../API.md) so any client can
+> integrate with it. This guide covers the open-source clients only.
 
 ## Prerequisites
 
 | Tool | Version | Used for |
 |------|---------|----------|
-| Go | 1.22+ | Server |
 | Python | 3.10+ | Core library, CLI, tests |
 | JDK | 17 | Android app |
 | Android SDK | Platform 34, Build-tools 34.0.0 | Android app |
@@ -16,7 +19,6 @@ How to build, test, deploy, and contribute to Keygrain.
 
 ```
 python/          Python library + CLI + tests (reference implementation)
-server/          Go sync server (sync API, rate limiting, static hosting)
 kotlin/          Android app (Jetpack Compose, biometric, sync)
 extension/       Browser extension (Chrome + Firefox, vanilla JS)
   shared/        Common extension code
@@ -25,7 +27,6 @@ extension/       Browser extension (Chrome + Firefox, vanilla JS)
   dist/          Build output (zips)
 vectors.json     Cross-platform test vectors (all implementations must match)
 docs/            User guides and design docs
-designs/         Feature design documents
 ```
 
 ## Building Each Platform
@@ -50,20 +51,6 @@ For development, load unpacked:
 - **Chrome:** `chrome://extensions` → Enable Developer Mode → Load unpacked → select `extension/dist/chrome/`
 - **Firefox:** `about:debugging` → This Firefox → Load Temporary Add-on → select `extension/dist/firefox/manifest.json`
 
-### Server
-
-```bash
-cd server
-go build -o keygrain-server .
-```
-
-Run locally:
-
-```bash
-./keygrain-server
-# Serves on :9860, static files from ./static/, data in ./data/
-```
-
 ### Android
 
 ```bash
@@ -72,11 +59,13 @@ cd kotlin
 # Output: app/build/outputs/apk/release/app-release.apk
 ```
 
-Requires Android SDK with `platforms;android-34` and `build-tools;34.0.0` installed. The release keystore is at `kotlin/release.keystore` (password: `keygrain`).
+Requires Android SDK with `platforms;android-34` and `build-tools;34.0.0` installed.
+Release signing uses a keystore supplied at build time (a CI secret in the
+release pipeline); local builds without it produce an unsigned APK.
 
 ## Running Tests
 
-### Python (20 tests — derivation + strengthening)
+### Python (derivation + strengthening)
 
 ```bash
 cd python
@@ -85,71 +74,32 @@ pytest tests/
 
 This is the reference test suite. It validates against `vectors.json`.
 
-### Server (sync + rate limiting)
+### JavaScript (extension)
 
 ```bash
-cd server
-go test ./...
+cd extension/tests
+node test.mjs
+node test-popup-modules.mjs
 ```
 
-### Android / Extension
+### Android / Kotlin
 
-No automated tests currently. Manual testing only.
-
-## Server Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `9860` | HTTP listen port |
-| `KEYGRAIN_DATA_DIR` | `./data` | Directory for sync data storage |
-| `KEYGRAIN_RATE_LIMIT_ID_BURST` | `10` | Per-lookup-ID token bucket capacity |
-| `KEYGRAIN_RATE_LIMIT_ID_RATE` | `2` | Per-lookup-ID refill rate (tokens/min) |
-| `KEYGRAIN_RATE_LIMIT_IP_BURST` | `100` | Per-IP token bucket capacity |
-| `KEYGRAIN_RATE_LIMIT_IP_RATE` | `100` | Per-IP refill rate (tokens/min) |
-| `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER` | *(empty)* | Header for real client IP (set to `X-Real-IP` behind nginx) |
+```bash
+cd kotlin
+./gradlew testReleaseUnitTest
+```
 
 ## Development Workflow
 
-1. Branch from `master`
+1. Branch from `main`
 2. Implement your change
 3. Run tests for affected platforms
-4. Push and open a merge request
+4. Push and open a merge/pull request
 
 For larger features, the project uses a 3-session pair workflow:
-1. **Design session** — produce a design document in `designs/`
+1. **Design session** — produce a design document
 2. **Implementation session** — implement the design, unit by unit
 3. **Code review session** — adversarial review, fix bugs, then merge
-
-## Deployment
-
-### CI/CD (automatic)
-
-Push to `master` triggers the GitLab CI pipeline:
-
-1. **build-package** — compiles Go binary (linux/amd64), packages with static files
-2. **build-mobile** — builds Android APK (runs on master or kotlin/ changes)
-3. **deploy** — SSHs to production, extracts tarball, runs `docker compose build && up -d`
-
-CI variables required:
-- `SSH_PRIVATE_KEY` — private key for SSH access to the server
-- `SERVER_USER` — deploy user (default: `root`)
-- `SERVER_IP` — production server IP
-
-### Manual deployment
-
-```bash
-ssh root@keygrain.com
-cd /opt/keygrain
-docker compose down
-docker compose build
-docker compose up -d
-```
-
-### Docker setup
-
-The server uses a multi-stage Docker build (Go 1.22-alpine → alpine:3.21). Port 9860 is exposed to localhost only; nginx handles TLS termination and reverse proxying.
-
-Data is persisted via a Docker volume (`keygrain_data` → `/app/data`).
 
 ## Adding a New Platform
 
@@ -164,6 +114,8 @@ To implement Keygrain on a new platform:
 2. **Validate against `vectors.json`** at the repo root. Every test vector must produce identical output. This file contains both strengthen vectors and full derivation vectors.
 
 3. **Match the Python reference implementation** in `python/keygrain/derive.py` for any edge cases not covered by vectors.
+
+4. **To add sync**, implement the HTTP interface documented in [API.md](../API.md).
 
 ## Security Considerations for Contributors
 

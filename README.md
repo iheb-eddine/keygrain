@@ -146,7 +146,7 @@ Full specification: [SPEC.md](SPEC.md)
 | Android app | Kotlin + Jetpack Compose | [APK download](https://keygrain.com) |
 | Web generator | Client-side PWA | [keygrain.com/generate](https://keygrain.com/generate/) |
 | Python library + CLI | Library and command-line tool | `pip install` from repo |
-| Sync server | Go, sync API only | Self-hosted at keygrain.com |
+| Sync service | End-to-end encrypted sync API | Hosted at keygrain.com |
 
 ## Security
 
@@ -172,9 +172,6 @@ cd extension && ./build.sh
 
 # Android (requires Android SDK)
 cd kotlin && ./gradlew assembleRelease
-
-# Server (requires Go 1.22+)
-cd server && go build && go test ./...
 ```
 
 ## Documentation
@@ -182,7 +179,6 @@ cd server && go build && go test ./...
 - [Algorithm Specification](SPEC.md) — complete, implementation-ready spec with test vectors
 - [Security Design](https://keygrain.com/security/) — how Keygrain protects your data
 - [CLI & Integration Guide](docs/cli-and-integration.md) — command reference and Python library usage
-- [Self-Hosting Guide](docs/self-hosting.md) — deploy your own sync server
 - [Advanced Features](docs/advanced-features.md) — SSH keys, HD wallets, TOTP seeds
 - [Architecture](docs/architecture.md) — system design and security model
 - [Terminology & Style](docs/GLOSSARY.md) — canonical terms and documentation governance

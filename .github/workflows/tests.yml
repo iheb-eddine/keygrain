@@ -93,29 +93,6 @@ jobs:
         working-directory: extension/tests
         run: node test-strengthen-slow.mjs
 
-  test-go:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-      - name: Run tests
-        run: go test -v ./... 2>&1 | tee test-output.txt
-      - name: Check test count baseline
-        run: |
-          ACTUAL_COUNT=$(grep -c "^--- PASS:" test-output.txt || true)
-          ACTUAL_COUNT=${ACTUAL_COUNT:-0}
-          BASELINE=$(grep '^go=' ../.test-baselines | cut -d= -f2)
-          if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
-            echo "::error::TEST COUNT REGRESSION: go (actual: $ACTUAL_COUNT, baseline: $BASELINE)"
-            exit 1
-          fi
-          echo "Test count OK: go $ACTUAL_COUNT >= $BASELINE"
-
   test-cross-platform:
     runs-on: ubuntu-latest
     timeout-minutes: 2

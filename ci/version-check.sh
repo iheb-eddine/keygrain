@@ -28,7 +28,6 @@ check() {
   fi
 }
 
-check "server/VERSION" "cat server/VERSION"
 check "extension/chrome/manifest.json" "grep -o '\"version\": *\"[^\"]*\"' extension/chrome/manifest.json | head -1 | grep -o '[0-9][0-9.]*'"
 check "extension/firefox/manifest.json" "grep -o '\"version\": *\"[^\"]*\"' extension/firefox/manifest.json | head -1 | grep -o '[0-9][0-9.]*'"
 check "python/pyproject.toml" "grep '^version' python/pyproject.toml | head -1 | grep -o '[0-9][0-9.]*'"
