@@ -1,6 +1,6 @@
 *.apk
 build/
-designs/feature-gap-analysis.mdserver/keygrain-server
+server/keygrain-server
 dist/
 *.egg-info/
 .env
