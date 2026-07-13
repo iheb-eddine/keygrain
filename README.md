@@ -5,16 +5,56 @@
 <h1 align="center">Keygrain</h1>
 
 <p align="center">
-  Deterministic password derivation. One secret, all your passwords — no vault needed.
+  <strong>Derive passwords from one secret. No vault. No database. No breach.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/iheb-eddine/keygrain/actions/workflows/tests.yml"><img src="https://github.com/iheb-eddine/keygrain/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/iheb-eddine/keygrain/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <a href="https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha"><img src="https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white" alt="Chrome"></a>
-  <a href="https://addons.mozilla.org/addon/keygrain/"><img src="https://img.shields.io/badge/Firefox-Add--on-FF7139?logo=firefox&logoColor=white" alt="Firefox"></a>
-  <a href="https://keygrain.com"><img src="https://img.shields.io/badge/Android-APK-3DDC84?logo=android&logoColor=white" alt="Android"></a>
-  <a href="https://pypi.org/project/keygrain/"><img src="https://img.shields.io/badge/Python-CLI-3776AB?logo=python&logoColor=white" alt="Python"></a>
+  <a href="https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha"><img src="https://img.shields.io/chrome-web-store/v/goeemlncopfbcnppjalfmgdalbhlgdha?label=Chrome" alt="Chrome Web Store"></a>
+  <a href="https://addons.mozilla.org/addon/keygrain/"><img src="https://img.shields.io/amo/v/keygrain?label=Firefox" alt="Firefox Add-ons"></a>
+  <a href="https://keygrain.com"><img src="https://img.shields.io/badge/Android-APK-green" alt="Android APK"></a>
+  <a href="https://keygrain.com/generate/"><img src="https://img.shields.io/badge/Web-PWA-blue" alt="Web Generator"></a>
+  <a href="#python-cli"><img src="https://img.shields.io/badge/CLI-pip_install-orange" alt="Python CLI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT License"></a>
+</p>
+
+<!-- DEMO GIF PLACEHOLDER
+┌─────────────────────────────────────────────────────────────────────┐
+│  Replace this block with: <img src="demo.gif" alt="Keygrain demo"> │
+└─────────────────────────────────────────────────────────────────────┘
+
+GIF PRODUCTION SPEC:
+- Resolution: 800×500 (16:10), optimized ≤5 MB
+- Duration: ~15 seconds, looping
+- Sequence:
+  1. Browser showing github.com login page (empty form)
+  2. Click Keygrain extension icon → popup opens
+  3. Type master secret → visual fingerprint (colored dots) appears
+  4. Select "github.com" from services list → password derived instantly
+  5. Click "Fill" → username + password autofill into the form
+  6. Navigate to a second site (e.g., gitlab.com login)
+  7. Press Ctrl+Shift+K → form fills instantly WITHOUT opening popup
+  8. Brief pause showing filled form
+- Style: Dark browser theme, no real credentials, placeholder email "me@example.com"
+- The Ctrl+Shift+K moment is the "wow" beat — emphasize the speed (no popup, instant fill)
+-->
+
+<p align="center">
+  <em>No password database — passwords are computed from your secret on demand.<br>
+  Same inputs, same output, every device. Nothing to breach.</em>
+</p>
+
+<h3 align="center">Install</h3>
+
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha"><strong>Chrome</strong></a> ·
+  <a href="https://addons.mozilla.org/addon/keygrain/"><strong>Firefox</strong></a> ·
+  <a href="https://keygrain.com"><strong>Android</strong></a> ·
+  <a href="https://keygrain.com/generate/"><strong>Web PWA</strong></a> ·
+  <a href="#python-cli"><strong>CLI</strong></a>
+</p>
+
+<p align="center">
+  📐 <a href="SPEC.md">Fully specified algorithm</a> with test vectors — implement it yourself on any platform.
 </p>
 
 ---
