@@ -131,6 +131,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ANDROID_HOME: /opt/android-sdk
+      ANDROID_SDK_ROOT: /opt/android-sdk
       GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx2048m"
     steps:
       - uses: actions/checkout@v4
