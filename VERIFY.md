@@ -113,8 +113,8 @@ A match means the APK was signed by Keygrain and has not been tampered with sinc
 **Keygrain signing certificate — SHA-256:**
 
 ```
-apksigner form:  d96e539e35c7ee8ad9faa7cb981d3dfd7998d4741c251354e134a39db30b4cc2
-keytool form:    D9:6E:53:9E:35:C7:EE:8A:D9:FA:A7:CB:98:1D:3D:FD:79:98:D4:74:1C:25:13:54:E1:34:A3:9D:B3:0B:4C:C2
+apksigner form:  ab3621a449405f75e94b0283e5a35f0da86127409984dd63db02a8e8d7a38e11
+keytool form:    AB:36:21:A4:49:40:5F:75:E9:4B:02:83:E5:A3:5F:0D:A8:61:27:40:99:84:DD:63:DB:02:A8:E8:D7:A3:8E:11
 ```
 
 (`apksigner verify --print-certs` prints it as lowercase hex with no colons; `keytool
