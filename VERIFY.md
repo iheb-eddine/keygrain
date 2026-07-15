@@ -94,6 +94,56 @@ done
 Any difference in the served JavaScript is a red flag; identical output means the live
 generator is exactly this source.
 
+## Verify the Python package (PyPI)
+
+The `keygrain` Python package (the CLI and library) is a **pure-Python** distribution,
+built by GitHub Actions from this repository via **PyPI Trusted Publishing** — there is
+no separately-uploaded artifact and no long-lived token. Two independent checks:
+
+### Method A — rebuild the wheel and compare hashes
+
+The **wheel** (`.whl`) is reproducible: the build pins zip-entry timestamps to the
+released commit's timestamp (`SOURCE_DATE_EPOCH`), and nothing is minified or
+transpiled. Rebuilding from the tag on any machine yields a byte-identical wheel — and
+the wheel is what `pip install` uses for this pure-Python package.
+
+```bash
+git clone https://github.com/iheb-eddine/keygrain.git
+cd keygrain
+git checkout v<version>                       # the version you installed
+export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+cd python
+python -m build --wheel
+sha256sum dist/keygrain-<version>-py3-none-any.whl
+```
+
+Compare against the wheel's hash on the package's
+[PyPI release page](https://pypi.org/project/keygrain/#files) (each file lists its
+SHA-256), or download and hash the installed artifact directly:
+
+```bash
+pip download keygrain==<version> --no-deps -d /tmp/kg && sha256sum /tmp/kg/*.whl
+```
+
+A match means the wheel on PyPI was built from exactly this source. (You need Python
+plus `build`; no other toolchain.)
+
+> **Note:** only the **wheel** is byte-reproducible. The source tarball (`.tar.gz`)
+> is *not* currently guaranteed to hash-match across machines (its tar/gzip metadata
+> isn't fully pinned), so verify the `.whl` — which is the artifact `pip` actually
+> installs. The tarball's *contents* are still just this source, auditable by extraction.
+
+### Method B — check the publishing provenance (attestations)
+
+Because the package is published via Trusted Publishing, PyPI records **PEP 740
+attestations** that cryptographically bind each uploaded file to the GitHub Actions
+workflow run and the exact commit that produced it. On the
+[PyPI release files page](https://pypi.org/project/keygrain/#files), each file shows a
+**"Publisher"/provenance** panel identifying the source as
+`iheb-eddine/keygrain` via `.github/workflows/publish.yml`. That links the artifact you
+install back to this public repository — not to any private build. If a release ever
+shows a different publisher (or none), treat it as suspect.
+
 ## Verify the Android APK
 
 The Android app is distributed as a direct APK download from keygrain.com. Android
