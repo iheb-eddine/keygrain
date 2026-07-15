@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keygrain — Generate Password</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:title" content="Keygrain — One secret. Every password. Nothing to breach.">
+    <meta property="og:description" content="Deterministic password generator. No vault. No database. Just math.">
+    <meta property="og:image" content="https://keygrain.com/og-image.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="manifest" href="./manifest.json">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --border: #2a2d3a;
+            --text: #e4e4e7;
+            --text-secondary: #9ca3af;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --font: system-ui, -apple-system, sans-serif;
+        }
+        body { font-family: var(--font); max-width: 600px; margin: 80px auto; padding: 0 20px; color: var(--text); background: var(--bg); }
+        h1 { font-size: 2rem; }
+        label { display: block; margin-top: 1rem; color: var(--text-secondary); font-size: 0.9rem; }
+        input { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; box-sizing: border-box; background: var(--surface); color: var(--text); }
+        input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2); }
+        button { padding: 10px 20px; font-size: 1rem; border: none; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
+        #generate { margin-top: 1.5rem; background: var(--accent); color: #fff; }
+        #generate:hover { background: var(--accent-hover); }
+        #generate:disabled { background: var(--border); color: var(--text-secondary); cursor: not-allowed; }
+        .output-row { display: flex; gap: 8px; margin-top: 1.5rem; align-items: center; }
+        .output-row input { flex: 1; font-family: monospace; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
+        #copy { background: var(--surface); border: 1px solid var(--border); font-size: 1.2rem; padding: 8px 12px; color: var(--text); }
+        #copy:hover { background: var(--border); }
+        #status { margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.85rem; min-height: 1.2em; }
+        #strength { display: block; font-size: 0.85rem; font-weight: 500; min-height: 1.2em; }
+        #fingerprint { display: flex; gap: 6px; margin-top: 6px; min-height: 12px; }
+        .fp-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border); }
+        details summary { cursor: pointer; font-size: 0.9rem; margin-top: 1rem; color: var(--text-secondary); list-style: none; }
+        details summary:hover { color: var(--text); }
+        details summary::-webkit-details-marker { display: none; }
+        details .details-content { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 200ms ease; overflow: hidden; }
+        details[open] .details-content { grid-template-rows: 1fr; }
+        details .details-content > div { overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 8px; }
+        @media (prefers-reduced-motion: reduce) { details .details-content { transition: none; } }
+        ::selection { background: var(--accent); color: #fff; }
+        .brand-link { color: var(--accent); text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+        .brand-link:hover { color: var(--accent-hover); }
+        .brand-logo { border-radius: 4px; vertical-align: middle; }
+        footer { margin-top: 4rem; border-top: 1px solid var(--border); padding: 24px 0; text-align: center; color: var(--text-secondary); font-size: 13px; }
+        footer .footer-links { margin-bottom: 8px; }
+        footer .footer-links a { color: var(--text-secondary); text-decoration: none; margin: 0 10px; }
+        footer .footer-links a:hover { color: var(--text); }
+    </style>
+    <link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+    <h1><a href="/" class="brand-link"><img src="/logo-128.png" alt="" width="28" height="28" class="brand-logo">Keygrain</a> — Generate Password</h1>
+    <p style="color: var(--text-secondary); font-size: 0.95rem;">
+      Generate unique passwords from your secret — no passwords are stored, just re-enter the same inputs to recreate your password anytime.
+    </p>
+    <p style="color: var(--text-secondary); font-size: 0.85rem; margin: 0;">ℹ️ Changing any field will generate a different password.</p>
+    <form id="form">
+        <label for="email">Email</label>
+        <input type="email" id="email" autocomplete="off" required aria-describedby="email-hint">
+        <small id="email-hint" style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
+          Your email — combined with your secret to generate passwords
+        </small>
+        <label for="secret">Secret</label>
+        <input type="password" id="secret" autocomplete="off" required aria-describedby="secret-hint">
+        <small id="secret-hint" style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
+          Your master secret — memorize it, never store it
+        </small>
+        <div id="fingerprint" role="img" aria-label="Visual fingerprint" aria-describedby="fingerprint-hint"></div>
+        <small id="fingerprint-hint" style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
+          These dots confirm your secret. Same colors = same secret.
+        </small>
+        <label for="site">Site</label>
+        <input type="text" id="site" autocomplete="off" required aria-describedby="site-hint">
+        <small id="site-hint" style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
+          Domain or service name (e.g. github.com)
+        </small>
+        <details id="options-panel">
+            <summary>⚙️ Options</summary>
+            <div class="details-content"><div>
+                <label for="length">Length</label>
+                <input type="number" id="length" min="8" max="128" value="20">
+                <label for="symbols">Symbols</label>
+                <input type="text" id="symbols" value="!@#$%&*-_=+?">
+                <label for="counter">Password version</label>
+                <input type="number" id="counter" min="1" value="1">
+            </div></div>
+        </details>
+        <button type="submit" id="generate">Generate</button>
+    </form>
+    <div class="output-row">
+        <input type="password" id="output" readonly aria-label="Generated password">
+        <button type="button" id="toggle-vis" title="Show/hide password" aria-label="Toggle password visibility">👁</button>
+        <button type="button" id="copy" title="Copy to clipboard">&#x1F4CB;</button>
+    </div>
+    <div id="status" aria-live="polite"></div>
+    <span id="strength" aria-live="polite"></span>
+    <script src="./hash-wasm-argon2.js"></script>
+    <script>
+    const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const LOWER = "abcdefghjkmnpqrstuvwxyz";
+    const DIGITS = "23456789";
+
+    const MESSAGES = {
+      LENGTH_MIN: "Password length must be at least 8 characters.",
+      SYMBOLS_REQUIRED: "At least one symbol character is required.",
+      COPIED: "Copied! Clipboard clears in 30 seconds.",
+      CLIPBOARD_CLEARED: "Clipboard cleared.",
+    };
+
+    async function hmacSHA256(key, message) {
+        const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+        const sig = await crypto.subtle.sign("HMAC", k, message);
+        return new Uint8Array(sig);
+    }
+
+    async function strengthen(secret, email) {
+        const enc = new TextEncoder();
+        const result = await hashwasm.argon2id({
+            password: enc.encode(secret),
+            salt: enc.encode("keygrain-strengthen:" + email.toLowerCase()),
+            parallelism: 1,
+            iterations: 3,
+            memorySize: 65536,
+            hashLength: 32,
+            outputType: "binary",
+        });
+        return new Uint8Array(result);
+    }
+
+    async function buildStream(strengthened, message, needed) {
+        const key = await hmacSHA256(strengthened, message);
+        let stream = new Uint8Array(key);
+        let counter = 1;
+        while (stream.length < needed) {
+            const ctrBuf = new Uint8Array(4);
+            new DataView(ctrBuf.buffer).setUint32(0, counter);
+            const ext = await hmacSHA256(key, ctrBuf);
+            const combined = new Uint8Array(stream.length + ext.length);
+            combined.set(stream);
+            combined.set(ext, stream.length);
+            stream = combined;
+            counter++;
+        }
+        return stream;
+    }
+
+    async function derivePassword(secret, email, site, length, symbols, counter) {
+        const enc = new TextEncoder();
+        const strengthened = await strengthen(secret, email);
+        const message = enc.encode(site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + counter);
+        const stream = await buildStream(strengthened, message, length * 8);
+        const fullCharset = UPPER + LOWER + DIGITS + symbols;
+        let pos = 0;
+        const nextByte = () => {
+            if (pos >= stream.length) throw new Error("stream exhausted");
+            return stream[pos++];
+        };
+
+        function unbiasedIndex(n) {
+            const limit = Math.floor(256 / n) * n;
+            while (true) {
+                const b = nextByte();
+                if (b < limit) return b % n;
+            }
+        }
+
+        const chars = [
+            UPPER[unbiasedIndex(UPPER.length)],
+            LOWER[unbiasedIndex(LOWER.length)],
+            DIGITS[unbiasedIndex(DIGITS.length)],
+            symbols[unbiasedIndex(symbols.length)],
+        ];
+        for (let i = 0; i < length - 4; i++) {
+            chars.push(fullCharset[unbiasedIndex(fullCharset.length)]);
+        }
+        for (let i = length - 1; i > 0; i--) {
+            const j = unbiasedIndex(i + 1);
+            [chars[i], chars[j]] = [chars[j], chars[i]];
+        }
+        return chars.join("");
+    }
+
+    let clearTimer = null;
+    const form = document.getElementById("form");
+    const output = document.getElementById("output");
+    const status = document.getElementById("status");
+    const copyBtn = document.getElementById("copy");
+    const toggleVis = document.getElementById("toggle-vis");
+    const secretInput = document.getElementById("secret");
+    const fpContainer = document.getElementById("fingerprint");
+    const optionsPanel = document.getElementById("options-panel");
+    const strengthEl = document.getElementById("strength");
+
+    // Toggle password visibility
+    toggleVis.addEventListener("click", () => {
+      output.type = output.type === "password" ? "text" : "password";
+      toggleVis.textContent = output.type === "password" ? "👁" : "🙈";
+    });
+
+    // Clear output when any derivation input changes
+    function clearOutput() { output.value = ""; if (strengthEl) strengthEl.textContent = ""; }
+    document.getElementById("site").addEventListener("input", clearOutput);
+    document.getElementById("email").addEventListener("input", clearOutput);
+    document.getElementById("length").addEventListener("input", clearOutput);
+    document.getElementById("symbols").addEventListener("input", clearOutput);
+    document.getElementById("counter").addEventListener("input", clearOutput);
+    secretInput.addEventListener("input", clearOutput);
+
+    optionsPanel.addEventListener("toggle", () => {
+      optionsPanel.querySelector("summary").textContent = optionsPanel.open ? "⚙️ Hide options" : "⚙️ Options";
+    });
+
+    const WONG_PALETTE = ["#000000","#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00","#CC79A7"];
+
+    async function secretFingerprint(secret) {
+      const enc = new TextEncoder();
+      const hash = await hmacSHA256(enc.encode(secret), enc.encode("keygrain-fingerprint"));
+      return Array.from(hash.slice(0, 4), b => b % 8);
+    }
+
+    let fpTimer = null;
+    function triggerFingerprint() {
+      if (fpTimer) clearTimeout(fpTimer);
+      const secret = secretInput.value;
+      if (!secret) { fpContainer.innerHTML = ""; return; }
+      fpTimer = setTimeout(async () => {
+        const indices = await secretFingerprint(secret);
+        fpContainer.innerHTML = indices.map(i => `<span class="fp-dot" style="background:${WONG_PALETTE[i]}"></span>`).join("");
+      }, 500);
+    }
+    secretInput.addEventListener("input", triggerFingerprint);
+
+    function normalizeSite(site) {
+      return site.replace(/^https?:\/\//i, '').split('/')[0].split('?')[0].split('#')[0].replace(/\/$/, '').toLowerCase().replace(/^www\./, '');
+    }
+
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const secret = document.getElementById("secret").value;
+        const site = normalizeSite(document.getElementById("site").value);
+        const email = document.getElementById("email").value;
+        const length = parseInt(document.getElementById("length").value, 10);
+        const symbols = document.getElementById("symbols").value;
+        const counter = parseInt(document.getElementById("counter").value, 10) || 1;
+        if (!site) { status.textContent = "Site is required."; return; }
+        if (length < 8) { status.textContent = MESSAGES.LENGTH_MIN; return; }
+        if (length > 128) { status.textContent = "Password length must not exceed 128."; return; }
+        if (UPPER.length + LOWER.length + DIGITS.length + symbols.length > 256) { status.textContent = "Total charset size must not exceed 256 characters."; return; }
+        if (!symbols) { status.textContent = MESSAGES.SYMBOLS_REQUIRED; return; }
+        const btn = document.getElementById("generate");
+        btn.disabled = true;
+        status.textContent = "Strengthening key…";
+        try {
+            output.value = await derivePassword(secret, email, site, length, symbols, counter);
+            const charset = UPPER + LOWER + DIGITS + symbols;
+            const bits = Math.floor(length * Math.log2(charset.length));
+            const el = document.getElementById("strength");
+            const [label, color] = bits >= 120 ? ["Strong","#22c55e"] : bits >= 78 ? ["Good","#8bc34a"] : ["Fair","#e67e22"];
+            el.textContent = label + " (" + bits + " bits)";
+            el.style.color = color;
+            status.textContent = "";
+        } catch (err) {
+            status.textContent = "Error: " + err.message;
+            document.getElementById("strength").textContent = "";
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    copyBtn.addEventListener("click", async () => {
+        if (!output.value) return;
+        await navigator.clipboard.writeText(output.value);
+        status.textContent = MESSAGES.COPIED;
+        setTimeout(() => { if (status.textContent === MESSAGES.COPIED) status.textContent = ""; }, 2000);
+        if (clearTimer) clearTimeout(clearTimer);
+        clearTimer = setTimeout(async () => {
+            await navigator.clipboard.writeText("");
+            status.textContent = MESSAGES.CLIPBOARD_CLEARED;
+            setTimeout(() => { if (status.textContent === MESSAGES.CLIPBOARD_CLEARED) status.textContent = ""; }, 2000);
+        }, 30000);
+    });
+    </script>
+    <script>if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js")</script>
+    <footer>
+        <div class="footer-links">
+            <a href="/guide/">Guide</a>
+            <a href="/compare/">Compare</a>
+            <a href="/changelog/">Changelog</a>
+            <a href="/privacy.html">Privacy</a>
+            <a href="/terms/">Terms</a>
+            <a href="/threat-model/">Threat Model</a>
+            <a href="https://github.com/iheb-eddine/keygrain">Source Code</a>
+        </div>
+        <small>© 2026 SecByTech · contact@keygrain.com</small>
+    </footer>
+</body>
+</html>

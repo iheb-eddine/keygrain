@@ -73,6 +73,27 @@ Expected differences are limited to store-added metadata (e.g. `_metadata/`, sig
 files) and the `manifest.json` version string — the actual JS/HTML/CSS should be
 identical.
 
+## Verify the web generator
+
+The web generator at [keygrain.com/generate](https://keygrain.com/generate/) is a
+**client** (it derives passwords in your browser with no server calls — load it, then
+go offline and it still works). Its source is public in [`web/`](web/), and the server
+serves it **verbatim**, so you can compare what your browser loads against this repo:
+
+- **View source / DevTools:** open `keygrain.com/generate/`, view the HTML and the
+  loaded scripts (`index.html`, `hash-wasm-argon2.js`, `sw.js`) — nothing is minified,
+  so it's directly readable and matches `web/` in this repo at the deployed version.
+- **Diff the served files:** download the assets and diff against `web/`:
+
+```bash
+for f in index.html hash-wasm-argon2.js sw.js manifest.json; do
+  curl -fsS "https://keygrain.com/generate/$f" | diff - "web/$f" && echo "$f: identical"
+done
+```
+
+Any difference in the served JavaScript is a red flag; identical output means the live
+generator is exactly this source.
+
 ## Verify the Android APK
 
 The Android app is distributed as a direct APK download from keygrain.com. Android
