@@ -168,7 +168,8 @@ cd python && pip install -e . && pytest tests/
 
 # Browser extension
 cd extension && ./build.sh
-# Produces dist/keygrain-chrome.zip and dist/keygrain-firefox.zip
+# Produces versioned, reproducible zips: dist/keygrain-chrome-<version>.zip
+# and dist/keygrain-firefox-<version>.zip (see VERIFY.md to verify a release)
 
 # Android (requires Android SDK)
 cd kotlin && ./gradlew assembleRelease
