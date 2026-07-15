@@ -177,6 +177,7 @@ cd kotlin && ./gradlew assembleRelease
 ## Documentation
 
 - [Algorithm Specification](SPEC.md) — complete, implementation-ready spec with test vectors
+- [Verifying Keygrain](VERIFY.md) — check the installed extension/APK against this source
 - [Security Design](https://keygrain.com/security/) — how Keygrain protects your data
 - [CLI & Integration Guide](docs/cli-and-integration.md) — command reference and Python library usage
 - [Advanced Features](docs/advanced-features.md) — SSH keys, HD wallets, TOTP seeds

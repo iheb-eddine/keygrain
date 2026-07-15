@@ -1,0 +1,34 @@
+name: Release artifacts
+
+# Attach reproducibly-built browser-extension zips and their SHA-256 checksums to
+# each GitHub Release, so anyone can verify the published extension against this
+# source. The build (extension/build.sh) is deterministic: fixed file timestamps
+# and a UTC zip, with no minification or bundling — the shipped files are the
+# source verbatim, so the same commit always produces the same SHA-256.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build extension (deterministic)
+        working-directory: extension
+        run: bash build.sh
+      - name: Compute SHA-256 checksums
+        working-directory: extension/dist
+        run: sha256sum keygrain-chrome-*.zip keygrain-firefox-*.zip | tee SHA256SUMS.txt
+      - name: Attach artifacts to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            extension/dist/keygrain-chrome-*.zip \
+            extension/dist/keygrain-firefox-*.zip \
+            extension/dist/SHA256SUMS.txt \
+            --clobber --repo "${{ github.repository }}"
