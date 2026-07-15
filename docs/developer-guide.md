@@ -25,6 +25,7 @@ extension/       Browser extension (Chrome + Firefox, vanilla JS)
   chrome/        Chrome-specific manifest + background
   firefox/       Firefox-specific manifest + background
   dist/          Build output (zips)
+web/             Web generator PWA (client-side, served at keygrain.com/generate)
 vectors.json     Cross-platform test vectors (all implementations must match)
 docs/            User guides and design docs
 ```
