@@ -107,13 +107,20 @@ different key.
 apksigner verify --print-certs keygrain.apk
 ```
 
-Compare the printed certificate SHA-256 against Keygrain's published signing
-fingerprint (see the release notes / this repository's release page). A match means
-the APK was signed by Keygrain and has not been tampered with since.
+Compare the printed certificate SHA-256 against Keygrain's signing fingerprint below.
+A match means the APK was signed by Keygrain and has not been tampered with since.
 
-> Publishing the exact fingerprint here is a maintainer to-do; until then you can at
-> least confirm the same certificate is used across versions (an attacker cannot
-> re-sign with our key).
+**Keygrain signing certificate — SHA-256** (`SHA384withRSA`):
+
+```
+apksigner form:  ab3621a449405f75e94b0283e5a35f0da86127409984dd63db02a8e8d7a38e11
+keytool form:    AB:36:21:A4:49:40:5F:75:E9:4B:02:83:E5:A3:5F:0D:A8:61:27:40:99:84:DD:63:DB:02:A8:E8:D7:A3:8E:11
+```
+
+(`apksigner verify --print-certs` prints the digest as lowercase hex with no colons;
+`keytool -list -v` prints it colon-separated. They're the same value.) This fingerprint
+is fixed for the life of the signing key — it is the same for every Keygrain APK
+release.
 
 ## Honest limitations
 
