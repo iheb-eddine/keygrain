@@ -6,10 +6,12 @@ minified/bundled code that can't realistically be audited.
 
 ## Why the extension is verifiable
 
-- **Reproducible build.** `extension/build.sh` uses fixed file timestamps and a UTC
-  zip with no extra metadata, and performs **no minification, bundling, or
-  transpilation**. The shipped files are the source verbatim. The same commit
-  therefore always produces byte-identical zips with the same SHA-256.
+- **Reproducible build.** `extension/build.sh` zips a **sorted**, fixed-timestamp file
+  list as UTC with no extra metadata, and performs **no minification, bundling, or
+  transpilation** — the shipped files are the source (only the `manifest.json` version
+  string is substituted at build time). Because the entry order does not depend on your
+  filesystem, the same commit produces byte-identical zips with the same SHA-256 on any
+  POSIX machine with `bash`, `zip`, and `sha256sum`.
 - **Published checksums.** Every [GitHub Release](https://github.com/iheb-eddine/keygrain/releases)
   carries the exact `keygrain-chrome-<version>.zip` and `keygrain-firefox-<version>.zip`
   plus a `SHA256SUMS.txt`, built by GitHub Actions from this repository.
@@ -29,38 +31,47 @@ git clone https://github.com/iheb-eddine/keygrain.git
 cd keygrain
 git checkout v<version>          # the version you installed (see the extension's About/Help)
 bash extension/build.sh
-sha256sum extension/dist/keygrain-chrome-*.zip extension/dist/keygrain-firefox-*.zip
+cd extension/dist
+sha256sum keygrain-chrome-*.zip keygrain-firefox-*.zip
 ```
 
 Compare the output against `SHA256SUMS.txt` on the matching
-[GitHub Release](https://github.com/iheb-eddine/keygrain/releases). If they match, the
+[GitHub Release](https://github.com/iheb-eddine/keygrain/releases) — or download that
+file into `extension/dist/` and run `sha256sum -c SHA256SUMS.txt`. If they match, the
 released zip was built from exactly this source. (You need `bash`, `zip`, and
 `sha256sum` — no other toolchain.)
 
 ### Method B — inspect what's actually installed
 
+Method B compares against the assembled build output, so **first run
+`bash extension/build.sh`** (it writes `extension/dist/chrome/` and
+`extension/dist/firefox/`).
+
 **Firefox:** download the add-on's `.xpi` (or find it under your profile's
-`extensions/` folder), then unzip and diff it against the source:
+`extensions/` folder), unzip it, and diff against the build:
 
 ```bash
 unzip -d installed keygrain.xpi
-# compare the code that runs against this repo (ignore store-added META-INF/ signing files)
-diff -r --exclude=META-INF installed extension/dist/firefox
+diff -r installed extension/dist/firefox
 ```
+
+Files that appear only in `installed` are store-added metadata/signing artifacts
+(`META-INF/`, `mozilla-recommendation.json`, …) — expected. The JS/HTML/CSS must be
+identical. Since nothing is minified, you can also just read the code.
 
 **Chrome:** go to `chrome://extensions`, enable **Developer mode**, and note the
 extension's ID and version. The unpacked files live under your Chrome profile at
-`Extensions/goeemlncopfbcnppjalfmgdalbhlgdha/<version>/`. Diff that folder against the
-source:
+`Extensions/goeemlncopfbcnppjalfmgdalbhlgdha/<version>_0/` (Chrome appends `_0`). Diff
+that folder against the build:
 
 ```bash
 diff -r "<chrome-profile>/Extensions/goeemlncopfbcnppjalfmgdalbhlgdha/<version>_0" \
         extension/dist/chrome
 ```
 
-Expected differences are limited to store-added metadata (e.g. `_metadata/`,
-signing files) and the `manifest.json` version string — the actual JS/HTML/CSS should
-be identical. Since nothing is minified, you can also just read the code directly.
+Expected differences are limited to store-added metadata (e.g. `_metadata/`, signing
+files) and the `manifest.json` version string — the actual JS/HTML/CSS should be
+identical.
 
 ## Verify the Android APK
 
