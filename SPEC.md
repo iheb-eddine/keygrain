@@ -528,5 +528,8 @@ All derivations use the same strengthened key but produce independent outputs vi
 | TOTP seed | `site:email:keygrain-totp` | `:keygrain-totp` |
 | SSH key | `email:key_name:counter:keygrain-ssh` | `:keygrain-ssh` |
 | Wallet | `email:wallet_name:chain:counter:keygrain-wallet` | `:keygrain-wallet` |
+| CLI local cache | `email:keygrain-cli-cache` | `:keygrain-cli-cache` |
+
+The `:keygrain-cli-cache` label keys the Python CLI's **local** encrypted cache (`~/.keygrain/accounts/<slug>.kg`). It produces no cross-platform output — it never leaves the machine and is not part of any client's synced data — so it has no test vector. It is registered here for collision-prevention and documentation completeness.
 
 **Collision-free guarantee:** Each derivation ends with a unique literal suffix that is not a valid value for any other derivation's terminal field. Password messages end with a decimal integer; all other messages end with a non-numeric string. The named suffixes are all distinct.
