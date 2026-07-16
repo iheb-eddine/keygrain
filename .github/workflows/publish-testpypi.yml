@@ -1,0 +1,69 @@
+# Dry-run of the PyPI Trusted-Publishing (OIDC) chain against TestPyPI.
+#
+# This is a MANUAL, no-release validation: it builds the wheel exactly like
+# publish.yml and uploads it to https://test.pypi.org instead of PyPI, so the
+# whole OIDC identity -> Trusted Publisher -> upload path can be exercised
+# WITHOUT cutting a real GitHub release or touching the production index.
+#
+# SETUP REQUIRED (one-time, on TestPyPI): register a Trusted Publisher at
+#   https://test.pypi.org/manage/account/publishing/
+# with:
+#   Owner:              iheb-eddine
+#   Repository name:    keygrain
+#   Workflow name:      publish-testpypi.yml
+#   Environment name:   (leave blank)
+# Without that registration TestPyPI will reject the OIDC token.
+#
+# HOW TO RUN: Actions tab -> "Dry-run publish to TestPyPI" -> "Run workflow"
+# (workflow_dispatch). It never runs automatically.
+#
+# NOTE: TestPyPI is a separate index; a given version can only be uploaded once.
+# Bump the version (or delete the TestPyPI release) before re-running on the
+# same version. This file deliberately does NOT touch the real publish.yml.
+
+name: Dry-run publish to TestPyPI
+
+on:
+  workflow_dispatch: {}
+
+# Default: no permissions. The job opts into the minimum it needs.
+permissions: {}
+
+jobs:
+  publish-testpypi:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # REQUIRED: mint the OIDC token for TestPyPI Trusted Publishing
+      contents: read    # checkout
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Reproducible wheels: pin zip entry timestamps to the checked-out commit's
+      # timestamp so a rebuild from this ref is byte-identical (mirrors publish.yml).
+      - name: Set reproducible build timestamp
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Build distribution
+        working-directory: python
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Check distribution metadata
+        working-directory: python
+        run: |
+          python -m pip install --upgrade twine
+          twine check dist/*
+
+      # Trusted Publishing (OIDC) against TestPyPI. No token/secret: TestPyPI
+      # validates the OIDC identity against the registered publisher
+      # (owner=iheb-eddine, repo=keygrain, workflow=publish-testpypi.yml).
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: python/dist/
