@@ -11,7 +11,7 @@
 // as used in vectors.json). Publishing these values in the clear is intentional.
 //
 // Usage:  node ci/gen-sync-vectors.mjs [--check]
-//   (no flag)  write python/tests/sync-vectors.json
+//   (no flag)  write sync-vectors.json (repo root, alongside vectors.json)
 //   --check    regenerate deterministic derivations and diff against the
 //              committed fixture (the AES-GCM blob uses a random IV, so only the
 //              deterministic fields are diffed).
@@ -25,7 +25,7 @@ import { dirname, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 const shared = resolve(root, 'extension', 'shared');
-const OUT = resolve(root, 'python', 'tests', 'sync-vectors.json');
+const OUT = resolve(root, 'sync-vectors.json');
 
 // --- Public throwaway test account + service set -----------------------------
 const SECRET = 'my-master-secret';
