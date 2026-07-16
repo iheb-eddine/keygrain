@@ -43,11 +43,13 @@ jobs:
         run: |
           pip install -e .
           pip install pytest
-          pytest -q | tee test-output.txt
+          python -m pytest -q --color=no | tee test-output.txt
       - name: Check test count baseline
         working-directory: python
         run: |
-          ACTUAL_COUNT=$(grep -oP '^\d+(?= passed)' test-output.txt || true)
+          # Strip any ANSI color, then read the "<n> passed" figure robustly
+          # (pytest may emit color in CI; a leading-digit anchor would miss it).
+          ACTUAL_COUNT=$(sed -E 's/\x1b\[[0-9;]*m//g' test-output.txt | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+' | tail -1)
           ACTUAL_COUNT=${ACTUAL_COUNT:-0}
           BASELINE=$(grep '^python=' ../.test-baselines | cut -d= -f2)
           if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
