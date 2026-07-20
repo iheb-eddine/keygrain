@@ -296,6 +296,59 @@ await test('D18: computeSyncStatus no state', async () => {
   assert.equal(JSON.stringify(result), JSON.stringify({visible: false, text: '', errorHtml: null}));
 });
 
+// --- Shortcut discoverability helpers (K1-K9) ---
+await test('K1: shortcutHintText set (non-mac) → verbatim, isSet true', async () => {
+  const r = call('shortcutHintText', {shortcut: 'Ctrl+Shift+K', isMac: false});
+  assert.equal(r.label, 'Ctrl+Shift+K');
+  assert.equal(r.isSet, true);
+});
+await test('K2: shortcutHintText unset (non-mac) → Ctrl fallback', async () => {
+  const r = call('shortcutHintText', {shortcut: '', isMac: false});
+  assert.equal(r.label, 'Ctrl+Shift+K');
+  assert.equal(r.isSet, false);
+});
+await test('K3: shortcutHintText unset (mac) → Cmd fallback', async () => {
+  const r = call('shortcutHintText', {shortcut: '', isMac: true});
+  assert.equal(r.label, 'Cmd+Shift+K');
+  assert.equal(r.isSet, false);
+});
+await test('K4: shortcutHintText whitespace treated as unset', async () => {
+  const r = call('shortcutHintText', {shortcut: '   ', isMac: false});
+  assert.equal(r.isSet, false);
+  assert.equal(r.label, 'Ctrl+Shift+K');
+});
+await test('K5: shortcutHintText passthrough custom combo', async () => {
+  const r = call('shortcutHintText', {shortcut: 'Alt+Shift+P', isMac: true});
+  assert.equal(r.label, 'Alt+Shift+P');
+  assert.equal(r.isSet, true);
+});
+await test('K6: shortcutCustomizeInfo(firefox) → instructions + about:addons', async () => {
+  const r = call('shortcutCustomizeInfo', true);
+  assert.equal(r.method, 'instructions');
+  assert.equal(r.url, 'about:addons');
+  assert(r.steps.some(s => s.includes('gear')), 'steps mention gear');
+  assert(r.steps.some(s => s.includes('Manage Extension Shortcuts')), 'steps mention Manage Extension Shortcuts');
+});
+await test('K7: shortcutCustomizeInfo(chromium) → tabs + shortcuts URL', async () => {
+  const r = call('shortcutCustomizeInfo', false);
+  assert.equal(r.method, 'tabs');
+  assert.equal(r.url, 'chrome://extensions/shortcuts');
+  assert(r.steps.some(s => s.includes('edge://extensions/shortcuts')), 'steps mention Edge URL');
+});
+await test('K8: shortcutCustomizeInfo both branches always carry instructions', async () => {
+  for (const ff of [true, false]) {
+    const r = call('shortcutCustomizeInfo', ff);
+    assert(r.steps.length >= 1, 'steps non-empty');
+    assert(r.url && r.url.length > 0, 'url non-empty');
+  }
+});
+await test('K9: pickShortcut match / field-absent / empty / undefined', async () => {
+  assert.equal(call('pickShortcut', [{name: 'other'}, {name: 'fill_credentials', shortcut: 'Ctrl+Shift+K'}]), 'Ctrl+Shift+K');
+  assert.equal(call('pickShortcut', [{name: 'fill_credentials'}]), ''); // entry present, shortcut field absent (§7.3)
+  assert.equal(call('pickShortcut', []), '');
+  assert.equal(call('pickShortcut', undefined), '');
+});
+
 // ============================================================
 // POPUP-RULES TESTS
 // ============================================================

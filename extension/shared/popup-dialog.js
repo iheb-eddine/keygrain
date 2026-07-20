@@ -64,3 +64,53 @@ function showStatus(statusEl, msg, timerState, duration) {
   if (timerState.id) clearTimeout(timerState.id);
   timerState.id = setTimeout(() => { statusEl.textContent = ""; }, duration);
 }
+
+// === Shortcut discoverability helpers (pure: no DOM/chrome/navigator access) ===
+
+// shortcutHintText({shortcut, isMac}) -> {label, isSet}
+// A present live value (from chrome.commands.getAll) is shown verbatim; the
+// fallback label is used only when no shortcut is bound. Never returns empty.
+function shortcutHintText(opts) {
+  const raw = opts && typeof opts.shortcut === "string" ? opts.shortcut : "";
+  const isMac = !!(opts && opts.isMac);
+  const trimmed = raw.trim();
+  if (trimmed) return { label: trimmed, isSet: true };
+  return { label: isMac ? "Cmd+Shift+K" : "Ctrl+Shift+K", isSet: false };
+}
+
+// shortcutCustomizeInfo(isFirefox) -> {method, url, steps}
+// steps + url are ALWAYS non-empty for both engines (instructions are always
+// available); `method` only decides whether an auto-open button is offered
+// ("tabs" = Chromium) or not ("instructions" = Firefox privileged about: URL).
+function shortcutCustomizeInfo(isFirefox) {
+  if (isFirefox) {
+    return {
+      method: "instructions",
+      url: "about:addons",
+      steps: [
+        "Open about:addons",
+        "Click the gear icon",
+        "Choose \"Manage Extension Shortcuts\"",
+        "Set \"Fill credentials for current site\""
+      ]
+    };
+  }
+  return {
+    method: "tabs",
+    url: "chrome://extensions/shortcuts",
+    steps: [
+      "Open your browser's shortcuts page: chrome://extensions/shortcuts (Edge: edge://extensions/shortcuts)",
+      "Find Keygrain",
+      "Set \"Fill credentials for current site\""
+    ]
+  };
+}
+
+// pickShortcut(commandsArray) -> string
+// Returns the fill_credentials command's shortcut, or "" if the entry is
+// missing, the array is empty/absent, or the shortcut field is absent.
+function pickShortcut(commandsArray) {
+  if (!Array.isArray(commandsArray)) return "";
+  const entry = commandsArray.find(c => c && c.name === "fill_credentials");
+  return entry && typeof entry.shortcut === "string" ? entry.shortcut : "";
+}

@@ -304,3 +304,43 @@ button { cursor: pointer; }
 
 /* Version info */
 .version-info { font-size: 0.7rem; color: var(--text-secondary); text-align: center; margin: 12px 0 0; }
+
+/* Keyboard shortcut section (Settings) */
+#shortcut-section { margin-top: 4px; }
+.shortcut-heading { font-size: 0.95rem; font-weight: 600; margin: 0 0 6px; }
+.shortcut-line { font-size: 0.85rem; margin: 0 0 4px; overflow-wrap: anywhere; }
+#shortcut-current { font-family: monospace; font-weight: 600; color: var(--accent); }
+.shortcut-subnote { font-size: 0.78rem; color: var(--text-secondary); margin: 4px 0; }
+.shortcut-customize-lead { font-size: 0.8rem; color: var(--text-secondary); margin: 8px 0 4px; }
+#shortcut-customize-steps { margin: 0 0 8px; padding-left: 20px; font-size: 0.82rem; color: var(--text-secondary); }
+#shortcut-customize-steps li { margin: 2px 0; word-break: break-word; }
+.shortcut-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.shortcut-actions button { padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-secondary); font-size: 0.82rem; color: var(--text); transition: background var(--transition-fast), border-color var(--transition-fast); }
+.shortcut-actions button:hover { background: var(--border); border-color: var(--accent); }
+
+/* Main-screen shortcut tip (non-urgent, role=status) */
+#shortcut-tip { padding: 10px 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 8px; font-size: 0.82rem; box-shadow: var(--shadow-sm); }
+#shortcut-tip-text { display: block; color: var(--text); }
+.shortcut-tip-actions { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
+.shortcut-tip-actions button { padding: 4px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); font-size: 0.8rem; color: var(--text); transition: background var(--transition-fast), border-color var(--transition-fast); }
+.shortcut-tip-actions button:hover { background: var(--bg-secondary); border-color: var(--accent); }
+#shortcut-tip-customize { border-color: var(--accent); color: var(--accent); }
+
+/* In-page autofill setting (Settings toggle + consent dialog) */
+#inline-autofill-section { margin: 4px 0; }
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.setting-row-text { display: flex; flex-direction: column; }
+.setting-row-title { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+.setting-row-desc { font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px; }
+.switch { position: relative; display: inline-block; flex-shrink: 0; width: 40px; height: 22px; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-track { position: absolute; inset: 0; background: var(--border); border-radius: 999px; transition: background var(--transition-fast); cursor: pointer; }
+.switch-thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: var(--bg); border-radius: 50%; box-shadow: var(--shadow-sm); transition: transform var(--transition-fast); }
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track .switch-thumb { transform: translateX(18px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Consent dialog */
+.consent-list { margin: 8px 0; padding-left: 20px; font-size: 0.85rem; color: var(--text); }
+.consent-list li { margin-bottom: 6px; }
+#inline-consent-dialog p { font-size: 0.85rem; color: var(--text); line-height: 1.4; }

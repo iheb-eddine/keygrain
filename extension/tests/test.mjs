@@ -67,7 +67,7 @@ function buildContext() {
   runInContext(`var module = {exports:{}}; var exports = module.exports;\n${tweetnaclSrc}\nvar nacl = module.exports;`, ctx);
 
   // Load source files in order
-  for (const file of ['keygrain.js', 'bip39-wordlist.js', 'wallet.js', 'bip85.js', 'totp.js', 'ssh.js', 'sync.js']) {
+  for (const file of ['keygrain.js', 'bip39-wordlist.js', 'wallet.js', 'bip85.js', 'totp.js', 'ssh.js', 'sync.js', 'autofill.js', 'inline-autofill.js']) {
     const src = readFileSync(resolve(shared, file), 'utf8');
     runInContext(src, ctx);
   }
@@ -81,6 +81,18 @@ function call(fnName, ...args) {
   // Serialize args that need to cross the boundary
   ctx._callArgs = args;
   return runInContext(`${fnName}(..._callArgs)`, ctx);
+}
+
+// Helper to call KeygrainAutofill.* pure helpers (autofill.js) in the VM context.
+function ka(method, ...args) {
+  ctx._kaArgs = args;
+  return runInContext(`KeygrainAutofill.${method}(..._kaArgs)`, ctx);
+}
+
+// Helper to call KeygrainInline.* pure helpers (inline-autofill.js) in the VM context.
+function ki(method, ...args) {
+  ctx._kiArgs = args;
+  return runInContext(`KeygrainInline.${method}(..._kiArgs)`, ctx);
 }
 
 // --- Load test vectors ---
@@ -533,6 +545,881 @@ for (const fsvc of syncVectors.services.filter(s => s.expected && s.expected.pas
     assert.equal(pw, fsvc.expected.password);
   });
 }
+
+// ============================================================
+// AUTOFILL PURE-HELPER TESTS (autofill.js — called via KeygrainAutofill.*)
+// ============================================================
+// All pure over element-like / service-like plain objects. No DOM stub needed.
+// `key` on field-descriptor stubs mirrors the opaque handle content.js stamps.
+console.log('\nAutofill Pure-Helper Tests:');
+
+// --- rankServices (4) ---
+await test('rankServices: frecency desc', async () => {
+  const out = ka('rankServices', [
+    { site: 'a', email: 'a', frecency: 1 },
+    { site: 'b', email: 'b', frecency: 5 },
+    { site: 'c', email: 'c', frecency: 3 },
+  ]);
+  assert.deepEqual(Array.from(out, s => s.email), ['b', 'c', 'a']);
+});
+
+await test('rankServices: tie -> updated_at desc', async () => {
+  const out = ka('rankServices', [
+    { site: 'a', email: 'a', frecency: 2, updated_at: 100 },
+    { site: 'b', email: 'b', frecency: 2, updated_at: 300 },
+    { site: 'c', email: 'c', frecency: 2, updated_at: 200 },
+  ]);
+  assert.deepEqual(Array.from(out, s => s.email), ['b', 'c', 'a']);
+});
+
+await test('rankServices: tie -> site+email asc', async () => {
+  const out = ka('rankServices', [
+    { site: 'b', email: 'z', frecency: 1, updated_at: 1 },
+    { site: 'a', email: 'y', frecency: 1, updated_at: 1 },
+    { site: 'a', email: 'x', frecency: 1, updated_at: 1 },
+  ]);
+  assert.deepEqual(Array.from(out, s => s.email), ['x', 'y', 'z']);
+});
+
+await test('rankServices: missing fields treated as 0 (no throw, stable)', async () => {
+  const out = ka('rankServices', [
+    { site: 'a', email: 'a' },
+    { site: 'b', email: 'b', frecency: 1 },
+  ]);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].email, 'b');
+});
+
+// --- looksLikeEmail (5) ---
+await test('looksLikeEmail: a@b.com -> true', async () => { assert.equal(ka('looksLikeEmail', 'a@b.com'), true); });
+await test('looksLikeEmail: nope -> false', async () => { assert.equal(ka('looksLikeEmail', 'nope'), false); });
+await test('looksLikeEmail: a@bcom -> false (no dot after @)', async () => { assert.equal(ka('looksLikeEmail', 'a@bcom'), false); });
+await test('looksLikeEmail: "a b@c.com" -> false (whitespace)', async () => { assert.equal(ka('looksLikeEmail', 'a b@c.com'), false); });
+await test('looksLikeEmail: @b.com -> false (@ at index 0)', async () => { assert.equal(ka('looksLikeEmail', '@b.com'), false); });
+
+// --- selectServiceForFill (10) ---
+await test('selectServiceForFill: 0 matches -> none', async () => {
+  const r = ka('selectServiceForFill', [], { pageEmail: null });
+  assert.equal(r.decision, 'none');
+});
+
+await test('selectServiceForFill: 1 + no identity -> fill', async () => {
+  const r = ka('selectServiceForFill', [{ email: 'a@b.com' }], { pageEmail: null });
+  assert.equal(r.decision, 'fill');
+  assert.equal(r.service.email, 'a@b.com');
+});
+
+await test('selectServiceForFill: >1 + no identity -> ambiguous (ranked)', async () => {
+  const r = ka('selectServiceForFill', [
+    { email: 'a@b.com', frecency: 1 },
+    { email: 'c@d.com', frecency: 5 },
+  ], { pageEmail: null });
+  assert.equal(r.decision, 'ambiguous');
+  assert.equal(r.candidates[0].email, 'c@d.com');
+});
+
+await test('selectServiceForFill: identity matches one -> fill', async () => {
+  const r = ka('selectServiceForFill', [
+    { email: 'a@b.com' },
+    { email: 'c@d.com' },
+  ], { pageEmail: 'c@d.com' });
+  assert.equal(r.decision, 'fill');
+  assert.equal(r.service.email, 'c@d.com');
+});
+
+await test('selectServiceForFill: identity matches none -> ambiguous (never contradicting)', async () => {
+  const r = ka('selectServiceForFill', [
+    { email: 'a@b.com' },
+    { email: 'c@d.com' },
+  ], { pageEmail: 'x@y.com' });
+  assert.equal(r.decision, 'ambiguous');
+  assert.equal(r.service, undefined);
+});
+
+await test('selectServiceForFill: identity matches >1 -> ambiguous (ranked exact subset)', async () => {
+  const r = ka('selectServiceForFill', [
+    { email: 'a@b.com', site: 's1', frecency: 1 },
+    { email: 'a@b.com', site: 's2', frecency: 9 },
+  ], { pageEmail: 'a@b.com' });
+  assert.equal(r.decision, 'ambiguous');
+  assert.equal(r.candidates.length, 2);
+  assert.equal(r.candidates[0].site, 's2');
+});
+
+await test('selectServiceForFill: case-insensitive identity match -> fill', async () => {
+  const r = ka('selectServiceForFill', [
+    { email: 'ALICE@b.com' },
+    { email: 'bob@b.com' },
+  ], { pageEmail: 'alice@b.com' });
+  assert.equal(r.decision, 'fill');
+  assert.equal(r.service.email, 'ALICE@b.com');
+});
+
+await test('selectServiceForFill: whitespace/upper identity normalized -> fill', async () => {
+  const r = ka('selectServiceForFill', [
+    { email: 'a@b.com' },
+    { email: 'c@d.com' },
+  ], { pageEmail: '  A@B.com ' });
+  assert.equal(r.decision, 'fill');
+  assert.equal(r.service.email, 'a@b.com');
+});
+
+await test('selectServiceForFill: 1 host match but identity differs -> ambiguous', async () => {
+  const r = ka('selectServiceForFill', [{ email: 'a@b.com' }], { pageEmail: 'c@d.com' });
+  assert.equal(r.decision, 'ambiguous');
+  assert.equal(r.service, undefined);
+});
+
+await test('selectServiceForFill: ambiguous candidates are rank-ordered', async () => {
+  const r = ka('selectServiceForFill', [
+    { email: 'a@b.com', frecency: 1 },
+    { email: 'b@b.com', frecency: 2 },
+    { email: 'c@b.com', frecency: 3 },
+  ], { pageEmail: null });
+  assert.equal(r.decision, 'ambiguous');
+  assert.deepEqual(Array.from(r.candidates, s => s.email), ['c@b.com', 'b@b.com', 'a@b.com']);
+});
+
+// --- filterMostSpecific (14) ---
+// Narrows the domainMatches set to the deepest matching tier (most-specific-match
+// wins). Every case also documents the SUBSET/never-broaden security property.
+await test('filterMostSpecific: subdomain host + TLD & subdomain saved -> subdomain only (most specific wins)', async () => {
+  const out = ka('filterMostSpecific', [
+    { site: 'example.com', email: 'a@b.com' },
+    { site: 'app.example.com', email: 'a@b.com' },
+  ], 'app.example.com');
+  assert.deepEqual(Array.from(out, s => s.site), ['app.example.com']);
+});
+
+await test('filterMostSpecific: subdomain host + only TLD saved -> TLD (PRESERVE: still fills)', async () => {
+  const out = ka('filterMostSpecific', [{ site: 'example.com', email: 'a@b.com' }], 'app.example.com');
+  assert.deepEqual(Array.from(out, s => s.site), ['example.com']);
+});
+
+await test('filterMostSpecific: TLD host + TLD & subdomain saved -> TLD only', async () => {
+  const out = ka('filterMostSpecific', [
+    { site: 'example.com', email: 'a@b.com' },
+    { site: 'app.example.com', email: 'a@b.com' },
+  ], 'example.com');
+  assert.deepEqual(Array.from(out, s => s.site), ['example.com']);
+});
+
+await test('filterMostSpecific: TLD host + only subdomain saved -> [] (subdomain never matches an ancestor host)', async () => {
+  const out = ka('filterMostSpecific', [{ site: 'app.example.com', email: 'a@b.com' }], 'example.com');
+  assert.equal(out.length, 0);
+});
+
+await test('filterMostSpecific: 3-level chain -> deepest only', async () => {
+  const out = ka('filterMostSpecific', [
+    { site: 'example.com', email: 'a@b.com' },
+    { site: 'b.example.com', email: 'a@b.com' },
+    { site: 'a.b.example.com', email: 'a@b.com' },
+  ], 'a.b.example.com');
+  assert.deepEqual(Array.from(out, s => s.site), ['a.b.example.com']);
+});
+
+await test('filterMostSpecific: genuine tie (two accounts same exact site) -> both, input order preserved', async () => {
+  const out = ka('filterMostSpecific', [
+    { site: 'app.example.com', email: 'first@b.com' },
+    { site: 'app.example.com', email: 'second@b.com' },
+  ], 'app.example.com');
+  assert.deepEqual(Array.from(out, s => s.email), ['first@b.com', 'second@b.com']);
+});
+
+await test('filterMostSpecific: no host match -> []', async () => {
+  const out = ka('filterMostSpecific', [
+    { site: 'other.com', email: 'a@b.com' },
+    { site: 'app.example.org', email: 'a@b.com' },
+  ], 'app.example.com');
+  assert.equal(out.length, 0);
+});
+
+await test('filterMostSpecific: hostile/missing site does not throw; name-fallback + only valid match returned', async () => {
+  const out = ka('filterMostSpecific', [
+    null,
+    { site: 12345, email: 'n@b.com' },
+    { site: {}, email: 'o@b.com' },
+    {},
+    { name: 'example.com', email: 'v@b.com' },
+  ], 'example.com');
+  assert.deepEqual(Array.from(out, s => s.email), ['v@b.com']);
+});
+
+await test('filterMostSpecific: multi-label public suffix (no PSL) -> deepest saved', async () => {
+  const out = ka('filterMostSpecific', [
+    { site: 'example.co.uk', email: 'a@b.com' },
+    { site: 'app.example.co.uk', email: 'a@b.com' },
+  ], 'app.example.co.uk');
+  assert.deepEqual(Array.from(out, s => s.site), ['app.example.co.uk']);
+});
+
+await test('filterMostSpecific: "." anchor rejects substring (notexample.com vs example.com) -> []', async () => {
+  const out = ka('filterMostSpecific', [{ site: 'example.com', email: 'a@b.com' }], 'notexample.com');
+  assert.equal(out.length, 0);
+});
+
+await test('filterMostSpecific: "." anchor rejects partial label (xample.com vs app.example.com) -> []', async () => {
+  const out = ka('filterMostSpecific', [{ site: 'xample.com', email: 'a@b.com' }], 'app.example.com');
+  assert.equal(out.length, 0);
+});
+
+await test('filterMostSpecific: case-insensitive site match', async () => {
+  const out = ka('filterMostSpecific', [{ site: 'APP.Example.COM', email: 'a@b.com' }], 'app.example.com');
+  assert.deepEqual(Array.from(out, s => s.email), ['a@b.com']);
+});
+
+await test('filterMostSpecific + selectServiceForFill: subdomain+both -> {decision:"fill"} (was ambiguous)', async () => {
+  ctx._kaArgs = [[
+    { site: 'example.com', email: 'a@b.com' },
+    { site: 'app.example.com', email: 'a@b.com' },
+  ], 'app.example.com'];
+  const r = runInContext('KeygrainAutofill.selectServiceForFill(KeygrainAutofill.filterMostSpecific(_kaArgs[0], _kaArgs[1]), { pageEmail: null })', ctx);
+  assert.equal(r.decision, 'fill');
+  assert.equal(r.service.site, 'app.example.com');
+});
+
+await test('filterMostSpecific + selectServiceForFill: genuine tie -> {decision:"ambiguous"} (defer)', async () => {
+  ctx._kaArgs = [[
+    { site: 'app.example.com', email: 'a@b.com' },
+    { site: 'app.example.com', email: 'c@d.com' },
+  ], 'app.example.com'];
+  const r = runInContext('KeygrainAutofill.selectServiceForFill(KeygrainAutofill.filterMostSpecific(_kaArgs[0], _kaArgs[1]), { pageEmail: null })', ctx);
+  assert.equal(r.decision, 'ambiguous');
+  assert.equal(r.candidates.length, 2);
+});
+
+// --- isPasswordDescriptor (3) ---
+await test('isPasswordDescriptor: type=password -> true', async () => {
+  assert.equal(ka('isPasswordDescriptor', { type: 'password' }), true);
+});
+await test('isPasswordDescriptor: name contains pass -> true', async () => {
+  assert.equal(ka('isPasswordDescriptor', { type: 'text', name: 'passwd' }), true);
+});
+await test('isPasswordDescriptor: plain text -> false', async () => {
+  assert.equal(ka('isPasswordDescriptor', { type: 'text', name: 'firstname', id: 'fn' }), false);
+});
+
+// --- isFillableUsernameDescriptor (4) ---
+await test('isFillableUsernameDescriptor: visible type=email -> true', async () => {
+  assert.equal(ka('isFillableUsernameDescriptor', { type: 'email', visible: true, disabled: false, readOnly: false }), true);
+});
+await test('isFillableUsernameDescriptor: visible autocomplete=username -> true', async () => {
+  assert.equal(ka('isFillableUsernameDescriptor', { type: 'text', autocomplete: 'username', visible: true }), true);
+});
+await test('isFillableUsernameDescriptor: readonly username -> false', async () => {
+  assert.equal(ka('isFillableUsernameDescriptor', { type: 'text', autocomplete: 'username', visible: true, readOnly: true }), false);
+});
+await test('isFillableUsernameDescriptor: password field -> false', async () => {
+  assert.equal(ka('isFillableUsernameDescriptor', { type: 'password', visible: true }), false);
+});
+
+// --- extractPageEmail (7) ---
+await test('extractPageEmail: focused wins over others', async () => {
+  const r = ka('extractPageEmail', [
+    { type: 'email', visible: true, value: 'visible@x.com' },
+    { type: 'email', focused: true, visible: false, value: 'FOCUSED@x.com' },
+  ]);
+  assert.equal(r, 'focused@x.com');
+});
+await test('extractPageEmail: visible filled email', async () => {
+  const r = ka('extractPageEmail', [{ type: 'email', visible: true, disabled: false, readOnly: false, value: 'v@x.com' }]);
+  assert.equal(r, 'v@x.com');
+});
+await test('extractPageEmail: readonly email (Google password step)', async () => {
+  const r = ka('extractPageEmail', [{ type: 'email', visible: true, readOnly: true, value: 'ro@x.com' }]);
+  assert.equal(r, 'ro@x.com');
+});
+await test('extractPageEmail: hidden identifier w/ email-shaped value', async () => {
+  const r = ka('extractPageEmail', [{ type: 'hidden', name: 'identifier', value: 'h@x.com' }]);
+  assert.equal(r, 'h@x.com');
+});
+await test('extractPageEmail: hidden w/ non-email value -> ignored -> null', async () => {
+  const r = ka('extractPageEmail', [{ type: 'hidden', name: 'identifier', value: 'notanemail' }]);
+  assert.equal(r, null);
+});
+await test('extractPageEmail: no identity fields -> null', async () => {
+  const r = ka('extractPageEmail', [{ type: 'password', visible: true, value: 'x' }]);
+  assert.equal(r, null);
+});
+await test('extractPageEmail: value normalized (trim+lowercase)', async () => {
+  const r = ka('extractPageEmail', [{ type: 'email', visible: true, value: '  Mixed@Case.COM  ' }]);
+  assert.equal(r, 'mixed@case.com');
+});
+
+// --- describeField (5) ---
+function elStub(props) {
+  return {
+    tagName: props.tagName || 'INPUT',
+    type: props.type || 'text',
+    name: props.name || '',
+    id: props.id || '',
+    getAttribute: (n) => (props.attrs && props.attrs[n] != null ? props.attrs[n] : null),
+    offsetParent: 'offsetParent' in props ? props.offsetParent : {},
+    offsetWidth: 'offsetWidth' in props ? props.offsetWidth : 100,
+    disabled: !!props.disabled,
+    readOnly: !!props.readOnly,
+    value: props.value == null ? '' : props.value,
+  };
+}
+
+await test('describeField: maps type/name/id/autocomplete', async () => {
+  const el = elStub({ type: 'email', name: 'user', id: 'u1', attrs: { autocomplete: 'username' } });
+  const d = ka('describeField', el, null);
+  assert.equal(d.tag, 'input');
+  assert.equal(d.type, 'email');
+  assert.equal(d.name, 'user');
+  assert.equal(d.id, 'u1');
+  assert.equal(d.autocomplete, 'username');
+});
+await test('describeField: visible=false when offsetParent null', async () => {
+  const el = elStub({ offsetParent: null, offsetWidth: 10 });
+  assert.equal(ka('describeField', el, null).visible, false);
+});
+await test('describeField: visible=false when offsetWidth 0', async () => {
+  const el = elStub({ offsetParent: {}, offsetWidth: 0 });
+  assert.equal(ka('describeField', el, null).visible, false);
+});
+await test('describeField: disabled/readOnly mapped', async () => {
+  const el = elStub({ disabled: true, readOnly: true });
+  const d = ka('describeField', el, null);
+  assert.equal(d.disabled, true);
+  assert.equal(d.readOnly, true);
+});
+await test('describeField: focused=true when el===activeElement', async () => {
+  const el = elStub({ type: 'email' });
+  assert.equal(ka('describeField', el, el).focused, true);
+});
+
+// --- pickPasswordField (3) ---
+await test('pickPasswordField: focused password preferred', async () => {
+  const r = ka('pickPasswordField', [
+    { type: 'password', visible: true, key: 'p1' },
+    { type: 'password', focused: true, visible: true, key: 'p2' },
+  ]);
+  assert.equal(r, 'p2');
+});
+await test('pickPasswordField: first visible password when none focused', async () => {
+  const r = ka('pickPasswordField', [
+    { type: 'password', visible: true, key: 'p1' },
+    { type: 'password', visible: true, key: 'p2' },
+  ]);
+  assert.equal(r, 'p1');
+});
+await test('pickPasswordField: none -> null', async () => {
+  const r = ka('pickPasswordField', [{ type: 'text', visible: true, key: 't1' }]);
+  assert.equal(r, null);
+});
+
+// --- pickUsernameField (3) ---
+await test('pickUsernameField: visible username by precedence (autocomplete username first)', async () => {
+  const r = ka('pickUsernameField', [
+    { type: 'email', visible: true, key: 'e1' },
+    { type: 'text', autocomplete: 'username', visible: true, key: 'u1' },
+  ]);
+  assert.equal(r, 'u1');
+});
+await test('pickUsernameField: skips readonly/disabled', async () => {
+  const r = ka('pickUsernameField', [
+    { type: 'text', autocomplete: 'username', visible: true, readOnly: true, key: 'u1' },
+    { type: 'email', visible: true, key: 'e1' },
+  ]);
+  assert.equal(r, 'e1');
+});
+await test('pickUsernameField: none -> null', async () => {
+  const r = ka('pickUsernameField', [{ type: 'password', visible: true, key: 'p1' }]);
+  assert.equal(r, null);
+});
+
+// ============================================================
+// TYPE-GATE REGRESSION (PyPI `type=checkbox id=show-password` bug)
+// ============================================================
+// Non-enterable controls (checkbox/radio/submit/hidden/...) whose name/id merely
+// CONTAINS 'pass'/'user' must NOT be classified as a fillable password/username
+// target. The pure classifiers now mirror the inline cheapTagTypeGate accepted
+// set ({password,email,text,tel,''}). Regression: PyPI's show-password checkbox
+// is visible and sits BEFORE the real password input, so the buggy
+// pickPasswordField returned the checkbox and the real field stayed empty.
+console.log('\nType-Gate Regression Tests (autofill.js):');
+
+// isPasswordDescriptor — non-enterable types excluded (even with 'pass' in name/id)
+await test('isPasswordDescriptor: checkbox id=show-password -> false (PyPI bug)', async () => {
+  assert.equal(ka('isPasswordDescriptor', { type: 'checkbox', id: 'show-password' }), false);
+});
+await test('isPasswordDescriptor: radio name=passcode -> false', async () => {
+  assert.equal(ka('isPasswordDescriptor', { type: 'radio', name: 'passcode' }), false);
+});
+await test('isPasswordDescriptor: submit id=submit-pass -> false', async () => {
+  assert.equal(ka('isPasswordDescriptor', { type: 'submit', id: 'submit-pass' }), false);
+});
+await test('isPasswordDescriptor: hidden name=password -> false', async () => {
+  assert.equal(ka('isPasswordDescriptor', { type: 'hidden', name: 'password' }), false);
+});
+// PRESERVE: enterable-type heuristics still classify real password fields.
+await test('isPasswordDescriptor: text name=password (toggled show-password) -> true', async () => {
+  assert.equal(ka('isPasswordDescriptor', { type: 'text', name: 'password' }), true);
+});
+await test('isPasswordDescriptor: text autocomplete=current-password -> true', async () => {
+  assert.equal(ka('isPasswordDescriptor', { type: 'text', autocomplete: 'current-password' }), true);
+});
+
+// isFillableUsernameDescriptor — non-enterable types excluded (even visible + 'user')
+await test('isFillableUsernameDescriptor: checkbox id=show-username (visible) -> false', async () => {
+  assert.equal(ka('isFillableUsernameDescriptor', { type: 'checkbox', id: 'show-username', visible: true }), false);
+});
+await test('isFillableUsernameDescriptor: radio name=user (visible) -> false', async () => {
+  assert.equal(ka('isFillableUsernameDescriptor', { type: 'radio', name: 'user', visible: true }), false);
+});
+await test('isFillableUsernameDescriptor: submit id=user-submit (visible) -> false', async () => {
+  assert.equal(ka('isFillableUsernameDescriptor', { type: 'submit', id: 'user-submit', visible: true }), false);
+});
+// Preserved-behavior lock: a plain search box (type=text name=q) is NOT a
+// fillable username. Guards against a future isUsernameLike change making
+// 'q'/'search' identity-like. (Independent of the type gate — 'q' fails the
+// isUsernameLike name/id regex — but the user listed it as a preserved item.)
+await test('isFillableUsernameDescriptor: text name=q search box (visible) -> false', async () => {
+  assert.equal(ka('isFillableUsernameDescriptor', { type: 'text', name: 'q', visible: true }), false);
+});
+
+// Full PyPI descriptor set in exact DOM order. The show-password checkbox is
+// visible:true and precedes the real type=password input — this is what makes it
+// a true regression test (fails on the unfixed pickers, passes only after the gate).
+const PYPI_LOGIN_FIELDS = [
+  { tag: 'input', type: 'text',     name: 'q',          id: 'search',        visible: true,  key: 'k_search' },
+  { tag: 'input', type: 'text',     name: 'q',          id: 'mobile-search', visible: true,  key: 'k_msearch' },
+  { tag: 'input', type: 'hidden',   name: 'csrf_token', id: '',              visible: false, key: 'k_csrf' },
+  { tag: 'input', type: 'text',     name: 'username',   id: 'username',      autocomplete: 'username', visible: true, key: 'k_user' },
+  { tag: 'input', type: 'checkbox', name: '',           id: 'show-password', visible: true,  key: 'k_showpw' },
+  { tag: 'input', type: 'password', name: 'password',   id: 'password',      autocomplete: 'current-password', visible: true, key: 'k_pw' },
+];
+await test('PyPI regression: pickPasswordField -> real password field, NOT the show-password checkbox', async () => {
+  assert.equal(ka('pickPasswordField', PYPI_LOGIN_FIELDS), 'k_pw');
+});
+await test('PyPI regression: pickUsernameField -> the username field (search boxes/checkbox ignored)', async () => {
+  assert.equal(ka('pickUsernameField', PYPI_LOGIN_FIELDS), 'k_user');
+});
+
+// ============================================================
+// INLINE-AUTOFILL PURE-HELPER TESTS (inline-autofill.js — KeygrainInline.*)
+// ============================================================
+// Increment A pure helpers for native in-field autofill plumbing. Pure over
+// plain service/account objects — no DOM. computeMatchPatterns bounds persistent
+// registration (drop malformed hosts so one bad site can't poison the whole
+// batch); sanitizeAccountForContent is the security whitelist for what crosses
+// into the content world.
+console.log('\nInline-Autofill Pure-Helper Tests:');
+
+// --- computeMatchPatterns (13) ---
+await test('computeMatchPatterns: multi-label -> exact + subdomain wildcard', async () => {
+  const out = ki('computeMatchPatterns', [{ id: '1', site: 'example.com' }]);
+  assert.deepEqual(out, ['*://*.example.com/*', '*://example.com/*']);
+});
+await test('computeMatchPatterns: bare TLD com -> exact only (no wildcard)', async () => {
+  const out = ki('computeMatchPatterns', [{ id: '1', site: 'com' }]);
+  assert.deepEqual(out, ['*://com/*']);
+});
+await test('computeMatchPatterns: single-label localhost -> exact only', async () => {
+  const out = ki('computeMatchPatterns', [{ id: '1', site: 'localhost' }]);
+  assert.deepEqual(out, ['*://localhost/*']);
+});
+await test('computeMatchPatterns: IPv4 -> exact only (no wildcard)', async () => {
+  const out = ki('computeMatchPatterns', [{ id: '1', site: '192.168.1.1' }]);
+  assert.deepEqual(out, ['*://192.168.1.1/*']);
+});
+await test('computeMatchPatterns: IPv6 [::1] -> dropped (no pattern, no throw)', async () => {
+  const out = ki('computeMatchPatterns', [{ id: '1', site: '[::1]' }]);
+  assert.deepEqual(out, []);
+});
+await test('computeMatchPatterns: empty/garbage site -> dropped', async () => {
+  const out = ki('computeMatchPatterns', [
+    { id: '1', site: '' },
+    { id: '2', site: 'has space' },
+    { id: '3', site: 'a/b' },
+  ]);
+  assert.deepEqual(out, []);
+});
+await test('computeMatchPatterns: port example.com:8443 -> dropped', async () => {
+  const out = ki('computeMatchPatterns', [{ id: '1', site: 'example.com:8443' }]);
+  assert.deepEqual(out, []);
+});
+await test('computeMatchPatterns: trailing dot example.com. -> dropped', async () => {
+  const out = ki('computeMatchPatterns', [{ id: '1', site: 'example.com.' }]);
+  assert.deepEqual(out, []);
+});
+await test('computeMatchPatterns: userinfo u@h -> dropped', async () => {
+  const out = ki('computeMatchPatterns', [{ id: '1', site: 'u@h' }]);
+  assert.deepEqual(out, []);
+});
+await test('computeMatchPatterns: two services same host -> deduped', async () => {
+  const out = ki('computeMatchPatterns', [
+    { id: '1', site: 'example.com', email: 'a@x.com' },
+    { id: '2', site: 'example.com', email: 'b@x.com' },
+  ]);
+  assert.deepEqual(out, ['*://*.example.com/*', '*://example.com/*']);
+});
+await test('computeMatchPatterns: two services different hosts -> both', async () => {
+  const out = ki('computeMatchPatterns', [
+    { id: '1', site: 'a.com' },
+    { id: '2', site: 'b.org' },
+  ]);
+  assert.deepEqual(out, ['*://*.a.com/*', '*://*.b.org/*', '*://a.com/*', '*://b.org/*']);
+});
+await test('computeMatchPatterns: site missing -> falls back to name', async () => {
+  const out = ki('computeMatchPatterns', [{ id: '1', name: 'fallback.com' }]);
+  assert.deepEqual(out, ['*://*.fallback.com/*', '*://fallback.com/*']);
+});
+await test('computeMatchPatterns: output deterministic (sorted, stable)', async () => {
+  const a = ki('computeMatchPatterns', [{ id: '1', site: 'zeta.com' }, { id: '2', site: 'alpha.com' }]);
+  const b = ki('computeMatchPatterns', [{ id: '2', site: 'alpha.com' }, { id: '1', site: 'zeta.com' }]);
+  assert.deepEqual(a, b);
+  assert.deepEqual(a, ['*://*.alpha.com/*', '*://*.zeta.com/*', '*://alpha.com/*', '*://zeta.com/*']);
+});
+
+// --- inlineIconState (7) ---
+await test('inlineIconState: !enabled -> hidden', async () => {
+  assert.equal(ki('inlineIconState', { enabled: false, unlocked: true, hasLoginField: true, hasMatches: true }), 'hidden');
+});
+await test('inlineIconState: !hasLoginField -> hidden', async () => {
+  assert.equal(ki('inlineIconState', { enabled: true, unlocked: true, hasLoginField: false, hasMatches: true }), 'hidden');
+});
+await test('inlineIconState: enabled + !unlocked + hasLoginField -> locked', async () => {
+  assert.equal(ki('inlineIconState', { enabled: true, unlocked: false, hasLoginField: true, hasMatches: false }), 'locked');
+});
+await test('inlineIconState: enabled + unlocked + hasLoginField + hasMatches -> active', async () => {
+  assert.equal(ki('inlineIconState', { enabled: true, unlocked: true, hasLoginField: true, hasMatches: true }), 'active');
+});
+await test('inlineIconState: enabled + unlocked + hasLoginField + !hasMatches -> hidden', async () => {
+  assert.equal(ki('inlineIconState', { enabled: true, unlocked: true, hasLoginField: true, hasMatches: false }), 'hidden');
+});
+await test('inlineIconState: locked precedence when both !unlocked and !hasMatches', async () => {
+  assert.equal(ki('inlineIconState', { enabled: true, unlocked: false, hasLoginField: true, hasMatches: false }), 'locked');
+});
+await test('inlineIconState: never throws on missing keys', async () => {
+  assert.equal(ki('inlineIconState', {}), 'hidden');
+  assert.equal(ki('inlineIconState'), 'hidden');
+});
+
+// --- sanitizeAccountForContent (6) ---
+const sacFull = {
+  id: 'svc-1', email: 'a@b.com', name: 'My Acct', site: 'b.com',
+  password: 'SECRET', counter: 3, length: 32, symbols: '!@#',
+  totp: { seed: 'x' }, ssh: { key: 'y' }, frecency: 9, updated_at: 123,
+};
+await test('sanitizeAccountForContent: output has exactly {token,email,name}', async () => {
+  const out = ki('sanitizeAccountForContent', sacFull);
+  assert.deepEqual(Object.keys(out).sort(), ['email', 'name', 'token']);
+});
+await test('sanitizeAccountForContent: password stripped', async () => {
+  assert.equal('password' in ki('sanitizeAccountForContent', sacFull), false);
+});
+await test('sanitizeAccountForContent: counter/length/symbols stripped', async () => {
+  const out = ki('sanitizeAccountForContent', sacFull);
+  assert.equal('counter' in out, false);
+  assert.equal('length' in out, false);
+  assert.equal('symbols' in out, false);
+});
+await test('sanitizeAccountForContent: totp/ssh stripped', async () => {
+  const out = ki('sanitizeAccountForContent', sacFull);
+  assert.equal('totp' in out, false);
+  assert.equal('ssh' in out, false);
+});
+await test('sanitizeAccountForContent: site/frecency/updated_at stripped', async () => {
+  const out = ki('sanitizeAccountForContent', sacFull);
+  assert.equal('site' in out, false);
+  assert.equal('frecency' in out, false);
+  assert.equal('updated_at' in out, false);
+});
+await test('sanitizeAccountForContent: token equals service.id', async () => {
+  const out = ki('sanitizeAccountForContent', sacFull);
+  assert.equal(out.token, 'svc-1');
+  assert.equal(out.email, 'a@b.com');
+  assert.equal(out.name, 'My Acct');
+});
+
+// --- buildDropdownModel (12) — host-aware secondary dedupe ---
+// Signature: buildDropdownModel(accounts, host) -> [{token, primary, secondary}].
+// primary = email. secondary = name ONLY when it adds info: non-empty AND its
+// trimmed/lowercased form differs from BOTH host AND email. PURE + MUST NOT throw.
+await test('buildDropdownModel: maps token/email->primary, distinct name->secondary (host given)', async () => {
+  const out = ki('buildDropdownModel', [{ token: 't1', email: 'a@b.com', name: 'Acct' }], 'b.com');
+  assert.equal(out[0].token, 't1');
+  assert.equal(out[0].primary, 'a@b.com');
+  assert.equal(out[0].secondary, 'Acct');
+});
+await test('buildDropdownModel: order preserved (host given)', async () => {
+  const out = ki('buildDropdownModel', [
+    { token: 't1', email: 'a@b.com', name: 'Work' },
+    { token: 't2', email: 'c@d.com', name: 'Home' },
+  ], 'b.com');
+  assert.deepEqual(Array.from(out, m => m.token), ['t1', 't2']);
+});
+await test('buildDropdownModel: empty input -> []', async () => {
+  assert.deepEqual(ki('buildDropdownModel', [], 'b.com'), []);
+});
+await test('buildDropdownModel: missing name (undefined) -> secondary ""', async () => {
+  const out = ki('buildDropdownModel', [{ token: 't1', email: 'a@b.com' }], 'b.com');
+  assert.equal(out[0].secondary, '');
+});
+await test('buildDropdownModel: empty-string name -> secondary ""', async () => {
+  const out = ki('buildDropdownModel', [{ token: 't1', email: 'a@b.com', name: '' }], 'b.com');
+  assert.equal(out[0].secondary, '');
+});
+await test('buildDropdownModel: no extra fields leak into the model', async () => {
+  const out = ki('buildDropdownModel', [{ token: 't1', email: 'a@b.com', name: 'Work', password: 'x', site: 's' }], 'b.com');
+  assert.deepEqual(Object.keys(out[0]).sort(), ['primary', 'secondary', 'token']);
+});
+await test('buildDropdownModel: name === host (exact) -> secondary ""', async () => {
+  const out = ki('buildDropdownModel', [{ token: 't1', email: 'u@github.com', name: 'github.com' }], 'github.com');
+  assert.equal(out[0].secondary, '');
+});
+await test('buildDropdownModel: name === host (case/whitespace-insensitive) -> secondary ""', async () => {
+  const out = ki('buildDropdownModel', [{ token: 't1', email: 'u@x.com', name: '  GitHub.COM  ' }], 'github.com');
+  assert.equal(out[0].secondary, '');
+});
+await test('buildDropdownModel: name === email -> secondary ""', async () => {
+  const out = ki('buildDropdownModel', [{ token: 't1', email: 'a@b.com', name: 'a@b.com' }], 'x.com');
+  assert.equal(out[0].secondary, '');
+});
+await test('buildDropdownModel: distinct name "Work" -> secondary "Work"', async () => {
+  const out = ki('buildDropdownModel', [{ token: 't1', email: 'a@b.com', name: 'Work' }], 'b.com');
+  assert.equal(out[0].secondary, 'Work');
+});
+await test('buildDropdownModel: missing host arg -> treated as "" (name shows if != email; hidden when == email)', async () => {
+  const shows = ki('buildDropdownModel', [{ token: 't1', email: 'a@b.com', name: 'Work' }]);
+  assert.equal(shows[0].secondary, 'Work');
+  const hidden = ki('buildDropdownModel', [{ token: 't2', email: 'a@b.com', name: 'a@b.com' }]);
+  assert.equal(hidden[0].secondary, '');
+});
+await test('buildDropdownModel: non-string name does not throw, coerces (hostile sync data)', async () => {
+  let out;
+  assert.doesNotThrow(() => { out = ki('buildDropdownModel', [{ token: 't1', email: 'a@b.com', name: 12345 }], 'b.com'); });
+  assert.equal(out[0].secondary, '12345');
+  assert.equal(typeof out[0].secondary, 'string');
+});
+
+// ============================================================
+// INLINE-AUTOFILL-UI BEHAVIORAL TESTS (shared/inline-autofill-ui.js — F1 fix)
+// ============================================================
+// The UI file is a self-executing DOM IIFE with NO exports, so these tests load
+// it into a vm context under a HAND-ROLLED DOM/chrome mock (jsdom is banned by the
+// no-npm-deps rule) and drive it through its real event handlers. They verify the
+// F1 clickjacking-fix CONTROL FLOW that remains after the confirmed-non-functional
+// IO-v2 occlusion gate was dropped (the Chrome contingency): layer A (the
+// activeIndex=-1 no-op) and layer B (the pointerdown+click arm/consume). They do
+// NOT — and cannot — verify real-browser occlusion, which needs a layout engine
+// Node lacks; the opaque pointer-events:none paint-over residual (now Chrome+Firefox
+// parity) is an accepted, documented limitation, with the toolbar popup + Ctrl/Cmd+
+// Shift+K as the unspoofable fallback. A green run here is a REVERT-GUARD (e.g. it
+// catches a future activeIndex=0 or unarmed-activation regression), not proof
+// against a real paint-over.
+console.log('\nInline-Autofill-UI Behavioral Tests (F1 clickjacking fix — control flow only):');
+
+function loadInlineUI({ accounts = [
+  { token: 't1', email: 'a@example.com', name: 'Alice' },
+  { token: 't2', email: 'b@example.com', name: 'Bob' },
+] } = {}) {
+  const handlers = new WeakMap(); // el -> { type -> [fn] }
+  function on(el, type, fn) { let m = handlers.get(el); if (!m) { m = {}; handlers.set(el, m); } (m[type] = m[type] || []).push(fn); }
+  function off(el, type, fn) { const m = handlers.get(el); if (m && m[type]) m[type] = m[type].filter(x => x !== fn); }
+  function fire(el, type, ev) { const m = handlers.get(el); if (!m || !m[type]) return; for (const fn of m[type].slice()) fn(ev); }
+
+  function makeEl(tag) {
+    return {
+      tagName: (tag || 'div').toUpperCase(),
+      type: '', name: '', id: '', className: '', tabIndex: 0, innerHTML: '', textContent: '',
+      style: { setProperty() {}, removeProperty() {}, getPropertyValue() { return ''; } },
+      children: [], parentNode: null, _attrs: {},
+      setAttribute(k, v) { this._attrs[k] = String(v); },
+      getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; },
+      removeAttribute(k) { delete this._attrs[k]; },
+      appendChild(c) { c.parentNode = this; this.children.push(c); return c; },
+      removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; },
+      addEventListener(t, fn) { on(this, t, fn); },
+      removeEventListener(t, fn) { off(this, t, fn); },
+      getBoundingClientRect() { return { top: 100, left: 100, right: 200, bottom: 130, width: 100, height: 30 }; },
+      focus() {}, scrollIntoView() {}, contains() { return true; },
+    };
+  }
+
+  const state = { host: null, root: null, sent: [] };
+
+  // A visible, enabled, editable password field -> classifies as a login field.
+  const input = makeEl('input');
+  input.type = 'password'; input.offsetParent = {}; input.offsetWidth = 20; input.disabled = false; input.readOnly = false;
+
+  function ElementCtor() {}
+  ElementCtor.prototype.attachShadow = function () { const root = makeEl('#shadow'); state.host = this; state.root = root; return root; };
+
+  const documentEl = makeEl('html'); documentEl.contains = () => true;
+  const body = makeEl('body');
+  const doc = {
+    documentElement: documentEl, body, activeElement: null,
+    createElement: (tag) => makeEl(tag),
+    querySelectorAll: (sel) => (sel === 'input' ? [input] : []),
+    addEventListener() {}, removeEventListener() {}, contains() { return true; },
+    elementFromPoint: () => state.host, // simulate: pointer hits our host (topmost)
+  };
+  const win = { innerWidth: 1000, innerHeight: 800, addEventListener() {}, removeEventListener() {} };
+  const chrome = {
+    runtime: {
+      lastError: undefined,
+      sendMessage: (msg, cb) => { state.sent.push(msg); if (msg && msg.action === 'getInlineMatches') { cb && cb({ enabled: true, locked: false, accounts }); return; } cb && cb(undefined); },
+      onMessage: { addListener() {}, removeListener() {} },
+    },
+  };
+  // Firefox-style promise API. The new sendMsg() PREFERS browser.runtime.sendMessage(msg)
+  // (returns a promise), matching the real Firefox MV2 background that answers by
+  // RETURNING A PROMISE from its inline onMessage listener. This makes the behavioral
+  // tests exercise the exact code path the Firefox fix relies on, and pushes to
+  // state.sent EXACTLY ONCE per call (the callback fallback below is never reached).
+  const browser = {
+    runtime: {
+      lastError: undefined,
+      sendMessage: (msg) => { state.sent.push(msg); return Promise.resolve(msg && msg.action === 'getInlineMatches' ? { enabled: true, locked: false, accounts } : undefined); },
+      onMessage: { addListener() {}, removeListener() {} },
+    },
+  };
+
+  const g = {
+    window: win, document: doc, chrome, browser, Element: ElementCtor,
+    location: { hostname: 'example.com' }, // content-script global; toggleDropdown reads location.hostname for the host-aware model
+    MutationObserver: class { observe() {} disconnect() {} },
+    requestAnimationFrame: () => 0, setTimeout: () => 0, clearTimeout: () => {},
+    console, Math, JSON, Object, Array, String, Number, Boolean, RegExp, Error, Date,
+    Set, Map, WeakMap, WeakSet, Promise, parseInt, parseFloat, isNaN, isFinite,
+  };
+  const c = createContext(g);
+  runInContext(readFileSync(resolve(shared, 'autofill.js'), 'utf8'), c);
+  runInContext(readFileSync(resolve(shared, 'inline-autofill.js'), 'utf8'), c);
+  // Intentionally NO `window.Keygrain*` bridge here: the harness `window` (win) is a distinct object from the context globalThis (g), faithfully modeling Firefox (this===globalThis!==window). Helpers are exposed on globalThis by autofill.js/inline-autofill.js, which is exactly where inline-autofill-ui.js reads them. Re-adding a bridge would MASK a window.* regression in the UI reads.
+  runInContext(readFileSync(resolve(shared, 'inline-autofill-ui.js'), 'utf8'), c);
+
+  return {
+    state, fire,
+    getIcon: () => (state.root ? state.root.children.find(e => e.className === 'kg-icon') : null),
+    getDropdown: () => (state.root ? state.root.children.find(e => e.className === 'kg-dd') : null),
+    rows: (dd) => dd.children.filter(e => e.className === 'kg-opt'),
+    filled: () => state.sent.filter(m => m && m.action === 'fillInline'),
+    ev: (over) => Object.assign({ isTrusted: true, clientX: 150, clientY: 115, preventDefault() {} }, over),
+  };
+}
+
+// engage() is async (awaits the getInlineMatches round-trip); drain microtasks so the icon renders.
+const flushUI = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); await new Promise(r => setImmediate(r)); };
+
+async function openDropdownViaIcon(h) {
+  await flushUI();
+  const icon = h.getIcon();
+  assert.ok(icon, 'icon should render after engage');
+  h.fire(icon, 'pointerdown', h.ev({ currentTarget: icon })); // arm
+  h.fire(icon, 'click', h.ev({ currentTarget: icon }));       // consume -> activateIcon -> openDropdown
+  const dd = h.getDropdown();
+  assert.ok(dd, 'dropdown should open on a trusted (armed+consumed) icon activation');
+  return dd;
+}
+
+// (1) Unit A revert-guard — NON-NEGOTIABLE. activeIndex=-1 is the ONLY reason no
+// fill happens; if activeIndex reverts to 0, this test fails (a stray Enter would
+// fill option 0).
+await test('F1/A: stray Enter with activeIndex=-1 sends NO fillInline', async () => {
+  const h = loadInlineUI();
+  const dd = await openDropdownViaIcon(h);
+  h.fire(dd, 'keydown', h.ev({ key: 'Enter' })); // nothing highlighted (activeIndex=-1)
+  assert.equal(h.filled().length, 0);
+});
+
+// (2) Deliberate keyboard selection still fills.
+await test('F1/A: ArrowDown then Enter on a row sends fillInline', async () => {
+  const h = loadInlineUI();
+  const dd = await openDropdownViaIcon(h);
+  h.fire(dd, 'keydown', h.ev({ key: 'ArrowDown' })); // -1 -> 0
+  h.fire(dd, 'keydown', h.ev({ key: 'Enter' }));
+  assert.equal(h.filled().length, 1);
+  assert.equal(h.filled()[0].token, 't1');
+});
+
+// (3) Unit B — pointerdown+pointerup arm/consume.
+await test('F1/B: option click WITHOUT an armed pointerdown is rejected', async () => {
+  const h = loadInlineUI();
+  const dd = await openDropdownViaIcon(h);
+  const row = h.rows(dd)[0];
+  h.fire(row, 'click', h.ev({ currentTarget: row })); // no prior pointerdown -> not armed
+  assert.equal(h.filled().length, 0);
+});
+await test('F1/B: option click ARMED + trusted sends fillInline', async () => {
+  const h = loadInlineUI();
+  const dd = await openDropdownViaIcon(h);
+  const row = h.rows(dd)[0];
+  h.fire(row, 'pointerdown', h.ev({ currentTarget: row })); // arm
+  h.fire(row, 'click', h.ev({ currentTarget: row }));       // consume -> fill
+  assert.equal(h.filled().length, 1);
+  assert.equal(h.filled()[0].token, 't1');
+});
+
+// (10) Icon arm/consume revert-guard — an unarmed icon click must NOT open.
+await test('F1/B: icon click WITHOUT an armed pointerdown does not open the dropdown', async () => {
+  const h = loadInlineUI();
+  await flushUI();
+  const icon = h.getIcon();
+  assert.ok(icon, 'icon should render');
+  h.fire(icon, 'click', h.ev({ currentTarget: icon })); // no prior pointerdown -> not armed
+  assert.ok(!h.getDropdown(), 'unarmed icon click must not open the dropdown');
+});
+
+// (11) Unit B — the icon renders the real logo as a data: URI <img>.
+await test('Unit B: icon renders an <img> whose src is the PNG data: URI', async () => {
+  const h = loadInlineUI();
+  await flushUI();
+  const icon = h.getIcon();
+  assert.ok(icon, 'icon should render');
+  const img = icon.children.find(e => e.tagName === 'IMG');
+  assert.ok(img, 'icon button should contain an <img>');
+  assert.ok(img.src.startsWith('data:image/png;base64,'), 'img src should be a PNG data: URI');
+  assert.equal(img.getAttribute('aria-hidden'), 'true');
+});
+
+// (12) Unit B — CSP fallback: an img 'error' swaps in the inline SVG so a
+// clickable icon ALWAYS appears (the 'robust' requirement).
+await test('Unit B: img error swaps in the inline ICON_SVG fallback', async () => {
+  const h = loadInlineUI();
+  await flushUI();
+  const icon = h.getIcon();
+  const img = icon.children.find(e => e.tagName === 'IMG');
+  assert.ok(img, 'img should exist before the error');
+  h.fire(img, 'error', {}); // simulate the page CSP blocking the data: image
+  assert.ok(/<svg/.test(icon.innerHTML), 'on img error the button content should become the inline SVG');
+  assert.ok(/currentColor/.test(icon.innerHTML), 'fallback should be the real ICON_SVG');
+});
+
+// (13) Part 2 — XSS-safe avatar revert-guard. The leading avatar shows the email
+// INITIAL via textContent (NOT innerHTML) and is aria-hidden (decorative), so the
+// option's announced text is unchanged and hostile account data cannot inject
+// markup through the avatar. Mirrors the Unit B img guards.
+await test('Part 2: row avatar uses textContent initial (not innerHTML) + aria-hidden', async () => {
+  const h = loadInlineUI();
+  const dd = await openDropdownViaIcon(h);
+  const row = h.rows(dd)[0];
+  const avatar = row.children.find(e => e.className === 'kg-opt-avatar');
+  assert.ok(avatar, 'row should render a .kg-opt-avatar');
+  assert.equal(avatar.textContent, 'A');   // 'a@example.com' -> first char uppercased
+  assert.equal(avatar.innerHTML, '');       // textContent path only — no innerHTML with account data
+  assert.equal(avatar.getAttribute('aria-hidden'), 'true');
+});
+
+// (14) Part 2 — C5 regression guard: the avatar String-coerces the RAW email
+// before .trim(), so a hostile/corrupt non-string email must NOT throw and wedge
+// the fill path; the dropdown must still open and the initial is the coerced char.
+await test('Part 2: non-string email does not throw; dropdown still opens (C5 guard)', async () => {
+  const h = loadInlineUI({ accounts: [{ token: 't1', email: 12345, name: 'x' }] });
+  await flushUI();
+  const icon = h.getIcon();
+  assert.ok(icon, 'icon should render');
+  h.fire(icon, 'pointerdown', h.ev({ currentTarget: icon }));                       // arm
+  assert.doesNotThrow(() => h.fire(icon, 'click', h.ev({ currentTarget: icon })));  // consume -> openDropdown must not throw
+  const dd = h.getDropdown();
+  assert.ok(dd, 'dropdown must open even when email is a non-string');
+  const avatar = h.rows(dd)[0].children.find(e => e.className === 'kg-opt-avatar');
+  assert.equal(avatar.textContent, '1'); // String(12345).trim().charAt(0) -> '1'
+});
 
 // ============================================================
 // SUMMARY
