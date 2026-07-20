@@ -59,6 +59,25 @@
   const settingsSave = document.getElementById("settings-save");
   const versionDisplay = document.getElementById("version-display");
 
+  // In-page autofill (Settings toggle + consent dialog)
+  const inlineAutofillToggle = document.getElementById("inline-autofill-toggle");
+  const inlineConsentDialog = document.getElementById("inline-consent-dialog");
+  const inlineConsentCancel = document.getElementById("inline-consent-cancel");
+  const inlineConsentConfirm = document.getElementById("inline-consent-confirm");
+
+  // Keyboard shortcut section (Settings)
+  const shortcutCurrent = document.getElementById("shortcut-current");
+  const shortcutCurrentNote = document.getElementById("shortcut-current-note");
+  const shortcutStepsEl = document.getElementById("shortcut-customize-steps");
+  const shortcutOpenBtn = document.getElementById("shortcut-open-btn");
+  const shortcutCopyBtn = document.getElementById("shortcut-copy-url");
+
+  // Main-screen shortcut tip
+  const shortcutTip = document.getElementById("shortcut-tip");
+  const shortcutTipText = document.getElementById("shortcut-tip-text");
+  const shortcutTipCustomize = document.getElementById("shortcut-tip-customize");
+  const shortcutTipDismiss = document.getElementById("shortcut-tip-dismiss");
+
   // Reset DOM refs
   const resetBtn = document.getElementById("reset-btn");
   const resetDialog = document.getElementById("reset-dialog");
@@ -90,8 +109,17 @@
   const statusTimerState = {id: null};
   let currentHostname = null;
   let focusedIndex = -1;
+  // When true, the service list is scoped to the auto-detected current site
+  // (filterMostSpecific) instead of the fuzzy search. Persists across re-renders
+  // (sync/add/edit/delete/rotate) until the user manually searches or clears.
+  let siteScopeActive = false;
+  // The exact array most recently rendered into the list, so keyboard Enter
+  // fills the row actually shown (not a recomputed fuzzy list).
+  let renderedServices = [];
   let settings = {autoLockMinutes: 15, defaultLength: 20, defaultSymbols: "!@#$%&*-_=+?", serverUrl: "https://keygrain.com"};
   let isDemoMode = false;
+  const isFirefox = (typeof browser !== "undefined" && !!browser.storage) || /firefox/i.test(navigator.userAgent || "");
+  const isMac = /Mac/i.test(navigator.platform || navigator.userAgent || "");
   let siteRules = null;
   const RULES_PUBLIC_KEY = "nFoyzMF0v9XyAiRzBd5DVvfPJsiNmuDPB9e5Lxld5I0=";
   let autolockPollTimer = null;
@@ -117,6 +145,7 @@
   let resetState = null;
   let addState = null;
   let deleteState = null;
+  let inlineConsentState = null;
 
   const tryDemoLink = document.getElementById("try-demo");
   const demoBanner = document.getElementById("demo-banner");
@@ -213,6 +242,9 @@
       const matched = checkBreaches(result.breaches, services, d.dismissedBreaches || []);
       renderBreachWarnings(matched);
     }
+    // Re-evaluate the shortcut tip after breach content is (or isn't) rendered,
+    // chained off loadBreaches' completion so breach suppression is honored.
+    await renderShortcutTip();
   }
 
   function renderBreachWarnings(matched) {
@@ -417,6 +449,9 @@
     } finally {
       key.fill(0);
     }
+    // Single choke point (RH2): notify the background to re-diff the inline
+    // registration whenever the service list is persisted (incl. sync merges).
+    sendMsg({action: "reregisterInlineAutofill"}).catch(() => {});
     syncGeneration++;
     if (skipNextDebounce) { skipNextDebounce = false; return; }
     if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
@@ -522,6 +557,74 @@
   }
 
 
+  // === Keyboard shortcut discoverability ===
+  async function getCurrentShortcut() {
+    // Live, platform-correct value the browser currently has bound. Any failure
+    // (API absent on old engines, or rejection) collapses to "" → "Not set".
+    try {
+      return pickShortcut(await chrome.commands.getAll());
+    } catch {
+      return "";
+    }
+  }
+
+  async function renderShortcutSettings() {
+    const info = shortcutCustomizeInfo(isFirefox);
+    // Rebuild the steps list idempotently: clear, then one <li> per step via
+    // textContent (no innerHTML, no accumulation across reopens).
+    shortcutStepsEl.textContent = "";
+    info.steps.forEach(step => {
+      const li = document.createElement("li");
+      li.textContent = step;
+      shortcutStepsEl.appendChild(li);
+    });
+    // Auto-open button only where the engine supports it (Chromium). Toggled
+    // synchronously from the sync method so the focus trap never sees a
+    // transient state before the await below resolves.
+    shortcutOpenBtn.classList.toggle("hidden", info.method !== "tabs");
+    // Current shortcut — never empty. Stays "Not set" until the live value
+    // resolves, then shows the verbatim label (or "Not set" if unbound).
+    shortcutCurrent.textContent = "Not set";
+    const shortcut = await getCurrentShortcut();
+    const hint = shortcutHintText({shortcut, isMac});
+    shortcutCurrent.textContent = hint.isSet ? hint.label : "Not set";
+    shortcutCurrentNote.classList.toggle("hidden", hint.isSet);
+  }
+
+  function openShortcutCustomize() {
+    const info = shortcutCustomizeInfo(isFirefox);
+    if (info.method === "tabs") {
+      // Best-effort convenience only. The steps + copyable URL stay visible
+      // regardless of outcome (some Chromium forks open a blocked tab without
+      // throwing), so a stranded user always has the manual path.
+      try { chrome.tabs.create({url: info.url}); } catch (_) {}
+    }
+  }
+
+  async function renderShortcutTip() {
+    // Idempotent: only toggles hidden + sets textContent (no listeners, no
+    // element creation), so it is safe to call multiple times per render.
+    const data = await chrome.storage.local.get("shortcutHintDismissed");
+    const shortcut = await getCurrentShortcut();
+    // Re-evaluate suppression AFTER the awaits so it reflects the freshest
+    // banner state at write time (banners load async, after showMainScreen).
+    const suppressed = data.shortcutHintDismissed
+      || breachWarnings.children.length > 0
+      || !pinSetupBanner.classList.contains("hidden")
+      || !demoBanner.classList.contains("hidden");
+    if (suppressed) { shortcutTip.classList.add("hidden"); return; }
+    const hint = shortcutHintText({shortcut, isMac});
+    shortcutTipText.textContent = hint.isSet
+      ? "Fill without opening Keygrain \u2014 press " + hint.label + " for the current site, or right-click a field and choose \"Fill with Keygrain\"."
+      : "Fill without opening Keygrain \u2014 set a keyboard shortcut for the current site, or right-click a field and choose \"Fill with Keygrain\".";
+    shortcutTip.classList.remove("hidden");
+  }
+
+  async function dismissShortcutTip() {
+    shortcutTip.classList.add("hidden");
+    await chrome.storage.local.set({shortcutHintDismissed: true});
+  }
+
   // === Rendering ===
   function showLockScreen() {
     lockScreen.classList.remove("hidden");
@@ -561,6 +664,7 @@
     if (!syncIndicatorInterval) {
       syncIndicatorInterval = setInterval(updateSyncIndicator, 1000);
     }
+    renderShortcutTip();
   }
 
   function renderServiceList() {
@@ -568,7 +672,11 @@
     focusedIndex = -1;
     searchInput.removeAttribute("aria-activedescendant");
     const filter = searchInput.value.trim();
-    const filtered = getFilteredServices(services, filter);
+    const filtered = (siteScopeActive && currentHostname)
+      ? KeygrainAutofill.filterMostSpecific(services, currentHostname.toLowerCase())
+      : getFilteredServices(services, filter);
+    // Set before any early-return so Enter never indexes a stale rendered list.
+    renderedServices = filtered;
     if (filtered.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
@@ -868,14 +976,9 @@
     } catch { return; }
     if (!currentHostname) return;
     const host = currentHostname.toLowerCase();
-    // Extract base domain (e.g., google.com from calendar.google.com)
-    const parts = host.split(".");
-    const baseDomain = parts.length > 2 ? parts.slice(-2).join(".") : host;
-    const matches = services.filter(s => {
-      const site = (s.site || s.name).toLowerCase();
-      return site === host || host.endsWith("." + site) || site === baseDomain || baseDomain.endsWith("." + site);
-    });
+    const matches = KeygrainAutofill.filterMostSpecific(services, host);
     if (matches.length > 0) {
+      siteScopeActive = true;
       searchInput.value = matches.length === 1 ? matches[0].name : currentHostname;
       renderServiceList();
       if (matches.length === 1) {
@@ -887,6 +990,7 @@
         quickFill.classList.remove("hidden");
       }
     } else {
+      siteScopeActive = false;
       const link = document.createElement("a");
       link.href = "#";
       link.textContent = "Add " + currentHostname + "?";
@@ -1035,6 +1139,9 @@
     if (!pinCheck.pinData) {
       pinSetupBanner.classList.remove("hidden");
     }
+    // Re-evaluate the tip after the pin-setup banner decision so it is suppressed
+    // on the common first-unlock-without-PIN path.
+    renderShortcutTip();
   });
 
   // === PIN event handlers ===
@@ -1184,8 +1291,31 @@
     setLength.value = settings.defaultLength;
     setSymbols.value = settings.defaultSymbols;
     setServerUrl.value = settings.serverUrl;
+    chrome.storage.local.get("inlineAutofillEnabled").then(d => { inlineAutofillToggle.checked = !!d.inlineAutofillEnabled; }).catch(() => {});
     settingsState = openDialog(settingsPanel);
     versionDisplay.textContent = "Keygrain v" + chrome.runtime.getManifest().version;
+    renderShortcutSettings();
+  });
+
+  // Shortcut customize controls — listeners attached ONCE (render only updates content)
+  shortcutOpenBtn.addEventListener("click", openShortcutCustomize);
+  shortcutCopyBtn.addEventListener("click", async () => {
+    const info = shortcutCustomizeInfo(isFirefox);
+    try {
+      await navigator.clipboard.writeText(info.url);
+      showStatus(statusEl, "Copied " + info.url, statusTimerState);
+    } catch {
+      showStatus(statusEl, "Copy failed", statusTimerState);
+    }
+  });
+
+  // Main-screen tip controls — listeners attached ONCE (render only toggles/sets text)
+  shortcutTipDismiss.addEventListener("click", dismissShortcutTip);
+  shortcutTipCustomize.addEventListener("click", () => {
+    settingsBtn.click(); // reuse the exact Settings open path (populates + renderShortcutSettings)
+    const section = document.getElementById("shortcut-section");
+    if (section) section.scrollIntoView({block: "nearest"});
+    shortcutCopyBtn.focus(); // always-visible control (open-btn is hidden on Firefox)
   });
 
   settingsCancel.addEventListener("click", () => {
@@ -1209,7 +1339,52 @@
     showStatus(statusEl, "Settings saved.", statusTimerState);
   });
 
+  // === In-page autofill toggle + consent ===
+  inlineAutofillToggle.addEventListener("change", () => {
+    if (inlineAutofillToggle.checked) {
+      // Turning ON: show the consent dialog FIRST. No permission is requested
+      // until the user clicks "Turn on" (a fresh, explicit gesture).
+      inlineConsentState = openDialog(inlineConsentDialog);
+      // Move focus into the consent dialog so ITS focus trap governs (the dialogs
+      // are siblings; without this, focus would stay on the toggle inside the
+      // settings panel and Tab would cycle the settings trap). "Not now" is the
+      // safe default (an accidental Enter dismisses rather than grants).
+      inlineConsentCancel.focus();
+    } else {
+      onInlineToggleOff();
+    }
+  });
+
+  inlineConsentCancel.addEventListener("click", () => {
+    inlineAutofillToggle.checked = false;
+    closeDialog(inlineConsentDialog, inlineConsentState);
+  });
+
+  inlineConsentConfirm.addEventListener("click", async () => {
+    // The permission request MUST be the FIRST statement (no await before it) or
+    // the user-gesture token is lost and chrome.permissions.request throws.
+    const granted = await chrome.permissions.request({origins: ["*://*/*"]});
+    if (!granted) {
+      inlineAutofillToggle.checked = false;
+      closeDialog(inlineConsentDialog, inlineConsentState);
+      showStatus(statusEl, "No problem — you can turn this on later.", statusTimerState);
+      return;
+    }
+    await chrome.storage.local.set({inlineAutofillEnabled: true});
+    await sendMsg({action: "inlineAutofillEnabledChanged", enabled: true});
+    closeDialog(inlineConsentDialog, inlineConsentState);
+    showStatus(statusEl, "In-page autofill is on.", statusTimerState);
+  });
+
+  async function onInlineToggleOff() {
+    await chrome.permissions.remove({origins: ["*://*/*"]});
+    await chrome.storage.local.set({inlineAutofillEnabled: false});
+    await sendMsg({action: "inlineAutofillEnabledChanged", enabled: false});
+    showStatus(statusEl, "In-page autofill turned off.", statusTimerState);
+  }
+
   searchInput.addEventListener("input", () => {
+    siteScopeActive = false;
     siteSuggestion.classList.add("hidden");
     quickFill.classList.add("hidden");
     renderServiceList();
@@ -1547,8 +1722,7 @@
       }
     } else if (e.key === "Enter" && focusedIndex >= 0) {
       e.preventDefault();
-      const filtered = getFilteredServices(services, searchInput.value.trim());
-      if (filtered[focusedIndex]) handleFill(filtered[focusedIndex]);
+      if (renderedServices[focusedIndex]) handleFill(renderedServices[focusedIndex]);
     } else if (e.key === "Escape") {
       e.preventDefault();
       if (focusedIndex >= 0) {
@@ -1556,6 +1730,7 @@
         applyFocus();
         searchInput.focus();
       } else if (searchInput.value) {
+        siteScopeActive = false;
         searchInput.value = "";
         renderServiceList();
         searchInput.focus();

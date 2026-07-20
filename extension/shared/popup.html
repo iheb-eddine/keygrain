@@ -75,6 +75,14 @@
 
     <div id="conflict-banner" class="hidden" role="status" aria-live="polite"></div>
 
+    <div id="shortcut-tip" class="hidden" role="status" aria-live="polite">
+      <span id="shortcut-tip-text"></span>
+      <div class="shortcut-tip-actions">
+        <button id="shortcut-tip-customize" type="button">Customize</button>
+        <button id="shortcut-tip-dismiss" type="button" aria-label="Dismiss shortcut tip">Got it</button>
+      </div>
+    </div>
+
     <div id="quick-fill" class="hidden"></div>
 
     <div id="service-list"></div>
@@ -162,6 +170,32 @@
       <button id="settings-save">Save</button>
     </div>
     <hr>
+    <div id="inline-autofill-section">
+      <div class="setting-row">
+        <div class="setting-row-text">
+          <span class="setting-row-title">In-page autofill</span>
+          <span class="setting-row-desc">Show a Keygrain fill button inside login boxes on sites you've saved.</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="inline-autofill-toggle" role="switch" aria-label="In-page autofill">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </label>
+      </div>
+    </div>
+    <hr>
+    <div id="shortcut-section">
+      <h3 class="shortcut-heading">Keyboard shortcut</h3>
+      <p class="shortcut-line">Current: <span id="shortcut-current">Not set</span></p>
+      <p id="shortcut-current-note" class="shortcut-subnote hidden">No shortcut assigned — use the steps below to set one.</p>
+      <p class="shortcut-customize-lead">To view or change it:</p>
+      <ol id="shortcut-customize-steps"></ol>
+      <div class="shortcut-actions">
+        <button id="shortcut-open-btn" type="button">Open shortcuts page</button>
+        <button id="shortcut-copy-url" type="button">Copy URL</button>
+      </div>
+      <p id="shortcut-contextmenu-note" class="shortcut-subnote">You can also right-click any field and choose "Fill with Keygrain".</p>
+    </div>
+    <hr>
     <button id="reset-btn" class="btn-danger">Reset Keygrain</button>
     <p class="version-info" id="version-display"></p>
     <p class="version-info"><a href="https://github.com/iheb-eddine/keygrain" target="_blank" rel="noopener" aria-label="MIT · Source Code — on GitHub">MIT · Source Code</a></p>
@@ -176,6 +210,24 @@
     <div class="dialog-actions">
       <button id="reset-cancel">Cancel</button>
       <button id="reset-confirm-btn" class="btn-danger" disabled>Confirm Reset</button>
+    </div>
+  </div>
+
+  <!-- In-page Autofill Consent Dialog -->
+  <div id="inline-consent-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="inline-consent-title">
+    <h2 id="inline-consent-title">Turn on in-page autofill?</h2>
+    <p>Keygrain can show a small <strong>fill button</strong> right inside the login boxes on the sites you've saved — so you can fill your username and password without opening this popup.</p>
+    <p>To do that, your browser will ask permission for Keygrain to run on websites. Here's the honest version:</p>
+    <ul class="consent-list">
+      <li>The fill button only appears on sites you've <strong>saved in Keygrain</strong>. Keygrain does nothing on any other site.</li>
+      <li><strong>Nothing leaves your device.</strong> Keygrain still creates your passwords right here on your computer, and only when you pick an account.</li>
+      <li>Your <strong>master secret is never entered on web pages</strong> — only here in the Keygrain popup.</li>
+      <li>You can <strong>turn this off anytime</strong> in Settings, and the permission is removed with it.</li>
+    </ul>
+    <p>Next, your browser will show its own permission prompt. It may say something like <em>"read and change your data on all websites"</em> — that's your browser's standard wording for this kind of permission. Keygrain only ever acts on the sites you've saved.</p>
+    <div class="dialog-actions">
+      <button id="inline-consent-cancel">Not now</button>
+      <button id="inline-consent-confirm">Turn on</button>
     </div>
   </div>
 
@@ -207,6 +259,7 @@
   <script src="totp.js"></script>
   <script src="ssh.js"></script>
   <script src="sync.js"></script>
+  <script src="autofill.js"></script>
   <script src="popup-crypto.js"></script>
   <script src="popup-dialog.js"></script>
   <script src="popup-search.js"></script>
