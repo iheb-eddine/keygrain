@@ -1660,10 +1660,12 @@
     try {
       const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
       if (!tab) { showStatus(statusEl, "No active tab.", statusTimerState); return; }
+      // autofill.js MUST load before content.js: content.js (performFill/getFillContext) calls KeygrainAutofill, which autofill.js defines. Do not remove — mirrors the background inject + handleFillOtp.
       if (typeof browser !== "undefined" && browser.tabs?.executeScript) {
+        await browser.tabs.executeScript(tab.id, {file: "autofill.js"});
         await browser.tabs.executeScript(tab.id, {file: "content.js"});
       } else {
-        await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["content.js"]});
+        await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["autofill.js", "content.js"]});
       }
       const resp = await chrome.tabs.sendMessage(tab.id, {action: "fill", password: pw, email: svc.email});
       if (resp?.success) {
