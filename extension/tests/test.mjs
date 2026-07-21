@@ -999,6 +999,159 @@ await test('PyPI regression: pickUsernameField -> the username field (search box
 });
 
 // ============================================================
+// OTP FIELD CLASSIFIER TESTS (autofill.js — KeygrainAutofill.*)
+// ============================================================
+// Pure over plain descriptor objects (no DOM), mirroring the isPasswordDescriptor
+// style. Covers the exact ordered rule (Frozen Req 3), pickOtpField precedence
+// (Req 4), and the over-length guard (Req 10). describeField new attrs use elStub.
+console.log('\nOTP Field Classifier Tests:');
+
+// --- isOtpDescriptor positives ---
+await test('isOtpDescriptor: autocomplete=one-time-code -> true (definitive)', async () => {
+  assert.equal(ka('isOtpDescriptor', { autocomplete: 'one-time-code' }), true);
+});
+await test('isOtpDescriptor: one-time-code + name=passcode -> true (definitive beats password-reject)', async () => {
+  assert.equal(ka('isOtpDescriptor', { autocomplete: 'one-time-code', name: 'passcode' }), true);
+});
+await test('isOtpDescriptor: type=number autocomplete=one-time-code -> true', async () => {
+  assert.equal(ka('isOtpDescriptor', { type: 'number', autocomplete: 'one-time-code' }), true);
+});
+await test('isOtpDescriptor: STRONG name=otp -> true', async () => {
+  assert.equal(ka('isOtpDescriptor', { name: 'otp' }), true);
+});
+await test('isOtpDescriptor: STRONG id=totp -> true', async () => {
+  assert.equal(ka('isOtpDescriptor', { id: 'totp' }), true);
+});
+await test('isOtpDescriptor: STRONG name=2fa -> true', async () => {
+  assert.equal(ka('isOtpDescriptor', { name: '2fa' }), true);
+});
+await test('isOtpDescriptor: STRONG name=mfa -> true', async () => {
+  assert.equal(ka('isOtpDescriptor', { name: 'mfa' }), true);
+});
+await test('isOtpDescriptor: STRONG name=one-time-code -> true', async () => {
+  assert.equal(ka('isOtpDescriptor', { name: 'one-time-code' }), true);
+});
+await test('isOtpDescriptor: type=tel name=otp -> true', async () => {
+  assert.equal(ka('isOtpDescriptor', { type: 'tel', name: 'otp' }), true);
+});
+await test('isOtpDescriptor: WEAK name=verification + inputmode=numeric -> true', async () => {
+  assert.equal(ka('isOtpDescriptor', { name: 'verification', inputmode: 'numeric' }), true);
+});
+await test('isOtpDescriptor: WEAK name=auth_code + maxlength=6 -> true', async () => {
+  assert.equal(ka('isOtpDescriptor', { name: 'auth_code', maxlength: 6 }), true);
+});
+await test('isOtpDescriptor: no-name inputmode=numeric + maxlength=6 -> true (2 signals)', async () => {
+  assert.equal(ka('isOtpDescriptor', { inputmode: 'numeric', maxlength: 6 }), true);
+});
+await test('isOtpDescriptor: no-name maxlength=6 + pattern=[0-9]* -> true (2 signals)', async () => {
+  assert.equal(ka('isOtpDescriptor', { maxlength: 6, pattern: '[0-9]*' }), true);
+});
+
+// --- isOtpDescriptor negatives ---
+await test('isOtpDescriptor: type=password -> false (gate)', async () => {
+  assert.equal(ka('isOtpDescriptor', { type: 'password' }), false);
+});
+await test('isOtpDescriptor: type=text name=password -> false (password reject)', async () => {
+  assert.equal(ka('isOtpDescriptor', { type: 'text', name: 'password' }), false);
+});
+await test('isOtpDescriptor: type=search -> false (gate)', async () => {
+  assert.equal(ka('isOtpDescriptor', { type: 'search' }), false);
+});
+await test('isOtpDescriptor: type=text name=q -> false', async () => {
+  assert.equal(ka('isOtpDescriptor', { type: 'text', name: 'q' }), false);
+});
+await test('isOtpDescriptor: type=checkbox id=otp -> false (gate before name)', async () => {
+  assert.equal(ka('isOtpDescriptor', { type: 'checkbox', id: 'otp' }), false);
+});
+await test('isOtpDescriptor: type=number quantity (inputmode=numeric only, 1 signal) -> false', async () => {
+  assert.equal(ka('isOtpDescriptor', { type: 'number', inputmode: 'numeric' }), false);
+});
+await test('isOtpDescriptor: maxlength=1 split box -> false (too-small)', async () => {
+  assert.equal(ka('isOtpDescriptor', { maxlength: 1 }), false);
+});
+await test('isOtpDescriptor: maxlength=5 -> false (too-small)', async () => {
+  assert.equal(ka('isOtpDescriptor', { maxlength: 5 }), false);
+});
+await test('isOtpDescriptor: WEAK name=api_token maxlength=64 -> false (0 corroboration — security case)', async () => {
+  assert.equal(ka('isOtpDescriptor', { name: 'api_token', maxlength: 64 }), false);
+});
+await test('isOtpDescriptor: WEAK name=verify alone -> false (no corroboration)', async () => {
+  assert.equal(ka('isOtpDescriptor', { name: 'verify' }), false);
+});
+await test('isOtpDescriptor: type=email -> false (gate)', async () => {
+  assert.equal(ka('isOtpDescriptor', { type: 'email' }), false);
+});
+// REQUIRED (observer): step 2 (maxlength<6) precedes step 3 (definitive one-time-code).
+// A split-box OTP widget is 6x autocomplete=one-time-code maxlength=1 inputs; each
+// MUST be rejected (Frozen Req 3.2 / 7, v1). Guards against a future reorder of steps 2/3.
+await test('isOtpDescriptor: one-time-code + maxlength=1 -> false (step 2 before step 3)', async () => {
+  assert.equal(ka('isOtpDescriptor', { autocomplete: 'one-time-code', maxlength: 1 }), false);
+});
+await test('isOtpDescriptor: one-time-code + maxlength=5 -> false (step 2 before step 3)', async () => {
+  assert.equal(ka('isOtpDescriptor', { autocomplete: 'one-time-code', maxlength: 5 }), false);
+});
+// SUGGESTED (observer): isolate patternIsDigits rejecting a non-digit pattern (1 signal only).
+await test('isOtpDescriptor: inputmode=numeric + pattern=[a-z]+ -> false (non-digit pattern, 1 signal)', async () => {
+  assert.equal(ka('isOtpDescriptor', { inputmode: 'numeric', pattern: '[a-z]+' }), false);
+});
+
+// --- pickOtpField (Frozen Req 4) ---
+await test('pickOtpField: focused OTP > first visible OTP > first OTP', async () => {
+  const r = ka('pickOtpField', [
+    { autocomplete: 'one-time-code', visible: true, key: 'o1' },
+    { autocomplete: 'one-time-code', focused: true, visible: true, key: 'o2' },
+  ]);
+  assert.equal(r, 'o2');
+});
+await test('pickOtpField: none -> null', async () => {
+  assert.equal(ka('pickOtpField', [{ type: 'text', name: 'firstname', key: 't1' }]), null);
+});
+await test('pickOtpField: skips a maxlength=1 box, returns the real OTP field', async () => {
+  const r = ka('pickOtpField', [
+    { autocomplete: 'one-time-code', maxlength: 1, visible: true, key: 'box' },
+    { autocomplete: 'one-time-code', maxlength: 6, visible: true, key: 'real' },
+  ]);
+  assert.equal(r, 'real');
+});
+await test('pickOtpField: mixed page picks the OTP field, not the password', async () => {
+  const r = ka('pickOtpField', [
+    { type: 'password', visible: true, key: 'pw' },
+    { name: 'otp', visible: true, key: 'otp' },
+  ]);
+  assert.equal(r, 'otp');
+});
+
+// --- otpCodeFitsField (Frozen Req 10 over-length guard) ---
+await test('otpCodeFitsField: (6,6)=true', async () => { assert.equal(ka('otpCodeFitsField', 6, 6), true); });
+await test('otpCodeFitsField: (8,6)=false', async () => { assert.equal(ka('otpCodeFitsField', 8, 6), false); });
+await test('otpCodeFitsField: (7,6)=false', async () => { assert.equal(ka('otpCodeFitsField', 7, 6), false); });
+await test('otpCodeFitsField: (6,null)=true (unset attribute)', async () => { assert.equal(ka('otpCodeFitsField', 6, null), true); });
+await test('otpCodeFitsField: (8,-1)=true (DOM .maxLength unset sentinel)', async () => { assert.equal(ka('otpCodeFitsField', 8, -1), true); });
+await test('otpCodeFitsField: (6,8)=true', async () => { assert.equal(ka('otpCodeFitsField', 6, 8), true); });
+await test('otpCodeFitsField: (8,8)=true', async () => { assert.equal(ka('otpCodeFitsField', 8, 8), true); });
+await test('otpCodeFitsField: (6,NaN)=true (hostile -> no constraint)', async () => { assert.equal(ka('otpCodeFitsField', 6, NaN), true); });
+await test('otpCodeFitsField: (8,"abc")=true (hostile string -> no constraint)', async () => { assert.equal(ka('otpCodeFitsField', 8, 'abc'), true); });
+
+// --- describeField new attrs (additive; via elStub) ---
+await test('describeField: maps inputmode/maxlength/pattern from attributes', async () => {
+  const el = elStub({ attrs: { inputmode: 'numeric', maxlength: '6', pattern: '[0-9]*' } });
+  const d = ka('describeField', el, null);
+  assert.equal(d.inputmode, 'numeric');
+  assert.equal(d.maxlength, 6);
+  assert.equal(d.pattern, '[0-9]*');
+});
+await test('describeField: absent inputmode/maxlength/pattern -> ""/null/""', async () => {
+  const d = ka('describeField', elStub({}), null);
+  assert.equal(d.inputmode, '');
+  assert.equal(d.maxlength, null);
+  assert.equal(d.pattern, '');
+});
+await test('describeField: maxlength="abc" -> null', async () => {
+  const d = ka('describeField', elStub({ attrs: { maxlength: 'abc' } }), null);
+  assert.equal(d.maxlength, null);
+});
+
+// ============================================================
 // INLINE-AUTOFILL PURE-HELPER TESTS (inline-autofill.js — KeygrainInline.*)
 // ============================================================
 // Increment A pure helpers for native in-field autofill plumbing. Pure over
@@ -1216,7 +1369,7 @@ console.log('\nInline-Autofill-UI Behavioral Tests (F1 clickjacking fix — cont
 function loadInlineUI({ accounts = [
   { token: 't1', email: 'a@example.com', name: 'Alice' },
   { token: 't2', email: 'b@example.com', name: 'Bob' },
-] } = {}) {
+], otp = false } = {}) {
   const handlers = new WeakMap(); // el -> { type -> [fn] }
   function on(el, type, fn) { let m = handlers.get(el); if (!m) { m = {}; handlers.set(el, m); } (m[type] = m[type] || []).push(fn); }
   function off(el, type, fn) { const m = handlers.get(el); if (m && m[type]) m[type] = m[type].filter(x => x !== fn); }
@@ -1242,9 +1395,12 @@ function loadInlineUI({ accounts = [
 
   const state = { host: null, root: null, sent: [] };
 
-  // A visible, enabled, editable password field -> classifies as a login field.
+  // A visible, enabled, editable field. Default: a password field -> classifies as login.
+  // otp:true -> a text field with autocomplete=one-time-code -> classifies as OTP (§D4 step 1).
   const input = makeEl('input');
-  input.type = 'password'; input.offsetParent = {}; input.offsetWidth = 20; input.disabled = false; input.readOnly = false;
+  if (otp) { input.type = 'text'; input.setAttribute('autocomplete', 'one-time-code'); }
+  else { input.type = 'password'; }
+  input.offsetParent = {}; input.offsetWidth = 20; input.disabled = false; input.readOnly = false;
 
   function ElementCtor() {}
   ElementCtor.prototype.attachShadow = function () { const root = makeEl('#shadow'); state.host = this; state.root = root; return root; };
@@ -1262,7 +1418,7 @@ function loadInlineUI({ accounts = [
   const chrome = {
     runtime: {
       lastError: undefined,
-      sendMessage: (msg, cb) => { state.sent.push(msg); if (msg && msg.action === 'getInlineMatches') { cb && cb({ enabled: true, locked: false, accounts }); return; } cb && cb(undefined); },
+      sendMessage: (msg, cb) => { state.sent.push(msg); if (msg && (msg.action === 'getInlineMatches' || msg.action === 'getInlineOtpMatches')) { cb && cb({ enabled: true, locked: false, accounts }); return; } cb && cb(undefined); },
       onMessage: { addListener() {}, removeListener() {} },
     },
   };
@@ -1274,7 +1430,7 @@ function loadInlineUI({ accounts = [
   const browser = {
     runtime: {
       lastError: undefined,
-      sendMessage: (msg) => { state.sent.push(msg); return Promise.resolve(msg && msg.action === 'getInlineMatches' ? { enabled: true, locked: false, accounts } : undefined); },
+      sendMessage: (msg) => { state.sent.push(msg); return Promise.resolve(msg && (msg.action === 'getInlineMatches' || msg.action === 'getInlineOtpMatches') ? { enabled: true, locked: false, accounts } : undefined); },
       onMessage: { addListener() {}, removeListener() {} },
     },
   };
@@ -1419,6 +1575,48 @@ await test('Part 2: non-string email does not throw; dropdown still opens (C5 gu
   assert.ok(dd, 'dropdown must open even when email is a non-string');
   const avatar = h.rows(dd)[0].children.find(e => e.className === 'kg-opt-avatar');
   assert.equal(avatar.textContent, '1'); // String(12345).trim().charAt(0) -> '1'
+});
+
+// ============================================================
+// U5 OTP INLINE-UI CONTROL-FLOW TESTS (inline-autofill-ui.js — classify + route)
+// ============================================================
+// Same hand-rolled DOM/chrome mock as the F1 tests, with loadInlineUI({otp:true})
+// configuring the engaged field as autocomplete=one-time-code (classifies OTP, §D4).
+// Verifies the OTP path routes to getInlineOtpMatches + fillInlineOtp, plus a
+// revert-guard that a login field STILL routes to getInlineMatches + fillInline (so a
+// future classifyEngageField regression that diverts login -> OTP is caught).
+console.log('\nU5 OTP Inline-UI Control-Flow Tests:');
+
+await test('U5/OTP: an OTP-classified field routes to getInlineOtpMatches + renders the icon (NOT getInlineMatches)', async () => {
+  const h = loadInlineUI({ otp: true });
+  await flushUI();
+  assert.ok(h.getIcon(), 'icon should render for an OTP field');
+  assert.equal(h.state.sent.some(m => m && m.action === 'getInlineOtpMatches'), true, 'sends the OTP query');
+  assert.equal(h.state.sent.some(m => m && m.action === 'getInlineMatches'), false, 'must NOT send the login query for an OTP field');
+});
+
+await test('U5/OTP: a trusted armed selection sends {action:"fillInlineOtp",token} (NOT fillInline)', async () => {
+  const h = loadInlineUI({ otp: true });
+  const dd = await openDropdownViaIcon(h);
+  const row = h.rows(dd)[0];
+  h.fire(row, 'pointerdown', h.ev({ currentTarget: row })); // arm
+  h.fire(row, 'click', h.ev({ currentTarget: row }));       // consume -> selectToken
+  const otpFills = h.state.sent.filter(m => m && m.action === 'fillInlineOtp');
+  assert.equal(otpFills.length, 1, 'exactly one fillInlineOtp');
+  assert.equal(otpFills[0].token, 't1');
+  assert.equal(h.state.sent.some(m => m && m.action === 'fillInline'), false, 'must NOT send fillInline on the OTP path');
+});
+
+await test('U5/login revert-guard: a login field still routes to getInlineMatches + fillInline (NOT the OTP actions)', async () => {
+  const h = loadInlineUI(); // default: password field -> login
+  const dd = await openDropdownViaIcon(h);
+  const row = h.rows(dd)[0];
+  h.fire(row, 'pointerdown', h.ev({ currentTarget: row }));
+  h.fire(row, 'click', h.ev({ currentTarget: row }));
+  assert.equal(h.state.sent.some(m => m && m.action === 'getInlineMatches'), true, 'login uses getInlineMatches');
+  assert.equal(h.state.sent.some(m => m && m.action === 'getInlineOtpMatches'), false, 'login must NOT use the OTP query');
+  assert.equal(h.state.sent.filter(m => m && m.action === 'fillInline').length, 1, 'login selection sends fillInline');
+  assert.equal(h.state.sent.some(m => m && m.action === 'fillInlineOtp'), false, 'login must NOT send fillInlineOtp');
 });
 
 // ============================================================

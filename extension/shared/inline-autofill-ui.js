@@ -113,6 +113,7 @@ if (!window.__keygrain_inline_injected) {
   let dropdownEl = null;      // the account dropdown / locked hint (created later)
   let currentField = null;    // the login field the affordance is anchored to
   let currentAccounts = [];   // redacted {token,email,name}[] for the current host
+  let currentKind = "login";  // "login" | "otp" — which bg query + fill action the engaged field uses
   let currentState = "hidden";
 
   // detection refs (populated by the detection layer)
@@ -265,12 +266,51 @@ if (!window.__keygrain_inline_injected) {
     return KeygrainAutofill.isPasswordDescriptor(d) && !!d.visible && !d.disabled && !d.readOnly;
   }
 
-  // First visible login field in DOM order, or null. Bounded by DOM size; run once
-  // on load and on throttled mutations only.
-  function findFirstLoginField() {
+  // Cheap tag/type pre-filter for the OTP path — like cheapTagTypeGate but ADDS "number"
+  // (OTP inputs are frequently type=number) and drops password/email (never an OTP field).
+  // The login cheapTagTypeGate above is unchanged.
+  function cheapOtpTagTypeGate(el) {
+    if (!el || el.tagName !== "INPUT") return false;
+    const t = (el.type || "text").toLowerCase();
+    return t === "text" || t === "tel" || t === "number" || t === "";
+  }
+
+  // An OTP field worth an icon: cheap gate first, then the U1-tested pure
+  // KeygrainAutofill.isOtpDescriptor over a describeField descriptor. Mirrors isLoginFieldEl;
+  // no logic duplication.
+  function isOtpFieldEl(el) {
+    if (!cheapOtpTagTypeGate(el)) return false;
+    if (!globalThis.KeygrainAutofill) return false;
+    const d = KeygrainAutofill.describeField(el, document.activeElement);
+    if (!d) return false;
+    return KeygrainAutofill.isOtpDescriptor(d);
+  }
+
+  // Field-classification precedence (§D4). Returns "otp" | "login" | null:
+  //   1. a DEFINITIVE one-time-code field (isOtpDescriptor-valid AND autocomplete contains
+  //      one-time-code) overrides the login heuristic. (Gating step 1 by isOtpDescriptor —
+  //      not a raw attribute check — suppresses the icon on split-box widgets where the fill
+  //      would dead-end; see the FLAG-4 decision. Loses no realistic one-time-code positive.)
+  //   2. else login (via the existing isLoginFieldEl) — login keeps priority over the OTP heuristic.
+  //   3. else the OTP heuristic (isOtpDescriptor).
+  //   4. else nothing.
+  function classifyEngageField(el) {
+    const otp = isOtpFieldEl(el);
+    if (otp) {
+      const ac = ((el.getAttribute && el.getAttribute("autocomplete")) || "").toLowerCase();
+      if (ac.indexOf("one-time-code") !== -1) return "otp";  // step 1: definitive, beats login
+    }
+    if (isLoginFieldEl(el)) return "login";                  // step 2
+    if (otp) return "otp";                                   // step 3: heuristic OTP (after login)
+    return null;                                             // step 4
+  }
+
+  // First visible engageable field (login OR OTP) in DOM order, or null. Bounded by DOM
+  // size; run once on load and on throttled mutations only.
+  function findFirstEngageableField() {
     const inputs = document.querySelectorAll("input");
     for (const el of inputs) {
-      if (isLoginFieldEl(el)) return el;
+      if (classifyEngageField(el)) return el;
     }
     return null;
   }
@@ -296,6 +336,8 @@ if (!window.__keygrain_inline_injected) {
   async function engage(field) {
     if (!field || field === currentField) return; // already engaged / in flight for this field
     if (!globalThis.KeygrainInline) return;
+    const kind = classifyEngageField(field);
+    if (!kind) return; // no longer engageable (e.g. field changed between focusin and the debounce)
     // S-b IN-FLIGHT guard: only ONE getInlineMatches round-trip may be outstanding.
     // A re-entrant engage (a focus flip that beat the debounce, or a genuine tab to
     // a new field mid-round-trip) records the LATEST field and returns; it is
@@ -307,7 +349,7 @@ if (!window.__keygrain_inline_injected) {
     currentField = field;
     let resp;
     try {
-      resp = await sendMsg({ action: "getInlineMatches" });
+      resp = await sendMsg({ action: kind === "otp" ? "getInlineOtpMatches" : "getInlineMatches" });
     } finally {
       engageInFlight = false; // reset on EVERY exit path so the icon can never wedge
     }
@@ -321,7 +363,7 @@ if (!window.__keygrain_inline_injected) {
         hasMatches: accounts.length > 0,
       });
       if (state === "hidden") { hideIcon(); }
-      else { currentAccounts = accounts; currentState = state; showIcon(field, state); }
+      else { currentAccounts = accounts; currentKind = kind; currentState = state; showIcon(field, state); }
     }
     // S-b trailing edge: replay the most-recent field requested during the round-trip.
     // Clear pending BEFORE re-invoking so a request arriving during the replay isn't
@@ -355,17 +397,16 @@ if (!window.__keygrain_inline_injected) {
   // focusin (capture) — the persistent, cheap ongoing/SPA path.
   function onFocusIn(e) {
     const t = e && e.target;
-    if (!cheapTagTypeGate(t)) return;   // cheap gate BEFORE any further work / bg call
-    if (!isLoginFieldEl(t)) return;
-    scheduleEngage(t);                  // S-b: debounced (collapses focus-flip storms)
+    if (!classifyEngageField(t)) return; // cheap gates are inside classify; engages a login OR OTP field
+    scheduleEngage(t);                   // S-b: debounced (collapses focus-flip storms)
   }
 
   // Bounded initial dynamic-render observer: a SINGLE fixed 8s timer (never reset
   // per-mutation), throttled callback, deterministic disconnect.
   let observerScheduled = false;
   function startDetection() {
-    // 1. one cheap initial synchronous scan for already-present login fields
-    const initial = findFirstLoginField();
+    // 1. one cheap initial synchronous scan for an already-present engageable field
+    const initial = findFirstEngageableField();
     if (initial) engage(initial);
 
     // 2. persistent cheap focusin capture listener
@@ -379,7 +420,7 @@ if (!window.__keygrain_inline_injected) {
       requestAnimationFrame(() => {
         observerScheduled = false;
         if (currentField && document.contains(currentField)) return; // still anchored to a live field
-        const f = findFirstLoginField();
+        const f = findFirstEngageableField();
         if (f) engage(f);
       });
     });
@@ -691,13 +732,14 @@ if (!window.__keygrain_inline_injected) {
     }
   }
 
-  // The ONLY thing that crosses to the background is {action:"fillInline", token}.
-  // The secret never enters this world; the derived password returns solely via
-  // content.js's existing {action:"fill"} handler. No auto-submit.
+  // The ONLY thing that crosses to the background is {action:"fillInline"|"fillInlineOtp", token},
+  // branched on the engaged field's kind. The secret never enters this world; the derived
+  // password/code returns solely via content.js's existing {action:"fill"} / {action:"fillOtp"}
+  // handler. No auto-submit.
   function selectToken(token) {
     closeDropdown();
     if (currentField && currentField.focus) { try { currentField.focus(); } catch (e) {} }
-    sendMsg({ action: "fillInline", token }); // fire-and-forget
+    sendMsg({ action: currentKind === "otp" ? "fillInlineOtp" : "fillInline", token }); // fire-and-forget
   }
 
   // Non-blocking locked affordance (review point R5): verbatim design copy, NEVER a

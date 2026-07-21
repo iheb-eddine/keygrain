@@ -9,6 +9,7 @@ if (!window.__keygrain_injected) {
 
   const FILL_WAIT_MS = 2000;
   let currentFillToken = 0;
+  let currentOtpFillToken = 0;
   let lastContextMenuTarget = null;
 
   document.addEventListener("contextmenu", (e) => {
@@ -46,6 +47,12 @@ if (!window.__keygrain_injected) {
       pageEmail: KeygrainAutofill.extractPageEmail(descriptors),
       hasUsernameField: descriptors.some((d) => KeygrainAutofill.isFillableUsernameDescriptor(d)),
       hasPasswordField: descriptors.some((d) => KeygrainAutofill.isPasswordDescriptor(d)),
+      hasOtpField: descriptors.some((d) => KeygrainAutofill.isOtpDescriptor(d)),           // autofillOtpForTab settle loop
+      focusedIsOtp: (() => {                                                                 // the context-aware shortcut probe (§D3)
+        const a = document.activeElement;
+        if (!a || a.tagName !== "INPUT") return false;
+        return KeygrainAutofill.isOtpDescriptor(KeygrainAutofill.describeField(a, a));
+      })(),
     };
   }
 
@@ -90,6 +97,53 @@ if (!window.__keygrain_injected) {
     timer = setTimeout(cleanup, FILL_WAIT_MS);
   }
 
+  // Bounded single OTP fill (mirrors performFill): pick the OTP field, apply the
+  // over-length guard, native-set the code + dispatch input/change, NO submit. Uses
+  // a SEPARATE otp fill token (performFill's password path is untouched) + one bounded
+  // MutationObserver + one FILL_WAIT_MS timer for a late-rendered OTP field (multi-step),
+  // all deterministically torn down on fill/supersede/timeout. Returns {filled, reason(, max)}
+  // for the popup's honest status (bg/inline callers ignore it; the guard still protects them):
+  //   no OTP field yet -> {filled:false, reason:"no_field"} (+ arm observer for a late render)
+  //   code too long    -> {filled:false, reason:"field_too_small", max:<maxlength>}
+  //   filled           -> {filled:true}
+  function performOtpFill(code) {
+    const token = ++currentOtpFillToken;
+    let observer = null;
+    let timer = null;
+
+    function cleanup() {
+      if (observer) { observer.disconnect(); observer = null; }
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
+
+    // Result object when an OTP field is present (filled or too-small); null when no
+    // OTP field exists yet (keep observing within bounds).
+    function attempt() {
+      const c = code == null ? "" : String(code);
+      const { descriptors, els } = collectFieldDescriptors();
+      const otpKey = KeygrainAutofill.pickOtpField(descriptors);
+      if (otpKey == null) return null;
+      const otpDesc = descriptors[otpKey];
+      if (!KeygrainAutofill.otpCodeFitsField(c.length, otpDesc.maxlength)) {
+        return { filled: false, reason: "field_too_small", max: otpDesc.maxlength };
+      }
+      fillField(els[otpKey], c);
+      return { filled: true };
+    }
+
+    const first = attempt();
+    if (first) return first; // OTP field present (filled or too-small) — no observer needed
+    // No OTP field yet (multi-step / late render) — observe, bounded. Fire-and-forget for
+    // this late path; the popup already received {filled:false, reason:"no_field"}.
+    observer = new MutationObserver(() => {
+      if (token !== currentOtpFillToken) { cleanup(); return; } // superseded by a newer call
+      if (attempt()) cleanup();                                  // filled or determined too-small — stop
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    timer = setTimeout(cleanup, FILL_WAIT_MS);
+    return { filled: false, reason: "no_field" };
+  }
+
   // Prefer the last right-clicked target; else fill the resolved password field.
   // Behavior preserved from the prior implementation; only the fallback password
   // lookup now uses the shared picker.
@@ -116,6 +170,12 @@ if (!window.__keygrain_injected) {
     if (msg.action === "fill") {
       performFill(msg.password, msg.email);
       return; // fire-and-forget
+    }
+    if (msg.action === "fillOtp") {
+      // performOtpFill returns synchronously with the initial-attempt result; the popup
+      // awaits it for honest status. bg/inline callers ignore the response.
+      sendResponse(performOtpFill(msg.code));
+      return true;
     }
     if (msg.action === "fillContextMenu") {
       fillContextMenu(msg.password, msg.email);

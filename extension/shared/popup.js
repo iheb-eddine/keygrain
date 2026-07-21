@@ -615,7 +615,7 @@
     if (suppressed) { shortcutTip.classList.add("hidden"); return; }
     const hint = shortcutHintText({shortcut, isMac});
     shortcutTipText.textContent = hint.isSet
-      ? "Fill without opening Keygrain \u2014 press " + hint.label + " for the current site, or right-click a field and choose \"Fill with Keygrain\"."
+      ? "Fill without opening Keygrain \u2014 press " + hint.label + " for the current site (with a one-time-code field focused it fills your 2FA code), or right-click a field and choose \"Fill with Keygrain\"."
       : "Fill without opening Keygrain \u2014 set a keyboard shortcut for the current site, or right-click a field and choose \"Fill with Keygrain\".";
     shortcutTip.classList.remove("hidden");
   }
@@ -824,6 +824,13 @@
         totpRow.appendChild(codeSpan);
         totpRow.appendChild(countdown);
         totpRow.appendChild(copyTotpBtn);
+        const fillTotpBtn = document.createElement("button");
+        fillTotpBtn.title = "Fill one-time code";
+        fillTotpBtn.className = "totp-fill-btn";
+        fillTotpBtn.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l10 6-10 6V2z"/></svg> Fill code';
+        fillTotpBtn.setAttribute("aria-label", "Fill one-time code for " + svc.name);
+        fillTotpBtn.addEventListener("click", () => handleFillOtp(svc));
+        totpRow.appendChild(fillTotpBtn);
         if (svc.totp.mode === "derived") {
           const copySeedBtn = document.createElement("button");
           copySeedBtn.title = "Copy TOTP seed (base32)";
@@ -1664,6 +1671,36 @@
         showStatus(statusEl, msgs[resp.filled] || "Filled.", statusTimerState);
       } else {
         showStatus(statusEl, resp?.error || "No fillable fields found.", statusTimerState);
+      }
+    } catch {
+      showStatus(statusEl, "Couldn't fill. Try copying instead.", statusTimerState);
+    }
+  }
+
+  // Fill one-time code. Mirrors handleFill's inject+send, but derives the CURRENT code
+  // (getTOTPCode; the popup already holds the secret to display it) and AWAITS content.js's
+  // {filled,reason,max} for an honest status. Injects ["autofill.js","content.js"]:
+  // performOtpFill needs KeygrainAutofill (decision driver-d-001 / FLAG 2) — do NOT reduce
+  // to content.js-only or it ReferenceErrors when autofill.js isn't already in the page.
+  // No frecency/saveServices (D6 omits it). Only the derived code crosses; no auto-submit.
+  async function handleFillOtp(svc) {
+    try {
+      const {code} = await getTOTPCode(svc, currentSecret);
+      const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+      if (!tab) { showStatus(statusEl, "No active tab.", statusTimerState); return; }
+      if (typeof browser !== "undefined" && browser.tabs?.executeScript) {
+        await browser.tabs.executeScript(tab.id, {file: "autofill.js"});
+        await browser.tabs.executeScript(tab.id, {file: "content.js"});
+      } else {
+        await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["autofill.js", "content.js"]});
+      }
+      const resp = await chrome.tabs.sendMessage(tab.id, {action: "fillOtp", code});
+      if (resp && resp.filled) {
+        showStatus(statusEl, "Code filled.", statusTimerState);
+      } else if (resp && resp.reason === "field_too_small") {
+        showStatus(statusEl, "This field only accepts " + resp.max + " digits.", statusTimerState);
+      } else {
+        showStatus(statusEl, "No one-time-code field found.", statusTimerState);
       }
     } catch {
       showStatus(statusEl, "Couldn't fill. Try copying instead.", statusTimerState);
