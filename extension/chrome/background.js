@@ -1,5 +1,5 @@
 // background.js — Chrome MV3 service worker
-importScripts("lib/hash-wasm-argon2.js", "keygrain.js", "sync.js", "autofill.js", "inline-autofill.js");
+importScripts("lib/hash-wasm-argon2.js", "keygrain.js", "totp.js", "sync.js", "autofill.js", "inline-autofill.js");
 
 const DEFAULT_LOCK_MINUTES = 15;
 
@@ -334,21 +334,105 @@ async function autofillForTab(tab, fillAction) {
   openPopupSafe();
 }
 
+// The OTP analogue of autofillForTab: same decrypt block + bounded settle loop +
+// selectServiceForFill, but candidates are narrowed to services with a `totp` config
+// (Frozen Req 2/5) and a UNIQUE resolution derives the current code (getTOTPCode; the
+// seed stays in the bg + is zeroed in getTOTPCode's own finally) and sends
+// {action:"fillOtp", code}. Every ambiguous / none / timeout / failure path defers to
+// the popup (the email-labelled chooser, §D7 Layer 3). Callers: the context-aware
+// fill_credentials shortcut (focused-OTP branch) and the keygrain-fill-otp context item.
+async function autofillOtpForTab(tab) {
+  const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+  if (!secret || !email) { openPopupSafe(); return; }
+  if (!tab?.url) { openPopupSafe(); return; }
+  let host;
+  try { host = new URL(tab.url).hostname.replace(/^www\./, "").toLowerCase(); } catch { openPopupSafe(); return; }
+  if (!host) { openPopupSafe(); return; }
+
+  const data = await chrome.storage.local.get("services");
+  if (!data.services || data.services.version !== 2) { openPopupSafe(); return; }
+
+  const enc = new TextEncoder();
+  const strengthened = await strengthenSecret(secret, email);
+  const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+  let matches;
+  try {
+    const iv = base64ToArrayBuffer(data.services.iv);
+    const ciphertext = base64ToArrayBuffer(data.services.ciphertext);
+    const aad = enc.encode(email.toLowerCase());
+    const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["decrypt"]);
+    const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
+    const services = JSON.parse(new TextDecoder().decode(decrypted)).services || [];
+    matches = KeygrainAutofill.filterMostSpecific(services, host).filter((s) => s && s.totp);
+  } catch { openPopupSafe(); return; }
+
+  if (matches.length === 0) { openPopupSafe(); return; }
+
+  try {
+    await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["autofill.js", "content.js"]});
+  } catch { openPopupSafe(); return; }
+
+  const loopStart = Date.now();
+  for (let tryN = 1; tryN <= SETTLE_MAX_TRIES; tryN++) {
+    if (Date.now() - loopStart >= SETTLE_HARD_CEILING_MS) break;
+    const ctx = await afGetFillContext(tab.id);
+    if (!ctx) { openPopupSafe(); return; }
+    const decision = KeygrainAutofill.selectServiceForFill(matches, {pageEmail: ctx.pageEmail});
+    if (decision.decision === "fill") {
+      // Defer on a corrupt totp config (bad stored base32 / unknown mode) rather than
+      // unhandled-reject (Layer 3 / Regression-Risk "defer on failure").
+      let code;
+      try { code = (await getTOTPCode(decision.service, secret)).code; }
+      catch { openPopupSafe(); return; }
+      chrome.tabs.sendMessage(tab.id, {action: "fillOtp", code});
+      return;
+    }
+    if (decision.decision === "none") { openPopupSafe(); return; }
+    // ambiguous — retry only while the OTP field hasn't rendered yet (multi-step)
+    if (!ctx.hasOtpField) {
+      await afSleep(INTER_TRY_SLEEP_MS);
+      continue;
+    } else {
+      break;
+    }
+  }
+  openPopupSafe();
+}
+
+// Read-only focused-field OTP probe for the context-aware shortcut (§D3). Returns
+// true ONLY on a positive focused-OTP signal; EVERY other condition (locked, no url,
+// injection failure, absent/hung content script, getFillContext timeout, or a non-OTP /
+// no focused field) returns false -> the UNCHANGED credentials path (Frozen Req 9).
+async function focusedFieldIsOtp(tab) {
+  const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+  if (!secret || !email) return false;
+  if (!tab?.url) return false;
+  try { await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["autofill.js", "content.js"]}); }
+  catch { return false; }
+  const ctx = await afGetFillContext(tab.id);
+  return !!(ctx && ctx.focusedIsOtp);
+}
+
 // === Keyboard Shortcut ===
 chrome.commands.onCommand.addListener(async (command) => {
   if (command !== "fill_credentials") return;
   const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-  await autofillForTab(tab, "fill");
+  // Context-aware (§D3): a focused OTP field fills the current code; EVERY other case
+  // fills credentials exactly as before via the UNCHANGED autofillForTab(tab, "fill").
+  if (await focusedFieldIsOtp(tab)) await autofillOtpForTab(tab);
+  else await autofillForTab(tab, "fill");
 });
 
 // === Context Menu ===
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({id: "keygrain-fill", title: "Fill with Keygrain", contexts: ["editable"]});
+  chrome.contextMenus.create({id: "keygrain-fill-otp", title: "Fill one-time code with Keygrain", contexts: ["editable"]});
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== "keygrain-fill" || !tab?.id) return;
-  await autofillForTab(tab, "fill");
+  if (!tab?.id) return;
+  if (info.menuItemId === "keygrain-fill") await autofillForTab(tab, "fill");
+  else if (info.menuItemId === "keygrain-fill-otp") await autofillOtpForTab(tab);
 });
 
 // ===================================================================
@@ -552,6 +636,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  if (msg.action === "getInlineOtpMatches") {
+    (async () => {
+      try {
+        if (!sender.tab || !sender.tab.url) return sendResponse({enabled: false, locked: false, accounts: []});
+        if (!(await inlineEnabled())) return sendResponse({enabled: false, locked: false, accounts: []});
+        if (!(await inlineUnlocked())) return sendResponse({enabled: true, locked: true, accounts: []});
+        const host = new URL(sender.tab.url).hostname.replace(/^www\./, "").toLowerCase();
+        const services = await decryptServices();
+        if (!services) return sendResponse({enabled: true, locked: false, accounts: []});
+        // Same as getInlineMatches but narrowed to services with a totp config (Frozen
+        // Req 2). Reuses the UNCHANGED sanitizeAccountForContent whitelist -> no new field
+        // crosses to content ("has totp" is implicit in whether the account appears).
+        const matches = KeygrainAutofill.filterMostSpecific(services, host).filter((s) => s && s.totp);
+        const ranked = KeygrainAutofill.rankServices(matches);
+        const accounts = ranked.map(KeygrainInline.sanitizeAccountForContent);
+        sendResponse({enabled: true, locked: false, accounts});
+      } catch {
+        sendResponse({enabled: true, locked: false, accounts: []});
+      }
+    })();
+    return true;
+  }
   if (msg.action === "fillInline") {
     (async () => {
       try {
@@ -566,6 +672,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!svc) return;
         const password = await derivePassword(secret, svc.email, {site: svc.site || svc.name, length: svc.length || 20, symbols: svc.symbols || "!@#$%&*-_=+?", counter: svc.counter || 1});
         chrome.tabs.sendMessage(sender.tab.id, {action: "fill", password, email: svc.email}).catch(() => {});
+      } catch {}
+    })();
+    return; // stateless, fire-and-forget
+  }
+  if (msg.action === "fillInlineOtp") {
+    (async () => {
+      try {
+        if (!sender.tab || !sender.tab.url) return;
+        if (!(await inlineEnabled()) || !(await inlineUnlocked())) return;
+        const host = new URL(sender.tab.url).hostname.replace(/^www\./, "").toLowerCase();
+        const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+        if (!secret || !email) return;
+        const services = await decryptServices();
+        if (!services) return;
+        // Server-authoritative: re-verify id===token && domainMatches && s.totp; the seed
+        // never crosses — only the derived code goes back via {action:"fillOtp"}.
+        const svc = services.find(s => s.id === msg.token && domainMatches((s.site || s.name).toLowerCase(), host) && s.totp);
+        if (!svc) return;
+        const {code} = await getTOTPCode(svc, secret);
+        chrome.tabs.sendMessage(sender.tab.id, {action: "fillOtp", code}).catch(() => {});
       } catch {}
     })();
     return; // stateless, fire-and-forget

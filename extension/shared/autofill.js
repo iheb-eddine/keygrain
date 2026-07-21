@@ -198,6 +198,101 @@ function pickUsernameField(descriptors) {
   return pick ? pick.key : null;
 }
 
+// ---- OTP one-time-code classification (additive; pure; never throws) ----
+
+// OTP-enterable type gate: text-enterable-for-OTP. ADDS "number" and DROPS "email"
+// vs the password path's isTextEnterableType (OTP inputs are frequently type=number,
+// which the password path deliberately excludes; email is never an OTP field).
+// {text, tel, number, ""}. Internal (not exported), mirroring isTextEnterableType.
+function isOtpEnterableType(type) {
+  const t = (type || "").toLowerCase();
+  return t === "" || t === "text" || t === "tel" || t === "number";
+}
+
+// A finite numeric maxlength, else null (absent/hostile). describeField already
+// yields int|null; this coerces defensively so a hostile descriptor never throws.
+function otpMaxLength(d) {
+  const v = d ? d.maxlength : null;
+  return (typeof v === "number" && Number.isFinite(v)) ? v : null;
+}
+
+// A digit-only pattern: strip a leading '^' and trailing '$', then the remainder is
+// [0-9] or \d optionally followed by a quantifier (*, +, ?, {n}, {n,}, {n,m}).
+// e.g. [0-9]*, \d*, [0-9]{6}, \d{6,8}. Never throws on non-string/empty input.
+function patternIsDigits(p) {
+  if (typeof p !== "string" || p === "") return false;
+  let s = p;
+  if (s.charAt(0) === "^") s = s.slice(1);
+  if (s.charAt(s.length - 1) === "$") s = s.slice(0, -1);
+  return /^(\[0-9\]|\\d)([*+?]|\{\d+(,\d*)?\})?$/.test(s);
+}
+
+// Numeric-shape signal count: (inputmode numeric/decimal) + (maxlength in [6,8]) +
+// (digit-only pattern). Internal.
+function otpNumericSignals(d) {
+  let n = 0;
+  const im = ((d && d.inputmode) || "").toString().toLowerCase();
+  if (im === "numeric" || im === "decimal") n++;
+  const ml = otpMaxLength(d);
+  if (ml != null && ml >= 6 && ml <= 8) n++;
+  if (patternIsDigits(((d && d.pattern) || "").toString())) n++;
+  return n;
+}
+
+// One-time-code / OTP field classifier. Ordered rule (Frozen Req 3):
+//   1. isOtpEnterableType(type)                              else false
+//   2. maxlength present && maxlength < 6                    -> false  (split-box/too-small)
+//   3. autocomplete contains "one-time-code"                 -> true   (definitive; BEFORE password reject)
+//   4. isPasswordDescriptor(d)                               -> false
+//   5. name/id ~ /otp|totp|2fa|mfa|one[-_ ]?time/            -> true   (STRONG)
+//   6. name/id ~ /token|auth.?code|verif|security.?code/ && numericSignals>=1 -> true (WEAK+corroborate)
+//   7. numericSignals >= 2                                   -> true   (no-name numeric)
+//   8. else                                                  -> false
+// Step 3 precedes step 4 deliberately so a definitive one-time-code field named
+// e.g. "passcode" (which isPasswordDescriptor matches via indexOf("pass")) is not
+// wrongly rejected; the type gate already excludes real type=password fields.
+// Pure; String-coerces hostile data; NEVER throws.
+function isOtpDescriptor(d) {
+  if (!d) return false;
+  const type = (d.type || "").toString().toLowerCase();
+  if (!isOtpEnterableType(type)) return false;                 // 1. type gate
+  const ml = otpMaxLength(d);
+  if (ml != null && ml < 6) return false;                      // 2. too-small reject
+  if ((d.autocomplete || "").toString().toLowerCase().indexOf("one-time-code") !== -1) return true; // 3. definitive
+  if (isPasswordDescriptor(d)) return false;                   // 4. password reject
+  const name = (d.name || "").toString().toLowerCase();
+  const id = (d.id || "").toString().toLowerCase();
+  const strong = /otp|totp|2fa|mfa|one[-_ ]?time/;
+  if (strong.test(name) || strong.test(id)) return true;       // 5. STRONG name
+  const weak = /token|auth.?code|verif|security.?code/;
+  if ((weak.test(name) || weak.test(id)) && otpNumericSignals(d) >= 1) return true; // 6. WEAK + corroborate
+  if (otpNumericSignals(d) >= 2) return true;                  // 7. no-name numeric
+  return false;                                                // 8. else
+}
+
+// focused OTP > first visible OTP > first OTP. Returns the opaque `key` or null.
+// (Mirrors pickPasswordField; the maxlength<6 reject in isOtpDescriptor means a
+//  maxlength=1 split box is never returned.)
+function pickOtpField(descriptors) {
+  const ds = descriptors || [];
+  for (const d of ds) if (isOtpDescriptor(d) && d.focused) return d.key;
+  for (const d of ds) if (isOtpDescriptor(d) && d.visible) return d.key;
+  for (const d of ds) if (isOtpDescriptor(d)) return d.key;
+  return null;
+}
+
+// Over-length guard (Frozen Req 10): does a code of length `codeLength` fit a field
+// whose maxlength is `maxLength` (int|null; the DOM `.maxLength` property is -1 when
+// unset)? Gated on a positive finite numeric maxLength, so an UNSET/absent/hostile
+// maxLength (null, -1, NaN, string) NEVER blocks a fill. Complementary to
+// isOtpDescriptor step 2 (maxlength<6 => not an OTP field at all): this asks whether
+// THIS service's code is too long for THIS OTP field, so it only bites the
+// 8-digit-code-into-maxlength-6/7 case. NEVER throws on hostile maxLength.
+function otpCodeFitsField(codeLength, maxLength) {
+  if (typeof maxLength !== "number" || !Number.isFinite(maxLength) || maxLength <= 0) return true;
+  return codeLength <= maxLength;
+}
+
 // DOM adapter — pure given an element-like object. `focused` = (el === activeElement).
 // Does NOT stamp `key`; content.js's collectFieldDescriptors() does that.
 function describeField(el, activeElement) {
@@ -217,6 +312,9 @@ function describeField(el, activeElement) {
     readOnly: !!el.readOnly,
     focused: el === activeElement,
     value: el.value == null ? "" : el.value,
+    inputmode: (attr("inputmode") || "").toLowerCase(),
+    maxlength: (() => { const n = parseInt(attr("maxlength"), 10); return Number.isFinite(n) ? n : null; })(),
+    pattern: attr("pattern") || "",
   };
 }
 
@@ -231,4 +329,7 @@ globalThis.KeygrainAutofill = {
   pickPasswordField,
   pickUsernameField,
   describeField,
+  isOtpDescriptor,
+  pickOtpField,
+  otpCodeFitsField,
 };
