@@ -183,7 +183,7 @@
       dialog.setAttribute("aria-labelledby", "privkey-confirm-title");
       dialog.setAttribute("aria-describedby", "privkey-confirm-desc");
       dialog.innerHTML = '<h3 id="privkey-confirm-title">Export private key?</h3>' +
-        '<p id="privkey-confirm-desc">Private keys are sensitive. The key will be copied to your clipboard and auto-cleared after 30 seconds.</p>' +
+        '<p id="privkey-confirm-desc">Private keys are sensitive. The key will be copied to your clipboard.</p>' +
         '<div class="privkey-confirm-actions">' +
         '<button class="privkey-confirm-cancel">Cancel</button>' +
         '<button class="privkey-confirm-ok">Copy to clipboard</button></div>';
@@ -908,7 +908,7 @@
             clearTimer = setTimeout(async () => {
               try { await navigator.clipboard.writeText(""); } catch (_) {}
             }, 30000);
-            showStatus(statusEl, "Private key copied (clears in 30s)", statusTimerState);
+            showStatus(statusEl, "Private key copied", statusTimerState);
           } catch (e) { showStatus(statusEl, "SSH error: " + e.message, statusTimerState); }
         });
         sshPrivRow.appendChild(exportBtn);
@@ -1640,7 +1640,7 @@
     }
     const pw = await deriveForService(svc);
     await navigator.clipboard.writeText(pw);
-    showStatus(statusEl, "Copied! Clears in 30s.", statusTimerState);
+    showStatus(statusEl, "Copied!", statusTimerState);
     svc.frecency = (svc.frecency || 0) * 0.95 + 1;
     await saveServices();
     if (clearTimer) clearTimeout(clearTimer);
