@@ -28,4 +28,9 @@ class SecretManager(context: Context) {
     fun clearSecret() {
         prefs.edit().remove("master_secret").apply()
     }
+
+    /** Wipe everything in the secret store (used by Switch account / local delete). */
+    fun clearAll() {
+        prefs.edit().clear().apply()
+    }
 }

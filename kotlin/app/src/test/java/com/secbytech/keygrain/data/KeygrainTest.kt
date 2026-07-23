@@ -103,4 +103,30 @@ class KeygrainTest {
     fun testEmptySiteRejected() {
         Keygrain.derivePassword("secret".toByteArray(), "a@b.com", "")
     }
+
+    @Test
+    fun testStrengthenCacheSameEmailDifferentSecret() {
+        // Cache keys on email but must validate the secret — a different secret
+        // under the same email must NOT return the previously cached result.
+        Keygrain.clearStrengthenCache()
+        val a = Keygrain.strengthenSecret("secretA".toByteArray(), "user@example.com")
+        val b = Keygrain.strengthenSecret("secretB".toByteArray(), "user@example.com")
+        assertNotEquals(bytesToHex(a), bytesToHex(b))
+        val a2 = Keygrain.strengthenSecret("secretA".toByteArray(), "user@example.com")
+        assertEquals(bytesToHex(a), bytesToHex(a2))
+    }
+
+    @Test
+    fun testStrengthenCacheMultiEmailStable() {
+        // More distinct emails than cache capacity forces LRU eviction; results
+        // must stay correct and distinct regardless of eviction order.
+        Keygrain.clearStrengthenCache()
+        val emails = (1..12).map { "user$it@example.com" }
+        val secret = "master-secret".toByteArray()
+        val first = emails.associateWith { bytesToHex(Keygrain.strengthenSecret(secret, it)) }
+        assertEquals(emails.size, first.values.toSet().size)
+        for (e in emails.reversed()) {
+            assertEquals(first[e], bytesToHex(Keygrain.strengthenSecret(secret, e)))
+        }
+    }
 }

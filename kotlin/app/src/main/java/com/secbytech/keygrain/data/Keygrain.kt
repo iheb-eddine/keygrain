@@ -12,17 +12,38 @@ object Keygrain {
     const val DEFAULT_SYMBOLS = "!@#\$%&*-_=+?"
 
     private val cacheLock = Any()
-    private var strengthenCache: Triple<ByteArray, String, ByteArray>? = null
+
+    /**
+     * Max number of distinct strengthened keys kept in memory. A user can hold
+     * services under several different emails; a single-entry cache would thrash
+     * — re-running Argon2id on every email switch — which stalled the UI. Each
+     * email needs exactly one strengthen (shared by password/id/auth/encryption).
+     */
+    private const val STRENGTHEN_CACHE_CAPACITY = 8
+
+    private class StrengthenEntry(val secret: ByteArray, val result: ByteArray)
+
+    // Access-ordered LRU. The eldest entry is evicted (and zeroed) past capacity.
+    private val strengthenCache =
+        object : LinkedHashMap<String, StrengthenEntry>(16, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, StrengthenEntry>
+            ): Boolean {
+                if (size > STRENGTHEN_CACHE_CAPACITY) {
+                    eldest.value.secret.fill(0)
+                    eldest.value.result.fill(0)
+                    return true
+                }
+                return false
+            }
+        }
 
     fun strengthenSecret(secret: ByteArray, email: String): ByteArray = synchronized(cacheLock) {
         val emailLower = email.lowercase()
-        strengthenCache?.let { (cachedSecret, cachedEmail, cachedResult) ->
-            if (cachedSecret.contentEquals(secret) && cachedEmail == emailLower) {
-                return cachedResult.copyOf()
+        strengthenCache[emailLower]?.let { cached ->
+            if (cached.secret.contentEquals(secret)) {
+                return cached.result.copyOf()
             }
-            // Zero old cache entry before replacing
-            cachedSecret.fill(0)
-            cachedResult.fill(0)
         }
         val salt = "keygrain-strengthen:$emailLower".toByteArray(Charsets.UTF_8)
         val params = Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
@@ -35,16 +56,21 @@ object Keygrain {
         generator.init(params)
         val result = ByteArray(32)
         generator.generateBytes(secret, result)
-        strengthenCache = Triple(secret.copyOf(), emailLower, result)
+        // Insert; zero any previous entry stored under this email (e.g. secret changed).
+        val previous = strengthenCache.put(emailLower, StrengthenEntry(secret.copyOf(), result))
+        if (previous != null) {
+            previous.secret.fill(0)
+            previous.result.fill(0)
+        }
         return result.copyOf()
     }
 
     fun clearStrengthenCache() = synchronized(cacheLock) {
-        strengthenCache?.let { (cachedSecret, _, cachedResult) ->
-            cachedSecret.fill(0)
-            cachedResult.fill(0)
+        for (entry in strengthenCache.values) {
+            entry.secret.fill(0)
+            entry.result.fill(0)
         }
-        strengthenCache = null
+        strengthenCache.clear()
     }
 
     fun derivePassword(

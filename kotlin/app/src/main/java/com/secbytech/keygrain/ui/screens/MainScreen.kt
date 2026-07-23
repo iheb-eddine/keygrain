@@ -44,6 +44,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.secbytech.keygrain.data.Keygrain
+import com.secbytech.keygrain.data.LocalDataWiper
 import com.secbytech.keygrain.data.PublicSuffixList
 import com.secbytech.keygrain.data.SecretManager
 import com.secbytech.keygrain.data.ServiceEntry
@@ -52,11 +53,14 @@ import com.secbytech.keygrain.data.SyncCrypto
 import com.secbytech.keygrain.data.TotpEngine
 import com.secbytech.keygrain.data.SshEngine
 import com.secbytech.keygrain.data.SyncManager
+import com.secbytech.keygrain.data.DeleteResult
 import com.secbytech.keygrain.data.SyncResult
 import com.secbytech.keygrain.ui.UserMessages
 import com.secbytech.keygrain.ui.WongPalette
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -107,6 +111,23 @@ fun MainScreen() {
             )
         }
         else -> {
+            // Shared local reset used by BOTH Switch account and the OFF branch of
+            // Delete server data, so their observable behavior stays identical.
+            val wipeLocalAndRestart: () -> Unit = {
+                LocalDataWiper.wipeAll(context)
+                if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.clearPrimaryClip()
+                }
+                settingsPrefs.edit()
+                    .putBoolean("onboarding_completed", false)
+                    .putBoolean("offline_mode", false)
+                    .apply()
+                onboardingCompleted = false
+                unlocked = false
+                masterSecret = ""
+                isDemoMode = false
+            }
             ServiceListScreen(
                 masterSecret = masterSecret,
                 serviceManager = serviceManager,
@@ -123,7 +144,9 @@ fun MainScreen() {
                     if (!canUseBiometric(context)) {
                         secretManager.clearSecret()
                     }
-                }
+                },
+                onSwitchAccount = wipeLocalAndRestart,
+                onWipeLocalAndRestart = wipeLocalAndRestart
             )
         }
     }
@@ -280,7 +303,9 @@ private fun ServiceListScreen(
     masterSecret: String,
     serviceManager: ServiceManager,
     isDemoMode: Boolean = false,
-    onLock: () -> Unit
+    onLock: () -> Unit,
+    onSwitchAccount: () -> Unit,
+    onWipeLocalAndRestart: () -> Unit
 ) {
     val context = LocalContext.current
     val demoServices = remember { listOf(
@@ -307,6 +332,7 @@ private fun ServiceListScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     var showHelpScreen by remember { mutableStateOf(false) }
     var showWalletScreen by remember { mutableStateOf(false) }
+    var showSwitchAccountDialog by remember { mutableStateOf(false) }
     var showSyncEmailDialog by remember { mutableStateOf(false) }
     var syncEmail by remember { mutableStateOf("") }
     var isSyncing by remember { mutableStateOf(false) }
@@ -314,6 +340,16 @@ private fun ServiceListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val syncManager = remember { SyncManager() }
+    val settingsPrefs = remember {
+        context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
+    }
+    var offlineMode by remember { mutableStateOf(settingsPrefs.getBoolean("offline_mode", false)) }
+
+    // Delete-server-data flow state
+    var showDeleteServerDialog by remember { mutableStateOf(false) }
+    var keepLocal by remember { mutableStateOf(true) }
+    var deleteInProgress by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
 
     // Auto-sync state
     var syncGeneration by remember { mutableIntStateOf(0) }
@@ -328,7 +364,7 @@ private fun ServiceListScreen(
         services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: ""
 
     fun performAutoSync() {
-        if (isDemoMode || isSyncing) return
+        if (isDemoMode || isSyncing || offlineMode || deleteInProgress) return
         val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
         if (email.isBlank()) return
         isSyncing = true
@@ -355,6 +391,7 @@ private fun ServiceListScreen(
     }
 
     fun triggerDebouncedSync() {
+        if (offlineMode || deleteInProgress) return
         if (skipNextDebounce) { skipNextDebounce = false; return }
         syncGeneration++
         val gen = syncGeneration
@@ -399,19 +436,21 @@ private fun ServiceListScreen(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val msg = try {
-                val key = Keygrain.deriveEncryptionKey(masterSecret.toByteArray(), fileEmail)
+            val msg = withContext(Dispatchers.IO) {
                 try {
-                    val json = serviceManager.exportJson().toByteArray()
-                    val encrypted = SyncCrypto.encrypt(key, json)
-                    context.contentResolver.openOutputStream(uri)?.use { it.write(encrypted) }
-                    UserMessages.exportSuccess(services.size)
-                } finally {
-                    key.fill(0)
+                    val key = Keygrain.deriveEncryptionKey(masterSecret.toByteArray(), fileEmail)
+                    try {
+                        val json = serviceManager.exportJson().toByteArray()
+                        val encrypted = SyncCrypto.encrypt(key, json)
+                        context.contentResolver.openOutputStream(uri)?.use { it.write(encrypted) }
+                        UserMessages.exportSuccess(services.size)
+                    } finally {
+                        key.fill(0)
+                    }
+                } catch (e: Exception) {
+                    Log.e("Keygrain", "Export failed", e)
+                    UserMessages.EXPORT_ERROR
                 }
-            } catch (e: Exception) {
-                Log.e("Keygrain", "Export failed", e)
-                UserMessages.EXPORT_ERROR
             }
             snackbarHostState.showSnackbar(msg)
         }
@@ -422,23 +461,32 @@ private fun ServiceListScreen(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            try {
-                val key = Keygrain.deriveEncryptionKey(masterSecret.toByteArray(), fileEmail)
+            var parsed: List<ServiceEntry>? = null
+            val errMsg: String? = withContext(Dispatchers.IO) {
                 try {
-                    val blob = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: throw Exception("Cannot read file")
-                    val json = SyncCrypto.decrypt(key, blob).toString(Charsets.UTF_8)
-                    importedServices = serviceManager.parseJson(json)
-                    showImportConfirm = true
-                } finally {
-                    key.fill(0)
+                    val key = Keygrain.deriveEncryptionKey(masterSecret.toByteArray(), fileEmail)
+                    try {
+                        val blob = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            ?: throw Exception("Cannot read file")
+                        val json = SyncCrypto.decrypt(key, blob).toString(Charsets.UTF_8)
+                        parsed = serviceManager.parseJson(json)
+                        null
+                    } finally {
+                        key.fill(0)
+                    }
+                } catch (e: javax.crypto.AEADBadTagException) {
+                    Log.e("Keygrain", "Import decryption failed", e)
+                    UserMessages.DECRYPT_FILE_ERROR
+                } catch (e: Exception) {
+                    Log.e("Keygrain", "Import failed", e)
+                    UserMessages.IMPORT_ERROR
                 }
-            } catch (e: javax.crypto.AEADBadTagException) {
-                Log.e("Keygrain", "Import decryption failed", e)
-                snackbarHostState.showSnackbar(UserMessages.DECRYPT_FILE_ERROR)
-            } catch (e: Exception) {
-                Log.e("Keygrain", "Import failed", e)
-                snackbarHostState.showSnackbar(UserMessages.IMPORT_ERROR)
+            }
+            if (errMsg != null) {
+                snackbarHostState.showSnackbar(errMsg)
+            } else {
+                importedServices = parsed ?: emptyList()
+                showImportConfirm = true
             }
         }
     }
@@ -467,7 +515,9 @@ private fun ServiceListScreen(
                         Text("Keygrain")
                         @Suppress("UNUSED_EXPRESSION") subtitleTick
                         val subtitle = when {
-                            isDemoMode || getMostCommonEmail().isBlank() -> null
+                            isDemoMode -> null
+                            offlineMode -> "Offline"
+                            getMostCommonEmail().isBlank() -> null
                             isSyncing -> "Syncing…"
                             lastSyncTime > 0L -> "Synced ${formatRelativeTime(lastSyncTime)}"
                             syncFailed -> "Not synced"
@@ -490,12 +540,31 @@ private fun ServiceListScreen(
                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                             DropdownMenuItem(
                                 text = { Text("Sync") },
+                                enabled = !offlineMode,
                                 onClick = {
                                     menuExpanded = false
                                     syncEmail = syncManager.getSyncEmail(context)
                                         ?: services.groupingBy { it.email }.eachCount()
                                             .maxByOrNull { it.value }?.key ?: ""
                                     showSyncEmailDialog = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Offline mode") },
+                                trailingIcon = {
+                                    Switch(
+                                        checked = offlineMode,
+                                        onCheckedChange = null
+                                    )
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    val newValue = !offlineMode
+                                    offlineMode = newValue
+                                    settingsPrefs.edit().putBoolean("offline_mode", newValue).apply()
+                                    // Re-enabling sync (turning offline OFF) resumes syncing so
+                                    // local data is pushed back to the server.
+                                    if (!newValue) performAutoSync()
                                 }
                             )
                             HorizontalDivider()
@@ -532,6 +601,25 @@ private fun ServiceListScreen(
                                     showWalletScreen = true
                                 }
                             )
+                            if (!isDemoMode) {
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Switch account") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        showSwitchAccountDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Delete server data") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        deleteError = null
+                                        keepLocal = true
+                                        showDeleteServerDialog = true
+                                    }
+                                )
+                            }
                         }
                     }
                     IconButton(onClick = onLock) {
@@ -690,6 +778,7 @@ private fun ServiceListScreen(
                 TextButton(
                     onClick = {
                         showSyncEmailDialog = false
+                        if (offlineMode) return@TextButton
                         isSyncing = true
                         val secretBytes = masterSecret.toByteArray()
                         scope.launch {
@@ -866,6 +955,139 @@ private fun ServiceListScreen(
         )
     }
 
+    if (showSwitchAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showSwitchAccountDialog = false },
+            title = { Text("Switch account?") },
+            text = {
+                Text(
+                    "This clears all data on this device — your services, wallets, and " +
+                        "settings — and returns to setup so you can enter a different master " +
+                        "secret.\n\nYour data on the sync server is not affected by this action."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSwitchAccountDialog = false
+                    onSwitchAccount()
+                }) { Text("Switch account") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSwitchAccountDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showDeleteServerDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!deleteInProgress) showDeleteServerDialog = false },
+            title = { Text("Delete data from the server?") },
+            text = {
+                Column {
+                    Text(
+                        "This permanently erases everything stored on the sync server for " +
+                            "this account — all your services, wallets, and TOTP codes. This " +
+                            "cannot be undone on the server."
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = keepLocal,
+                            onCheckedChange = { keepLocal = it },
+                            enabled = !deleteInProgress
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Keep my data on this device (offline mode)")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (keepLocal)
+                            "Your data stays on this phone. It's removed from the server, but " +
+                                "you can restore it later by turning Offline mode off to sync again."
+                        else
+                            "Your data will also be permanently erased from this device.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    deleteError?.let {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !deleteInProgress,
+                    onClick = {
+                        deleteError = null
+                        // Race guard (a): invalidate any pending debounced sync so it
+                        // cannot recreate the record right after we delete it.
+                        syncGeneration++
+                        deleteInProgress = true
+                        val keep = keepLocal
+                        val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
+                        scope.launch {
+                            try {
+                                // No derivable email => there is no server record to target.
+                                val result = if (email.isBlank()) {
+                                    DeleteResult.NotFound
+                                } else {
+                                    val secretBytes = masterSecret.toByteArray()
+                                    try {
+                                        syncManager.deleteServerData(secretBytes, email, context)
+                                    } finally {
+                                        secretBytes.fill(0)
+                                    }
+                                }
+                                when (result) {
+                                    // SAFETY (Invariant #1): wipe/offline-flip ONLY here (200/404).
+                                    is DeleteResult.Success, is DeleteResult.NotFound -> {
+                                        if (keep) {
+                                            settingsPrefs.edit().putBoolean("offline_mode", true).apply()
+                                            offlineMode = true
+                                            showDeleteServerDialog = false
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    "Server data deleted. Your data is still on this " +
+                                                        "device — turn Offline mode off to sync again."
+                                                )
+                                            }
+                                        } else {
+                                            showDeleteServerDialog = false
+                                            onWipeLocalAndRestart()
+                                        }
+                                    }
+                                    is DeleteResult.AuthError ->
+                                        deleteError = "Couldn't verify your account. Nothing was changed."
+                                    is DeleteResult.RateLimited ->
+                                        deleteError = "Too many requests. Wait a moment and try again. Nothing was changed."
+                                    is DeleteResult.ServerError, is DeleteResult.NetworkError ->
+                                        deleteError = "Couldn't reach the server. Nothing was changed — please try again."
+                                }
+                            } catch (e: Exception) {
+                                // Fail-closed: any unexpected throwable leaves everything untouched.
+                                deleteError = "Something went wrong. Nothing was changed — please try again."
+                            } finally {
+                                deleteInProgress = false
+                            }
+                        }
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !deleteInProgress,
+                    onClick = { showDeleteServerDialog = false }
+                ) { Text("Cancel") }
+            }
+        )
+    }
+
 }
 
 @Composable
@@ -878,15 +1100,25 @@ private fun ServiceCard(
     context: Context
 ) {
     val scope = rememberCoroutineScope()
-    val password = remember(service, masterSecret) {
-        Keygrain.derivePassword(
-            secret = masterSecret.toByteArray(),
-            email = service.email,
-            site = service.site,
-            length = service.length,
-            symbols = service.symbols,
-            counter = service.counter
-        )
+    // Derive off the main thread — derivePassword runs Argon2id (heavy). Null = generating.
+    // Key on stable content fields (not the ServiceEntry instance, whose JSONObject
+    // members use identity equals) so a sync/copy reload doesn't reset to "Generating…".
+    var password by remember(
+        service.email, service.site, service.length, service.symbols, service.counter, masterSecret
+    ) { mutableStateOf<String?>(null) }
+    LaunchedEffect(
+        service.email, service.site, service.length, service.symbols, service.counter, masterSecret
+    ) {
+        password = withContext(Dispatchers.Default) {
+            Keygrain.derivePassword(
+                secret = masterSecret.toByteArray(),
+                email = service.email,
+                site = service.site,
+                length = service.length,
+                symbols = service.symbols,
+                counter = service.counter
+            )
+        }
     }
     var visible by remember { mutableStateOf(false) }
     var passwordCopied by remember { mutableStateOf(false) }
@@ -927,19 +1159,30 @@ private fun ServiceCard(
     val totpPeriod = service.totp?.optInt("period", 30) ?: 30
 
     if (service.totp != null) {
-        LaunchedEffect(service.totp) {
-            while (true) {
-                val mode = service.totp.optString("mode", "")
-                val digits = service.totp.optInt("digits", 6)
-                val period = service.totp.optInt("period", 30)
-                val algorithm = service.totp.optString("algorithm", "SHA1")
-                val now = System.currentTimeMillis() / 1000
-                try {
-                    val seed = if (mode == "stored") {
+        LaunchedEffect(service.totp.toString(), service.email, service.site, masterSecret) {
+            val mode = service.totp.optString("mode", "")
+            val digits = service.totp.optInt("digits", 6)
+            val period = service.totp.optInt("period", 30)
+            val algorithm = service.totp.optString("algorithm", "SHA1")
+            // Derive the seed ONCE off the main thread (derived mode runs Argon2id).
+            // Previously this ran every second on the main thread → continuous ANR risk.
+            val seed: ByteArray? = try {
+                withContext(Dispatchers.Default) {
+                    if (mode == "stored") {
                         android.util.Base64.decode(service.totp.getString("seed"), android.util.Base64.DEFAULT)
                     } else {
                         TotpEngine.deriveTotpSeed(masterSecret.toByteArray(), service.email, service.site)
                     }
+                }
+            } catch (_: Exception) { null }
+            if (seed == null) {
+                totpCode = "error"
+                totpRemaining = 0
+                return@LaunchedEffect
+            }
+            while (true) {
+                val now = System.currentTimeMillis() / 1000
+                try {
                     totpCode = TotpEngine.generateTotp(seed, now, digits, period, algorithm)
                     totpRemaining = (period - (now % period)).toInt()
                 } catch (_: Exception) {
@@ -988,26 +1231,34 @@ private fun ServiceCard(
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = if (visible) password else "••••••••••••",
+                    text = when {
+                        password == null -> "Generating…"
+                        visible -> password!!
+                        else -> "••••••••••••"
+                    },
                     style = MaterialTheme.typography.bodyLarge,
-                    fontFamily = if (visible) FontFamily.Monospace else FontFamily.Default,
+                    fontFamily = if (visible && password != null) FontFamily.Monospace else FontFamily.Default,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(onClick = { visible = !visible }) {
+                IconButton(onClick = { visible = !visible }, enabled = password != null) {
                     Icon(
                         if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                         contentDescription = "Toggle"
                     )
                 }
-                IconButton(onClick = {
-                    if (passwordCopied) return@IconButton
-                    copyAndClear("password", password)
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    passwordCopied = true
-                    onCopy()
-                }) {
+                IconButton(
+                    enabled = password != null,
+                    onClick = {
+                        val pw = password ?: return@IconButton
+                        if (passwordCopied) return@IconButton
+                        copyAndClear("password", pw)
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        passwordCopied = true
+                        onCopy()
+                    }
+                ) {
                     Icon(
                         if (passwordCopied) Icons.Default.Check else Icons.Default.ContentCopy,
                         contentDescription = if (passwordCopied) "Copied" else "Copy"
@@ -1079,16 +1330,20 @@ private fun ServiceCard(
                         )
                         IconButton(onClick = {
                             if (sshCopied) return@IconButton
-                            try {
-                                val sshCounter = service.ssh.optInt("counter", 1)
-                                val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
-                                val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
-                                val line = SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
-                                copyAndClear("ssh-pubkey", line)
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                sshCopied = true
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                            scope.launch {
+                                try {
+                                    val sshCounter = service.ssh.optInt("counter", 1)
+                                    val line = withContext(Dispatchers.Default) {
+                                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
+                                        val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
+                                        SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
+                                    }
+                                    copyAndClear("ssh-pubkey", line)
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    sshCopied = true
+                                } catch (e: Exception) {
+                                    android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                                }
                             }
                         }) {
                             Icon(
@@ -1100,12 +1355,18 @@ private fun ServiceCard(
                         IconButton(onClick = {
                             if (sshPrivCopied) return@IconButton
                             if (!sshPrivConfirmed) { showSshPrivDialog = true; return@IconButton }
-                            try {
-                                val sshCounter = service.ssh.optInt("counter", 1)
-                                val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
+                            scope.launch {
                                 try {
-                                    val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
-                                    val pem = SshEngine.formatOpensshPrivateKey(kp.seed, kp.publicKey, comment)
+                                    val sshCounter = service.ssh.optInt("counter", 1)
+                                    val pem = withContext(Dispatchers.Default) {
+                                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
+                                        try {
+                                            val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
+                                            SshEngine.formatOpensshPrivateKey(kp.seed, kp.publicKey, comment)
+                                        } finally {
+                                            kp.seed.fill(0)
+                                        }
+                                    }
                                     val clip = ClipData.newPlainText("ssh-privkey", pem)
                                     if (android.os.Build.VERSION.SDK_INT >= 33) {
                                         clip.description.extras = android.os.PersistableBundle().apply {
@@ -1120,11 +1381,9 @@ private fun ServiceCard(
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     sshPrivCopied = true
                                     android.widget.Toast.makeText(context, "Private key copied", android.widget.Toast.LENGTH_SHORT).show()
-                                } finally {
-                                    kp.seed.fill(0)
+                                } catch (e: Exception) {
+                                    android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                                 }
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }) {
                             Icon(

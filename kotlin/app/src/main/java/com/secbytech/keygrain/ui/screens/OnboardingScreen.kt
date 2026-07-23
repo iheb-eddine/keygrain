@@ -33,8 +33,10 @@ import com.secbytech.keygrain.data.SecretManager
 import com.secbytech.keygrain.data.ServiceEntry
 import com.secbytech.keygrain.data.ServiceManager
 import com.secbytech.keygrain.ui.WongPalette
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -239,19 +241,26 @@ private fun FirstServicePage(
     var showAdvanced by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
 
-    val password = remember(name, site, email, length, symbols, masterSecret) {
-        if (email.isBlank() || site.isBlank()) return@remember null
+    // Derive the preview off the main thread with a typing debounce — derivePassword
+    // runs Argon2id, and each distinct email while typing would otherwise strengthen
+    // synchronously on the main thread.
+    var password by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(site, email, length, symbols, masterSecret) {
+        if (email.isBlank() || site.isBlank()) { password = null; return@LaunchedEffect }
+        delay(400)
         val len = (length.toIntOrNull() ?: 20).coerceAtLeast(8)
         val syms = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS }
-        try {
-            Keygrain.derivePassword(
-                secret = masterSecret.toByteArray(),
-                email = email.trim(),
-                site = site.trim(),
-                length = len,
-                symbols = syms
-            )
-        } catch (_: Exception) { null }
+        password = withContext(Dispatchers.Default) {
+            try {
+                Keygrain.derivePassword(
+                    secret = masterSecret.toByteArray(),
+                    email = email.trim(),
+                    site = site.trim(),
+                    length = len,
+                    symbols = syms
+                )
+            } catch (_: Exception) { null }
+        }
     }
 
     OnboardingPageLayout(
@@ -324,11 +333,12 @@ private fun FirstServicePage(
                 )
             }
         }
-        if (password != null) {
+        val pw = password
+        if (pw != null) {
             Spacer(Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = if (passwordVisible) password else "••••••••••••",
+                    text = if (passwordVisible) pw else "••••••••••••",
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f)
                 )
@@ -340,7 +350,7 @@ private fun FirstServicePage(
                 }
                 IconButton(onClick = {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("password", password))
+                    clipboard.setPrimaryClip(ClipData.newPlainText("password", pw))
                     Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
                 }) {
                     Icon(Icons.Default.ContentCopy, contentDescription = "Copy")

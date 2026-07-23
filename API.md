@@ -207,6 +207,81 @@ Server-side failure (disk I/O, etc.). Clients should retry with backoff.
 
 ---
 
+### DELETE /api/sync/:lookup_id
+
+Permanently delete the stored sync state for a user. This erases **all** synced
+configuration — services, wallets, TOTP seeds, and SSH keys — by removing the
+single stored record. The operation is irreversible server-side.
+
+**Request:**
+
+```http
+DELETE /api/sync/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 HTTP/1.1
+Authorization: Basic <base64(lookup_id:auth_password)>
+```
+
+No request body. Authentication is identical to GET/PUT: HTTP Basic where the
+username MUST equal the `:lookup_id`, verified against the stored bcrypt hash.
+
+**Responses:**
+
+#### 200 OK
+
+The record was removed.
+
+```http
+Content-Type: application/json
+```
+
+```json
+{"status":"deleted"}
+```
+
+#### 404 Not Found
+
+No record exists for this lookup_id. Also returned on a repeated delete of an
+already-removed record. Clients SHOULD treat 404 as success ("already absent") —
+deletion is idempotent in effect.
+
+```json
+{"error":"not found"}
+```
+
+#### 401 Unauthorized
+
+Missing, malformed, or incorrect credentials, or the username does not match the
+`:lookup_id`. The record (if any) is left unchanged.
+
+```json
+{"error":"unauthorized"}
+```
+
+#### 400 Bad Request
+
+Malformed `:lookup_id` (not 64 hex characters).
+
+```json
+{"error":"invalid lookup_id"}
+```
+
+#### 429 Too Many Requests
+
+Subject to the same dual token-bucket limits as GET/PUT (see [Rate Limiting](#rate-limiting)). Includes a `Retry-After` header.
+
+```json
+{"error":"rate limit exceeded","retry_after":30}
+```
+
+#### 500 Internal Server Error
+
+Server-side failure (disk I/O, etc.). The record is left unchanged; clients should retry with backoff.
+
+```json
+{"error":"internal error"}
+```
+
+---
+
 ### GET /health
 
 Simple health check. No authentication required.
@@ -383,4 +458,21 @@ All errors are JSON with `Content-Type: application/json`. Three shapes exist:
 6. PUT /api/sync/:lookup_id
    If-Match: "bbb..."
    → 200 OK
+```
+
+### Delete Server Data
+
+```
+1. DELETE /api/sync/:lookup_id
+   Authorization: Basic <base64(lookup_id:auth_password)>
+   → 200 OK {status: "deleted"}
+
+2. A repeated delete of the now-absent record:
+   DELETE /api/sync/:lookup_id
+   → 404 Not Found {error: "not found"}
+   (Clients treat 404 as success — the record is already gone.)
+
+3. Re-creating after a delete is a normal first sync:
+   GET /api/sync/:lookup_id → 404
+   PUT /api/sync/:lookup_id (no If-Match) → 201 Created
 ```
