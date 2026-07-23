@@ -14,13 +14,13 @@ val computedVersionCode = versionParts[0].toInt() * 10000 + versionParts[1].toIn
 val suffix = findProperty("versionSuffix")?.toString()?.let { "-$it" } ?: ""
 
 android {
-    namespace = "com.badrani.keygrain"
-    compileSdk = 34
+    namespace = "com.secbytech.keygrain"
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.badrani.keygrain"
+        applicationId = "com.secbytech.keygrain"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         versionCode = computedVersionCode
         versionName = versionString + suffix
     }
@@ -100,11 +100,11 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
 
     // ML Kit Barcode Scanning
-    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     // CameraX for QR scanning
-    implementation("androidx.camera:camera-core:1.3.1")
-    implementation("androidx.camera:camera-camera2:1.3.1")
-    implementation("androidx.camera:camera-lifecycle:1.3.1")
-    implementation("androidx.camera:camera-view:1.3.1")
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
 }
