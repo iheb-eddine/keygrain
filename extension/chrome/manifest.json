@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Keygrain",
-  "version": "0.11.0",
+  "version": "1.0.0",
   "description": "Deterministic password generator with encrypted sync. Your master password never leaves your device.",
   "homepage_url": "https://github.com/iheb-eddine/keygrain",
   "permissions": [
