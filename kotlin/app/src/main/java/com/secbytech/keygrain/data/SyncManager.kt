@@ -21,6 +21,29 @@ sealed class SyncResult {
     data object ConflictError : SyncResult()
 }
 
+/**
+ * Outcome of a server-side delete (DELETE /api/sync/:lookup_id).
+ *
+ * SAFETY (Invariant #1): the caller MUST treat ONLY [Success] (HTTP 200) and
+ * [NotFound] (HTTP 404) as a confirmed delete. Every other variant means the
+ * server state is unknown or unchanged — the caller must NOT wipe local data or
+ * flip offline_mode, and should allow the user to retry.
+ */
+sealed class DeleteResult {
+    /** HTTP 200 — the record was removed. */
+    data object Success : DeleteResult()
+    /** HTTP 404 — no record existed. Idempotent; caller treats as success. */
+    data object NotFound : DeleteResult()
+    /** HTTP 401/403 — credentials rejected; record left unchanged. */
+    data class AuthError(val httpCode: Int) : DeleteResult()
+    /** HTTP 429 — rate limited; record left unchanged. */
+    data object RateLimited : DeleteResult()
+    /** Any other non-2xx HTTP status; record state unknown. */
+    data class ServerError(val httpCode: Int, val body: String) : DeleteResult()
+    /** Transport failure (timeout, connection reset, unreachable). */
+    data class NetworkError(val cause: Throwable) : DeleteResult()
+}
+
 data class SyncConflict(
     val winnerId: String,
     val loser: JSONObject,
@@ -120,6 +143,15 @@ class SyncManager(
 
     fun setSyncEmail(context: Context, email: String) {
         getPrefs(context).edit().putString("sync_email", email).apply()
+    }
+
+    /**
+     * Wipe all locally cached sync state: sync email, known UUIDs, wallet keys,
+     * metadata cache, wallets, audit log, and conflict flags. Used by Switch
+     * account and the local-delete path. Does NOT touch the server.
+     */
+    fun clearLocalData(context: Context) {
+        getPrefs(context).edit().clear().apply()
     }
 
     private fun getKnownUUIDs(context: Context): Set<String> =
@@ -667,6 +699,58 @@ class SyncManager(
             }
         } catch (e: IOException) {
             PutResult.NetworkError(e)
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    /**
+     * Permanently delete this account's record from the sync server.
+     *
+     * Derives lookup_id/auth_password from [secret]/[email] and sends
+     * DELETE /api/sync/:lookup_id with HTTP Basic auth. Returns a [DeleteResult];
+     * the caller MUST treat only [DeleteResult.Success] (200) and
+     * [DeleteResult.NotFound] (404) as a confirmed delete (Invariant #1).
+     *
+     * Does NOT read or parse the 200 response body: the informational
+     * {"status":"deleted"} payload is irrelevant to the outcome.
+     */
+    suspend fun deleteServerData(secret: ByteArray, email: String, context: Context): DeleteResult =
+        withContext(Dispatchers.IO) {
+            val lookupId = Keygrain.deriveLookupId(secret, email)
+            val authPassword = Keygrain.deriveAuthPassword(secret, email)
+            val authHeader = "Basic " + Base64.encodeToString(
+                "$lookupId:$authPassword".toByteArray(), Base64.NO_WRAP
+            )
+            doDelete(lookupId, authHeader)
+        }
+
+    /**
+     * HTTP layer for [deleteServerData]. Mirrors [doGet]/[doPut]
+     * (HttpURLConnection, 15s timeouts, disconnect in finally). Internal rather
+     * than private so the plain-JVM unit test can drive the full
+     * status-code -> DeleteResult mapping against an embedded HttpServer without
+     * touching android.util.Base64 (which is not available in unit tests).
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun doDelete(lookupId: String, authHeader: String): DeleteResult {
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (URL("$baseUrl/api/sync/$lookupId").openConnection() as HttpURLConnection).apply {
+                requestMethod = "DELETE"
+                setRequestProperty("Authorization", authHeader)
+                connectTimeout = 15000
+                readTimeout = 15000
+            }
+            when (val code = conn.responseCode) {
+                200 -> DeleteResult.Success
+                404 -> DeleteResult.NotFound
+                401, 403 -> DeleteResult.AuthError(code)
+                429 -> DeleteResult.RateLimited
+                else -> DeleteResult.ServerError(code, conn.errorStream?.bufferedReader()?.readText() ?: "")
+            }
+        } catch (e: IOException) {
+            DeleteResult.NetworkError(e)
         } finally {
             conn?.disconnect()
         }

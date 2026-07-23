@@ -18,8 +18,10 @@ import com.secbytech.keygrain.data.WalletEngine
 import com.secbytech.keygrain.data.SyncManager
 import com.secbytech.keygrain.data.WalletEntry
 import com.secbytech.keygrain.data.WalletAuditEntry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -202,13 +204,15 @@ fun WalletScreen(
                     deriving = true
                     scope.launch {
                         try {
-                            val result = WalletEngine.deriveWalletMnemonic(
-                                masterSecret.toByteArray(),
-                                email.trim(),
-                                walletName.trim(),
-                                selectedChain,
-                                c
-                            )
+                            val result = withContext(Dispatchers.Default) {
+                                WalletEngine.deriveWalletMnemonic(
+                                    masterSecret.toByteArray(),
+                                    email.trim(),
+                                    walletName.trim(),
+                                    selectedChain,
+                                    c
+                                )
+                            }
                             mnemonic = result
 
                             // Persist wallet entry and audit log

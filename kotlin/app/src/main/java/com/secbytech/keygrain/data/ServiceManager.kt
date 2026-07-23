@@ -122,6 +122,11 @@ class ServiceManager(context: Context) {
         save(services.map { it.copy(site = normalizeSite(it.site)) })
     }
 
+    /** Wipe all locally stored services (used by Switch account / local delete). */
+    fun clearAll() {
+        prefs.edit().clear().apply()
+    }
+
     fun updateFrecency(name: String) {
         val services = getServices().map {
             if (it.name == name) it.copy(frecency = it.frecency * 0.95 + 1)
