@@ -3,7 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val versionFile = rootProject.projectDir.resolve("../VERSION")
+// Android owns its version in kotlin/VERSION (component-local source of truth),
+// independent of the other components.
+val versionFile = rootProject.projectDir.resolve("VERSION")
 val versionString = versionFile.readText().trim()
 val versionParts = versionString.split(".")
 require(versionParts.size == 3) { "VERSION file must be major.minor.patch, got: $versionString" }
