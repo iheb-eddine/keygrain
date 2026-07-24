@@ -113,6 +113,8 @@ button { cursor: pointer; }
 #menu-dropdown { border: none; border-radius: var(--radius-lg); padding: 6px 0; margin-bottom: 8px; background: var(--surface); box-shadow: var(--shadow-lg); }
 #menu-dropdown button { display: block; width: calc(100% - 8px); margin: 0 4px; text-align: left; padding: 8px 14px; border: none; border-radius: var(--radius-sm); background: none; font-size: 0.85rem; color: var(--text); transition: background var(--transition-fast); }
 #menu-dropdown button:hover { background: var(--bg-secondary); }
+#menu-dropdown button.menu-danger { color: var(--error); }
+#menu-dropdown button[aria-checked="true"]::before { content: "\2713 "; }
 #menu-dropdown hr { margin: 4px 0; border: none; border-top: 1px solid var(--border); }
 
 /* Search */

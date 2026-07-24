@@ -478,3 +478,51 @@ function exportToFile(encryptedBlob, filename) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/**
+ * Pure mapping of a DELETE /api/sync/:lookup_id HTTP status to an outcome.
+ *
+ * SAFETY (Invariant #1, mirrors the Android DeleteResult contract): the caller
+ * MUST treat ONLY {ok:true} (HTTP 200 or 404) as a confirmed delete. For every
+ * other status the server state is unknown or unchanged — the caller must NOT
+ * wipe local data or flip offline mode, and should let the user retry.
+ *
+ * - 200: record removed.
+ * - 404: no record existed. Deletion is idempotent in effect → treat as success.
+ * - 401/403: credentials rejected; record left unchanged.
+ * - 429: rate limited; record left unchanged.
+ * - anything else: unknown server state.
+ */
+function classifyDeleteStatus(status) {
+  if (status === 200 || status === 404) return {ok: true, result: "success"};
+  if (status === 401 || status === 403) return {ok: false, result: "auth"};
+  if (status === 429) return {ok: false, result: "rate_limited"};
+  return {ok: false, result: "server"};
+}
+
+/**
+ * Permanently delete this account's record from the sync server.
+ *
+ * Derives lookup_id/auth_password from secret/email and sends
+ * DELETE /api/sync/:lookup_id with HTTP Basic auth. Returns the
+ * classifyDeleteStatus() outcome; a transport failure returns
+ * {ok:false, result:"network"}. The 200 body ({"status":"deleted"}) is
+ * irrelevant to the outcome and is not parsed. The caller MUST treat only
+ * {ok:true} as a confirmed delete (Invariant #1).
+ */
+async function deleteServerData(secret, email) {
+  const lookupId = await deriveLookupId(secret, email);
+  const authPassword = await deriveAuthPassword(secret, email);
+  const syncServer = await getSyncServer();
+  const authHeader = "Basic " + btoa(lookupId + ":" + authPassword);
+  let resp;
+  try {
+    resp = await fetch(syncServer + "/api/sync/" + lookupId, {
+      method: "DELETE",
+      headers: {"Authorization": authHeader},
+    });
+  } catch (e) {
+    return {ok: false, result: "network"};
+  }
+  return classifyDeleteStatus(resp.status);
+}

@@ -85,6 +85,21 @@
   const resetConfirmBtn = document.getElementById("reset-confirm-btn");
   const resetCancel = document.getElementById("reset-cancel");
 
+  // Account management refs (offline mode / switch account / delete server data)
+  const offlineBtn = document.getElementById("offline-btn");
+  const switchAccountBtn = document.getElementById("switch-account-btn");
+  const switchAccountLock = document.getElementById("switch-account-lock");
+  const switchAccountDialog = document.getElementById("switch-account-dialog");
+  const switchAccountCancel = document.getElementById("switch-account-cancel");
+  const switchAccountConfirm = document.getElementById("switch-account-confirm");
+  const deleteServerBtn = document.getElementById("delete-server-btn");
+  const deleteServerDialog = document.getElementById("delete-server-dialog");
+  const deleteServerKeepLocal = document.getElementById("delete-server-keep-local");
+  const deleteServerSubtext = document.getElementById("delete-server-subtext");
+  const deleteServerError = document.getElementById("delete-server-error");
+  const deleteServerCancel = document.getElementById("delete-server-cancel");
+  const deleteServerConfirm = document.getElementById("delete-server-confirm");
+
   // PIN DOM refs
   const pinScreen = document.getElementById("pin-screen");
   const pinInput = document.getElementById("pin-input");
@@ -118,6 +133,8 @@
   let renderedServices = [];
   let settings = {autoLockMinutes: 15, defaultLength: 20, defaultSymbols: "!@#$%&*-_=+?", serverUrl: "https://keygrain.com"};
   let isDemoMode = false;
+  let offlineMode = false;
+  let deleteServerInProgress = false;
   const isFirefox = (typeof browser !== "undefined" && !!browser.storage) || /firefox/i.test(navigator.userAgent || "");
   const isMac = /Mac/i.test(navigator.platform || navigator.userAgent || "");
   let siteRules = null;
@@ -146,6 +163,8 @@
   let addState = null;
   let deleteState = null;
   let inlineConsentState = null;
+  let switchAccountState = null;
+  let deleteServerState = null;
 
   const tryDemoLink = document.getElementById("try-demo");
   const demoBanner = document.getElementById("demo-banner");
@@ -224,6 +243,70 @@
   async function loadSettings() {
     const data = await chrome.storage.local.get("settings");
     if (data.settings) Object.assign(settings, data.settings);
+  }
+
+  async function loadOfflineMode() {
+    const data = await chrome.storage.local.get("offlineMode");
+    offlineMode = !!data.offlineMode;
+  }
+
+  // Account-scoped storage keys wiped by Switch account and the delete-local
+  // branch of Delete server data. Device/config keys (settings, onboardingDone,
+  // inlineAutofillEnabled, siteRules, breachFeed, shortcutHintDismissed,
+  // v2_migrated) are intentionally preserved. This differs from Reset Keygrain,
+  // which clears everything.
+  const ACCOUNT_SCOPED_KEYS = [
+    "services", "syncKnownUUIDs", "syncKnownWalletKeys", "syncMetadataCache",
+    "syncConflicts", "conflictsDismissed", "lastSyncTime", "lastSyncError",
+    "syncRetryState", "aadEnabled", "pinData", "pinFailCount", "lastEmail",
+    "dismissedBreaches", "migrationChecklist", "offlineMode", "popupActive"
+  ];
+
+  // Wipe all account-scoped data on this device and reset in-memory state. Shared
+  // by Switch account and the delete-local branch of Delete server data. Never
+  // touches the server.
+  async function wipeLocalAccountData() {
+    isDemoMode = false;
+    demoBanner.classList.add("hidden");
+    stopAutolockWarning();
+    stopTOTPInterval();
+    if (syncDebounceTimer) { clearTimeout(syncDebounceTimer); syncDebounceTimer = null; }
+    syncInProgress = false;
+    syncGeneration++;
+    if (syncIndicatorInterval) { clearInterval(syncIndicatorInterval); syncIndicatorInterval = null; }
+    await clearSecret();
+    await clearEmail();
+    await chrome.storage.local.remove(ACCOUNT_SCOPED_KEYS);
+    clearStrengthenCache();
+    try { await navigator.clipboard.writeText(""); } catch (_) {}
+    currentSecret = null;
+    currentEmail = null;
+    services = [];
+    wallets = [];
+    walletAuditLog = [];
+    offlineMode = false;
+    lastSyncTime = null;
+    lastSyncError = null;
+  }
+
+  async function performSwitchAccount() {
+    await wipeLocalAccountData();
+    showLockScreen();
+  }
+
+  // Reveal the lock-screen "Use a different account" affordance only when this
+  // device already holds an account's local data (so it is actionable). Called
+  // (fire-and-forget) from showLockScreen.
+  async function updateSwitchAccountLink() {
+    try {
+      const data = await chrome.storage.local.get("services");
+      const hasLocal = !!(data.services && (data.services.version === 1 || data.services.version === 2));
+      switchAccountLock.classList.toggle("hidden", !hasLocal);
+    } catch { switchAccountLock.classList.add("hidden"); }
+  }
+
+  function updateOfflineBtn() {
+    offlineBtn.setAttribute("aria-checked", String(offlineMode));
   }
 
   async function loadSiteRules() {
@@ -460,7 +543,7 @@
 
   // === Background sync ===
   async function performAutoSync() {
-    if (isDemoMode || syncInProgress || !currentSecret) return;
+    if (isDemoMode || syncInProgress || !currentSecret || offlineMode || deleteServerInProgress) return;
     syncInProgress = true;
     updateSyncIndicator();
     const gen = syncGeneration;
@@ -509,6 +592,12 @@
 
 
   function updateSyncIndicator() {
+    if (offlineMode) {
+      syncIndicator.classList.remove("hidden");
+      syncTimeEl.textContent = "Offline";
+      syncErrorEl.classList.add("hidden");
+      return;
+    }
     if (lastSyncError) {
       chrome.storage.local.get("syncRetryState", (data) => {
         const status = computeSyncStatus(syncInProgress, lastSyncError, lastSyncTime, data.syncRetryState);
@@ -635,6 +724,7 @@
     unlockBtn.disabled = true;
     document.body.style.height = "auto";
     emailInput.focus();
+    updateSwitchAccountLink();
   }
 
   function showPinScreen() {
@@ -661,6 +751,7 @@
     renderServiceList();
     startTOTPInterval();
     renderConflictBanner();
+    updateOfflineBtn();
     if (!syncIndicatorInterval) {
       syncIndicatorInterval = setInterval(updateSyncIndicator, 1000);
     }
@@ -1074,13 +1165,28 @@
     let ok;
     try { ok = await loadServices(); } catch { ok = false; }
     if (!ok) {
-      showStatus(statusEl, "Wrong secret or email. Please try again.", statusTimerState);
+      // Distinguish a typo from an intentional attempt to use a *different*
+      // account. If a local (encrypted) account already exists on this device,
+      // the entered credentials simply don't match it — tell the user plainly
+      // and surface the switch-account affordance instead of a dead-end error.
+      let hasLocal = false;
+      try {
+        const data = await chrome.storage.local.get("services");
+        hasLocal = !!(data.services && (data.services.version === 1 || data.services.version === 2));
+      } catch { /* ignore */ }
+      if (hasLocal) {
+        showStatus(statusEl, "That email and secret don\u2019t match the account saved on this device. Check for typos \u2014 or, to set up a different account, choose \u201CUse a different account\u201D below.", statusTimerState, 8000);
+        switchAccountLock.classList.remove("hidden");
+      } else {
+        showStatus(statusEl, "Wrong secret or email. Please try again.", statusTimerState);
+      }
       currentSecret = null;
       currentEmail = null;
       return;
     }
-    // If no local services, try fetching from server (returning user on new device?)
-    if (services.length === 0) {
+    // If no local services, try fetching from server (returning user on new
+    // device?). Skipped in offline mode — offline means "don't touch the server".
+    if (services.length === 0 && !offlineMode) {
       try {
         showStatus(statusEl, "Checking server...", statusTimerState);
         const result = await syncWithServer(s, e, services);
@@ -1436,6 +1542,138 @@
 
   enterToClick(resetInput, resetConfirmBtn);
 
+  // === Offline mode ===
+  offlineBtn.addEventListener("click", async () => {
+    menuDropdown.classList.add("hidden");
+    if (isDemoMode) { showStatus(statusEl, "Not available in demo mode.", statusTimerState); return; }
+    offlineMode = !offlineMode;
+    await chrome.storage.local.set({offlineMode});
+    updateOfflineBtn();
+    updateSyncIndicator();
+    // Turning offline OFF resumes syncing so local data is pushed back up.
+    if (!offlineMode) performAutoSync();
+    showStatus(statusEl, offlineMode ? "Offline mode on \u2014 sync paused." : "Offline mode off \u2014 syncing.", statusTimerState);
+  });
+
+  // === Switch account ===
+  switchAccountBtn.addEventListener("click", () => {
+    menuDropdown.classList.add("hidden");
+    if (isDemoMode) { showStatus(statusEl, "Not available in demo mode.", statusTimerState); return; }
+    switchAccountState = openDialog(switchAccountDialog, menuBtn);
+    switchAccountCancel.focus();
+  });
+
+  switchAccountLock.addEventListener("click", (e) => {
+    e.preventDefault();
+    switchAccountState = openDialog(switchAccountDialog, switchAccountLock);
+    switchAccountCancel.focus();
+  });
+
+  switchAccountCancel.addEventListener("click", () => closeDialog(switchAccountDialog, switchAccountState));
+
+  switchAccountConfirm.addEventListener("click", async () => {
+    closeDialog(switchAccountDialog, switchAccountState);
+    await performSwitchAccount();
+    showStatus(statusEl, "Account switched. Enter a different email and master secret.", statusTimerState);
+  });
+
+  // === Delete server data ===
+  function renderDeleteServerSubtext() {
+    deleteServerSubtext.textContent = deleteServerKeepLocal.checked
+      ? "Your data stays on this device in offline mode. It\u2019s removed from the server, but you can restore it later by turning Offline mode off to sync again."
+      : "Your data will also be permanently erased from this device.";
+  }
+
+  deleteServerKeepLocal.addEventListener("change", renderDeleteServerSubtext);
+
+  deleteServerBtn.addEventListener("click", () => {
+    menuDropdown.classList.add("hidden");
+    if (isDemoMode) { showStatus(statusEl, "Not available in demo mode.", statusTimerState); return; }
+    deleteServerError.classList.add("hidden");
+    deleteServerError.textContent = "";
+    deleteServerKeepLocal.checked = true;
+    deleteServerInProgress = false;
+    deleteServerConfirm.disabled = false;
+    deleteServerCancel.disabled = false;
+    deleteServerKeepLocal.disabled = false;
+    renderDeleteServerSubtext();
+    deleteServerState = openDialog(deleteServerDialog, menuBtn);
+    deleteServerCancel.focus();
+  });
+
+  deleteServerCancel.addEventListener("click", () => {
+    if (deleteServerInProgress) return;
+    closeDialog(deleteServerDialog, deleteServerState);
+  });
+
+  deleteServerConfirm.addEventListener("click", async () => {
+    if (deleteServerInProgress || isDemoMode || !currentSecret || !currentEmail) return;
+    deleteServerInProgress = true;
+    deleteServerError.classList.add("hidden");
+    deleteServerConfirm.disabled = true;
+    deleteServerCancel.disabled = true;
+    deleteServerKeepLocal.disabled = true;
+    const keepLocal = deleteServerKeepLocal.checked;
+    // Race guards so nothing recreates the record we're deleting:
+    //  (a) bump syncGeneration to void any in-flight popup sync's write-back;
+    //  (b) clear the pending debounced sync;
+    //  (c) go offline in storage BEFORE the network call — the service-worker
+    //      backgroundSync is gated ONLY by offlineMode, so this stops it from
+    //      GET-404 -> PUT re-creating the record. deleteServerInProgress guards
+    //      the popup's own performAutoSync.
+    // The prior offline flag is restored on any non-confirmed outcome, so a
+    // failed delete leaves state unchanged (Invariant #1).
+    syncGeneration++;
+    if (syncDebounceTimer) { clearTimeout(syncDebounceTimer); syncDebounceTimer = null; }
+    const prevOffline = offlineMode;
+    offlineMode = true;
+    await chrome.storage.local.set({offlineMode: true});
+    updateOfflineBtn();
+    updateSyncIndicator();
+    try {
+      const result = await deleteServerData(currentSecret, currentEmail);
+      // SAFETY (Invariant #1): only a confirmed delete (200/404) wipes/keeps state.
+      if (result.ok) {
+        if (keepLocal) {
+          // offlineMode is already true + persisted — keep the data on-device.
+          closeDialog(deleteServerDialog, deleteServerState);
+          showStatus(statusEl, "Server data deleted. Your data is still on this device \u2014 turn Offline mode off to sync again.", statusTimerState, 6000);
+        } else {
+          closeDialog(deleteServerDialog, deleteServerState);
+          await performSwitchAccount();  // wipes local (also resets offlineMode)
+          showStatus(statusEl, "Server and local data deleted.", statusTimerState);
+        }
+      } else {
+        // Nothing changed on the server — restore the prior offline flag.
+        offlineMode = prevOffline;
+        await chrome.storage.local.set({offlineMode: prevOffline});
+        updateOfflineBtn();
+        updateSyncIndicator();
+        const messages = {
+          auth: "Couldn\u2019t verify your account. Nothing was changed.",
+          rate_limited: "Too many requests. Wait a moment and try again. Nothing was changed.",
+          server: "Couldn\u2019t reach the server. Nothing was changed \u2014 please try again.",
+          network: "Couldn\u2019t reach the server. Nothing was changed \u2014 please try again."
+        };
+        deleteServerError.textContent = messages[result.result] || "Something went wrong. Nothing was changed.";
+        deleteServerError.classList.remove("hidden");
+      }
+    } catch (e) {
+      // Fail-closed: any unexpected throwable leaves everything untouched.
+      offlineMode = prevOffline;
+      await chrome.storage.local.set({offlineMode: prevOffline});
+      updateOfflineBtn();
+      updateSyncIndicator();
+      deleteServerError.textContent = "Something went wrong. Nothing was changed \u2014 please try again.";
+      deleteServerError.classList.remove("hidden");
+    } finally {
+      deleteServerInProgress = false;
+      deleteServerConfirm.disabled = false;
+      deleteServerCancel.disabled = false;
+      deleteServerKeepLocal.disabled = false;
+    }
+  });
+
   // Add service
   addBtn.addEventListener("click", () => {
     editIndex = null;
@@ -1739,6 +1977,14 @@
       if (e.key === "Escape") { closeDialog(deleteDialog, deleteState); deleteTarget = null; e.preventDefault(); }
       return;
     }
+    if (!switchAccountDialog.classList.contains("hidden")) {
+      if (e.key === "Escape") { closeDialog(switchAccountDialog, switchAccountState); e.preventDefault(); }
+      return;
+    }
+    if (!deleteServerDialog.classList.contains("hidden")) {
+      if (e.key === "Escape" && !deleteServerInProgress) { closeDialog(deleteServerDialog, deleteServerState); e.preventDefault(); }
+      return;
+    }
 
     // Only handle keys on main screen
     if (mainScreen.classList.contains("hidden")) return;
@@ -1853,6 +2099,7 @@
   }
 
   await loadSettings();
+  await loadOfflineMode();
   currentSecret = await getSecret();
   currentEmail = await getEmail();
   if (currentSecret && currentEmail) {
