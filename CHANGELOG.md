@@ -4,6 +4,36 @@ All notable changes to Keygrain are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0] - 2026-07-24
+
+First stable public release — Keygrain arrives on Google Play and PyPI. No
+algorithm changes: derivation is unchanged (SPEC v4), so every password, code,
+key, and seed is byte-identical to previous versions.
+
+### Added
+
+- **Android on Google Play**, targeting Android 16 (API 36) with 16 KB page-size support
+- Android: offline mode, account switching, and in-app deletion of synced server data
+- **Python CLI/library on PyPI** (`pip install keygrain`) via Trusted Publishing, with reproducible wheels and PEP 740 provenance attestations
+- CLI: read-only sync download + local encrypted cache (retrieve passwords, TOTP, and SSH material)
+- Extension: opt-in in-field autofill (inline icon + account dropdown on saved sites)
+- Extension: TOTP one-time-code autofill across the inline dropdown, popup, keyboard shortcut, and context menu
+- Server: auth-gated `DELETE /api/sync/:lookup_id` to erase your encrypted sync blob
+
+### Changed
+
+- Android application id renamed to `com.secbytech.keygrain`
+- Extension: keyboard-shortcut discoverability tip and robust multi-account / subdomain matching
+
+### Fixed
+
+- Android: resolved an ANR (app-not-responding) case
+- Extension: popup password fill now loads its autofill dependency correctly
+
+> **Versioning note:** Public releases shipped on a 0.x line through v0.11.0 before
+> this 1.0 launch. The 1.0.0–1.2.0 entries below are from the project's earlier
+> internal development scheme and are retained as historical record.
+
 ## [1.2.0] - 2026-05-10
 
 ### Added
