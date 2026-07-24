@@ -4,6 +4,24 @@ All notable changes to Keygrain are documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] - 2026-07-24
+
+Browser extension update. No algorithm changes — derivation is unchanged (SPEC v4), so
+every password, code, key, and seed is byte-identical to previous versions.
+
+### Added
+
+- Extension: **switch account** without a full reset — use a different master secret /
+  email from the main menu or the lock screen
+- Extension: **offline mode** — use Keygrain without syncing, and re-enable sync anytime
+- Extension: **delete synced server data** from within the extension, with an option to
+  keep a local copy on the device
+
+### Fixed
+
+- Extension: clearer lock-screen messaging when the entered secret/email doesn't match
+  the account stored on the device, with a one-tap way to switch accounts
+
 ## [1.0.0] - 2026-07-24
 
 First stable public release — Keygrain arrives on Google Play and PyPI. No
