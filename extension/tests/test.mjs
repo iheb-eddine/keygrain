@@ -1620,6 +1620,84 @@ await test('U5/login revert-guard: a login field still routes to getInlineMatche
 });
 
 // ============================================================
+// DELETE SERVER DATA (sync.js: classifyDeleteStatus + deleteServerData)
+// ============================================================
+console.log('\nDelete Server Data Tests:');
+
+// classifyDeleteStatus — pure status -> outcome mapping (Invariant #1: only
+// 200/404 are a confirmed delete).
+for (const [status, expected] of [
+  [200, { ok: true, result: 'success' }],
+  [404, { ok: true, result: 'success' }],
+  [401, { ok: false, result: 'auth' }],
+  [403, { ok: false, result: 'auth' }],
+  [429, { ok: false, result: 'rate_limited' }],
+  [500, { ok: false, result: 'server' }],
+  [400, { ok: false, result: 'server' }],
+  [418, { ok: false, result: 'server' }],
+]) {
+  await test(`classifyDeleteStatus: ${status} -> ${expected.result}`, async () => {
+    const r = call('classifyDeleteStatus', status);
+    assert.equal(r.ok, expected.ok);
+    assert.equal(r.result, expected.result);
+  });
+}
+
+// deleteServerData — integration with an injected fetch + chrome.storage stub.
+// getSyncServer() reads chrome.storage.local.get; the stub returns {} so it
+// falls back to DEFAULT_SYNC_SERVER (https://keygrain.com).
+ctx.chrome = { storage: { local: { get: async () => ({}) } } };
+runInContext(
+  `globalThis.fetch = async (url, opts) => {
+     _deleteCalls.push({ url, method: opts && opts.method, headers: opts && opts.headers });
+     if (_throwFetch) throw new Error('net');
+     return { status: _nextStatus };
+   };`,
+  ctx
+);
+
+for (const [status, ok, result] of [
+  [200, true, 'success'],
+  [404, true, 'success'],
+  [401, false, 'auth'],
+  [429, false, 'rate_limited'],
+  [503, false, 'server'],
+]) {
+  await test(`deleteServerData: HTTP ${status} -> ok=${ok}, result=${result}`, async () => {
+    ctx._throwFetch = false;
+    ctx._nextStatus = status;
+    ctx._deleteCalls = [];
+    const r = await runInContext(`deleteServerData('a', 'test@gmail.com')`, ctx);
+    assert.equal(r.ok, ok);
+    assert.equal(r.result, result);
+    assert.equal(ctx._deleteCalls.length, 1, 'exactly one request');
+    assert.equal(ctx._deleteCalls[0].method, 'DELETE');
+    assert.ok(ctx._deleteCalls[0].url.startsWith('https://keygrain.com/api/sync/'), 'targets the sync endpoint');
+    assert.ok(/^Basic /.test(ctx._deleteCalls[0].headers.Authorization), 'sends HTTP Basic auth');
+  });
+}
+
+await test('deleteServerData: network failure -> {ok:false, result:network}, no wipe signal', async () => {
+  ctx._throwFetch = true;
+  ctx._nextStatus = 0;
+  ctx._deleteCalls = [];
+  const r = await runInContext(`deleteServerData('a', 'test@gmail.com')`, ctx);
+  assert.equal(r.ok, false);
+  assert.equal(r.result, 'network');
+});
+
+// Invariant #1 contract: across the whole HTTP status space, ONLY 200/404 may
+// report ok:true (the popup's wipe / offline-flip branch is gated on result.ok,
+// so no other status can trigger it).
+await test('classifyDeleteStatus: only 200 and 404 are ok:true across 100-599', async () => {
+  const okStatuses = [];
+  for (let s = 100; s <= 599; s++) {
+    if (call('classifyDeleteStatus', s).ok) okStatuses.push(s);
+  }
+  assert.deepEqual(okStatuses, [200, 404]);
+});
+
+// ============================================================
 // SUMMARY
 // ============================================================
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);

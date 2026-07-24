@@ -19,6 +19,7 @@
     <p class="fingerprint-explanation">Visual fingerprint — same colors confirm same secret.</p>
     <button id="unlock-btn" disabled>Unlock</button>
     <a href="#" id="try-demo" class="demo-link">Try Demo</a>
+    <a href="#" id="switch-account-lock" class="demo-link hidden">Use a different account</a>
   </div>
 
   <!-- PIN Unlock Screen -->
@@ -65,6 +66,10 @@
       <hr>
       <button id="help-btn" role="menuitem">Help</button>
       <button id="wallet-btn" role="menuitem">Wallet</button>
+      <hr>
+      <button id="offline-btn" role="menuitemcheckbox" aria-checked="false">Offline mode</button>
+      <button id="switch-account-btn" role="menuitem">Switch account</button>
+      <button id="delete-server-btn" role="menuitem" class="menu-danger">Delete server data</button>
     </div>
 
     <input type="text" id="search" placeholder="Search services..." autocomplete="off">
@@ -151,6 +156,38 @@
     <div class="dialog-actions">
       <button id="delete-cancel">Cancel</button>
       <button id="delete-confirm">Delete</button>
+    </div>
+  </div>
+
+  <!-- Switch Account Confirmation Dialog -->
+  <div id="switch-account-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="switch-account-title">
+    <h2 id="switch-account-title">Switch account?</h2>
+    <p>This clears all data on this device — your services, wallets, PIN, and sync state — and returns to the unlock screen so you can enter a different email and master secret.</p>
+    <p>Your data on the sync server is <strong>not</strong> affected by this action.</p>
+    <div class="dialog-actions">
+      <button id="switch-account-cancel">Cancel</button>
+      <button id="switch-account-confirm" class="btn-danger">Switch account</button>
+    </div>
+  </div>
+
+  <!-- Delete Server Data Dialog -->
+  <div id="delete-server-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="delete-server-title">
+    <h2 id="delete-server-title">Delete data from the server?</h2>
+    <p>This permanently erases everything stored on the sync server for this account — all your services, wallets, TOTP codes, and SSH keys. This cannot be undone on the server.</p>
+    <div class="setting-row">
+      <div class="setting-row-text">
+        <span class="setting-row-title">Keep my data on this device (offline mode)</span>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="delete-server-keep-local" role="switch" aria-label="Keep my data on this device" checked>
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </label>
+    </div>
+    <p id="delete-server-subtext" class="setting-row-desc" aria-live="polite"></p>
+    <p id="delete-server-error" class="pin-error hidden" aria-live="polite"></p>
+    <div class="dialog-actions">
+      <button id="delete-server-cancel">Cancel</button>
+      <button id="delete-server-confirm" class="btn-danger">Delete</button>
     </div>
   </div>
 
