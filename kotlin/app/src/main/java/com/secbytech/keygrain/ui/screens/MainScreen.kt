@@ -8,6 +8,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
@@ -16,6 +17,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,11 +27,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -57,6 +62,7 @@ import com.secbytech.keygrain.data.DeleteResult
 import com.secbytech.keygrain.data.SyncResult
 import com.secbytech.keygrain.ui.UserMessages
 import com.secbytech.keygrain.ui.WongPalette
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -329,6 +335,7 @@ private fun ServiceListScreen(
     var detectedFullDomain by remember { mutableStateOf<String?>(null) }
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
     var showEditDialog by remember { mutableStateOf<ServiceEntry?>(null) }
+    var detailService by remember { mutableStateOf<ServiceEntry?>(null) }
     var menuExpanded by remember { mutableStateOf(false) }
     var showHelpScreen by remember { mutableStateOf(false) }
     var showWalletScreen by remember { mutableStateOf(false) }
@@ -339,6 +346,12 @@ private fun ServiceListScreen(
     var syncFailed by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    // Survivor scope for clipboard 30s auto-clears. Owned by ServiceListScreen so it
+    // stays alive across the Help/Wallet/editor/detail early-returns (a per-card or
+    // per-detail scope would be cancelled on navigation, leaving copies un-wiped).
+    // Cancelled only when ServiceListScreen itself is disposed (e.g. onLock), which
+    // already clears the clipboard — so no leak there.
+    val clipboardScope = rememberCoroutineScope()
     val syncManager = remember { SyncManager() }
     val settingsPrefs = remember {
         context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
@@ -504,6 +517,75 @@ private fun ServiceListScreen(
 
     if (showHelpScreen) {
         HelpScreen(onBack = { showHelpScreen = false })
+        return
+    }
+
+    // Full-screen editor (Add + Edit) — replaces the old ModalBottomSheet. Full-screen
+    // early-return has no drag-to-dismiss gesture, so over-scroll can no longer discard input.
+    if (prefillSite != null || showEditDialog != null) {
+        val editEntry = showEditDialog
+        ServiceEditorScreen(
+            initialEntry = editEntry,
+            initialSite = prefillSite ?: "",
+            detectedFullDomain = detectedFullDomain,
+            defaultEmail = getMostCommonEmail(),
+            onInteraction = { lockTimerReset.longValue = System.currentTimeMillis() },
+            onDismiss = {
+                prefillSite = null; detectedFullDomain = null; showEditDialog = null
+            },
+            onSave = { entry ->
+                if (editEntry != null) {
+                    if (isDemoMode) {
+                        services = services.map { if (it.name == editEntry.name) entry else it }
+                        showEditDialog = null
+                        true
+                    } else if (serviceManager.updateService(editEntry.id!!, entry)) {
+                        services = serviceManager.getServices()
+                        triggerDebouncedSync()
+                        showEditDialog = null
+                        true
+                    } else false
+                } else {
+                    if (isDemoMode) {
+                        services = services + entry
+                        prefillSite = null; detectedFullDomain = null
+                        true
+                    } else if (serviceManager.addService(entry)) {
+                        services = serviceManager.getServices()
+                        triggerDebouncedSync()
+                        prefillSite = null; detectedFullDomain = null
+                        true
+                    } else false
+                }
+            }
+        )
+        return
+    }
+
+    // Read-only detail view (reached by tapping a card in Unit 5). Full-screen early-return.
+    detailService?.let { detail ->
+        ServiceDetailScreen(
+            service = detail,
+            masterSecret = masterSecret,
+            clipboardScope = clipboardScope,
+            context = context,
+            onBack = { detailService = null },
+            onEdit = { showEditDialog = detail; detailService = null },
+            onDelete = { showDeleteDialog = detail.id; detailService = null },
+            onInteraction = { lockTimerReset.longValue = System.currentTimeMillis() },
+            onCopy = {
+                if (isDemoMode) {
+                    services = services.map {
+                        if (it.name == detail.name) it.copy(frecency = it.frecency * 0.95 + 1)
+                        else it
+                    }
+                } else {
+                    serviceManager.updateFrecency(detail.name)
+                    services = serviceManager.getServices()
+                    triggerDebouncedSync()
+                }
+            }
+        )
         return
     }
 
@@ -732,8 +814,8 @@ private fun ServiceListScreen(
                         ServiceCard(
                             service = service,
                             masterSecret = masterSecret,
-                            onDelete = { showDeleteDialog = service.id },
-                            onEdit = { showEditDialog = service },
+                            clipboardScope = clipboardScope,
+                            onOpenDetail = { detailService = service },
                             onCopy = {
                                 if (isDemoMode) {
                                     services = services.map {
@@ -889,46 +971,6 @@ private fun ServiceListScreen(
             dismissButton = {
                 TextButton(onClick = { showImportConfirm = false }) { Text("Cancel") }
             }
-        )
-    }
-
-    prefillSite?.let { initialSite ->
-        AddServiceDialog(
-            onDismiss = { prefillSite = null; detectedFullDomain = null },
-            onAdd = { entry ->
-                if (isDemoMode) {
-                    services = services + entry
-                    prefillSite = null; detectedFullDomain = null
-                } else if (serviceManager.addService(entry)) {
-                    services = serviceManager.getServices()
-                    triggerDebouncedSync()
-                    prefillSite = null; detectedFullDomain = null
-                } else {
-                    scope.launch { snackbarHostState.showSnackbar("A service with that site and email already exists.") }
-                }
-            },
-            initialSite = initialSite,
-            detectedFullDomain = detectedFullDomain,
-            defaultEmail = getMostCommonEmail()
-        )
-    }
-
-    showEditDialog?.let { editEntry ->
-        AddServiceDialog(
-            onDismiss = { showEditDialog = null },
-            onAdd = { entry ->
-                if (isDemoMode) {
-                    services = services.map { if (it.name == editEntry.name) entry else it }
-                    showEditDialog = null
-                } else if (serviceManager.updateService(editEntry.id!!, entry)) {
-                    services = serviceManager.getServices()
-                    triggerDebouncedSync()
-                    showEditDialog = null
-                } else {
-                    scope.launch { snackbarHostState.showSnackbar("A service with that site and email already exists.") }
-                }
-            },
-            initialEntry = editEntry
         )
     }
 
@@ -1090,16 +1132,35 @@ private fun ServiceListScreen(
 
 }
 
+private fun copyAndClear(
+    context: Context,
+    scope: CoroutineScope,
+    label: String,
+    text: String
+) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+    if (android.os.Build.VERSION.SDK_INT >= 28) {
+        scope.launch {
+            delay(30_000)
+            // Only clear if the clipboard still holds exactly what THIS call placed.
+            // Prevents a stale timer from wiping a later copy (or the user's own copy).
+            val current = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+            if (current == text) {
+                clipboard.clearPrimaryClip()
+            }
+        }
+    }
+}
+
 @Composable
-private fun ServiceCard(
+private fun PasswordRow(
     service: ServiceEntry,
     masterSecret: String,
-    onDelete: () -> Unit,
-    onEdit: () -> Unit,
-    onCopy: () -> Unit,
-    context: Context
+    clipboardScope: CoroutineScope,
+    context: Context,
+    onCopy: () -> Unit
 ) {
-    val scope = rememberCoroutineScope()
     // Derive off the main thread — derivePassword runs Argon2id (heavy). Null = generating.
     // Key on stable content fields (not the ServiceEntry instance, whose JSONObject
     // members use identity equals) so a sync/copy reload doesn't reset to "Generating…".
@@ -1122,316 +1183,501 @@ private fun ServiceCard(
     }
     var visible by remember { mutableStateOf(false) }
     var passwordCopied by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(passwordCopied) {
+        if (passwordCopied) { delay(1500); passwordCopied = false }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = when {
+                password == null -> "Generating…"
+                visible -> password!!
+                else -> "••••••••••••"
+            },
+            style = MaterialTheme.typography.bodyLarge,
+            fontFamily = if (visible && password != null) FontFamily.Monospace else FontFamily.Default,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = { visible = !visible }, enabled = password != null) {
+            Icon(
+                if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                contentDescription = "Toggle"
+            )
+        }
+        IconButton(
+            enabled = password != null,
+            onClick = {
+                val pw = password ?: return@IconButton
+                if (passwordCopied) return@IconButton
+                copyAndClear(context, clipboardScope, "password", pw)
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                passwordCopied = true
+                onCopy()
+            }
+        ) {
+            Icon(
+                if (passwordCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                contentDescription = if (passwordCopied) "Copied" else "Copy"
+            )
+        }
+    }
+}
+
+@Composable
+private fun TotpRow(
+    service: ServiceEntry,
+    masterSecret: String,
+    clipboardScope: CoroutineScope,
+    context: Context,
+    onCopy: () -> Unit
+) {
+    val totp = service.totp ?: return
+    var totpCode by remember { mutableStateOf("") }
+    var totpRemaining by remember { mutableIntStateOf(0) }
+    val totpPeriod = totp.optInt("period", 30)
     var totpCopied by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(totpCopied) {
+        if (totpCopied) { delay(1500); totpCopied = false }
+    }
+    LaunchedEffect(totp.toString(), service.email, service.site, masterSecret) {
+        val mode = totp.optString("mode", "")
+        val digits = totp.optInt("digits", 6)
+        val period = totp.optInt("period", 30)
+        val algorithm = totp.optString("algorithm", "SHA1")
+        // Derive the seed ONCE off the main thread (derived mode runs Argon2id).
+        // Previously this ran every second on the main thread → continuous ANR risk.
+        val seed: ByteArray? = try {
+            withContext(Dispatchers.Default) {
+                if (mode == "stored") {
+                    android.util.Base64.decode(totp.getString("seed"), android.util.Base64.DEFAULT)
+                } else {
+                    TotpEngine.deriveTotpSeed(masterSecret.toByteArray(), service.email, service.site)
+                }
+            }
+        } catch (_: Exception) { null }
+        if (seed == null) {
+            totpCode = "error"
+            totpRemaining = 0
+            return@LaunchedEffect
+        }
+        while (true) {
+            val now = System.currentTimeMillis() / 1000
+            try {
+                totpCode = TotpEngine.generateTotp(seed, now, digits, period, algorithm)
+                totpRemaining = (period - (now % period)).toInt()
+            } catch (_: Exception) {
+                totpCode = "error"
+                totpRemaining = 0
+            }
+            delay(1000)
+        }
+    }
+    if (totpCode.isNotEmpty()) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val formatted = if (totpCode.all { it.isDigit() }) {
+                    if (totpCode.length == 8)
+                        totpCode.substring(0, 4) + " " + totpCode.substring(4)
+                    else
+                        totpCode.substring(0, 3) + " " + totpCode.substring(3)
+                } else totpCode
+                Text(
+                    text = formatted,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "${totpRemaining}s",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                IconButton(onClick = {
+                    if (totpCopied) return@IconButton
+                    copyAndClear(context, clipboardScope, "totp", totpCode)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    totpCopied = true
+                    onCopy()
+                }) {
+                    Icon(
+                        if (totpCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                        contentDescription = if (totpCopied) "Copied" else "Copy TOTP"
+                    )
+                }
+            }
+            LinearProgressIndicator(
+                progress = { totpRemaining.toFloat() / totpPeriod },
+                modifier = Modifier.fillMaxWidth().height(4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SshRow(
+    service: ServiceEntry,
+    masterSecret: String,
+    clipboardScope: CoroutineScope,
+    context: Context
+) {
+    val ssh = service.ssh ?: return
+    val sshKeyName = ssh.optString("key_name", "")
+    if (sshKeyName.isEmpty()) return
+    // Row-local scope for the heavy key derivation — safe to cancel on dispose since
+    // nothing reaches the clipboard until copyAndClear/setPrimaryClip runs. The 30s
+    // CLEAR uses the survivor clipboardScope instead.
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
     var sshCopied by remember { mutableStateOf(false) }
     var sshPrivCopied by remember { mutableStateOf(false) }
     var sshPrivConfirmed by remember { mutableStateOf(false) }
     var showSshPrivDialog by remember { mutableStateOf(false) }
-    val haptic = LocalHapticFeedback.current
-
-    LaunchedEffect(passwordCopied) {
-        if (passwordCopied) { delay(1500); passwordCopied = false }
-    }
-    LaunchedEffect(totpCopied) {
-        if (totpCopied) { delay(1500); totpCopied = false }
-    }
     LaunchedEffect(sshCopied) {
         if (sshCopied) { delay(1500); sshCopied = false }
     }
     LaunchedEffect(sshPrivCopied) {
         if (sshPrivCopied) { delay(1500); sshPrivCopied = false }
     }
-
-    fun copyAndClear(label: String, text: String) {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
-        if (android.os.Build.VERSION.SDK_INT >= 28) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            color = MaterialTheme.colorScheme.primary,
+            shape = MaterialTheme.shapes.small
+        ) {
+            Text(
+                "SSH",
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimary
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = sshKeyName,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = {
+            if (sshCopied) return@IconButton
             scope.launch {
-                delay(30_000)
-                clipboard.clearPrimaryClip()
-            }
-        }
-    }
-
-    // TOTP state
-    var totpCode by remember { mutableStateOf("") }
-    var totpRemaining by remember { mutableIntStateOf(0) }
-    val totpPeriod = service.totp?.optInt("period", 30) ?: 30
-
-    if (service.totp != null) {
-        LaunchedEffect(service.totp.toString(), service.email, service.site, masterSecret) {
-            val mode = service.totp.optString("mode", "")
-            val digits = service.totp.optInt("digits", 6)
-            val period = service.totp.optInt("period", 30)
-            val algorithm = service.totp.optString("algorithm", "SHA1")
-            // Derive the seed ONCE off the main thread (derived mode runs Argon2id).
-            // Previously this ran every second on the main thread → continuous ANR risk.
-            val seed: ByteArray? = try {
-                withContext(Dispatchers.Default) {
-                    if (mode == "stored") {
-                        android.util.Base64.decode(service.totp.getString("seed"), android.util.Base64.DEFAULT)
-                    } else {
-                        TotpEngine.deriveTotpSeed(masterSecret.toByteArray(), service.email, service.site)
-                    }
-                }
-            } catch (_: Exception) { null }
-            if (seed == null) {
-                totpCode = "error"
-                totpRemaining = 0
-                return@LaunchedEffect
-            }
-            while (true) {
-                val now = System.currentTimeMillis() / 1000
                 try {
-                    totpCode = TotpEngine.generateTotp(seed, now, digits, period, algorithm)
-                    totpRemaining = (period - (now % period)).toInt()
-                } catch (_: Exception) {
-                    totpCode = "error"
-                    totpRemaining = 0
+                    val sshCounter = ssh.optInt("counter", 1)
+                    val line = withContext(Dispatchers.Default) {
+                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
+                        val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
+                        SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
+                    }
+                    copyAndClear(context, clipboardScope, "ssh-pubkey", line)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    sshCopied = true
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                 }
-                delay(1000)
             }
+        }) {
+            Icon(
+                if (sshCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                contentDescription = if (sshCopied) "Copied" else "Copy SSH public key"
+            )
         }
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(service.name, style = MaterialTheme.typography.titleMedium)
-                    Text(service.email, style = MaterialTheme.typography.bodySmall)
-                }
-                var cardMenuExpanded by remember { mutableStateOf(false) }
-                Box {
-                    IconButton(onClick = { cardMenuExpanded = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More options for ${service.name}")
-                    }
-                    DropdownMenu(
-                        expanded = cardMenuExpanded,
-                        onDismissRequest = { cardMenuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Edit") },
-                            onClick = { cardMenuExpanded = false; onEdit() },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                            onClick = { cardMenuExpanded = false; onDelete() },
-                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) }
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = when {
-                        password == null -> "Generating…"
-                        visible -> password!!
-                        else -> "••••••••••••"
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontFamily = if (visible && password != null) FontFamily.Monospace else FontFamily.Default,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = { visible = !visible }, enabled = password != null) {
-                    Icon(
-                        if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = "Toggle"
-                    )
-                }
-                IconButton(
-                    enabled = password != null,
-                    onClick = {
-                        val pw = password ?: return@IconButton
-                        if (passwordCopied) return@IconButton
-                        copyAndClear("password", pw)
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        passwordCopied = true
-                        onCopy()
-                    }
-                ) {
-                    Icon(
-                        if (passwordCopied) Icons.Default.Check else Icons.Default.ContentCopy,
-                        contentDescription = if (passwordCopied) "Copied" else "Copy"
-                    )
-                }
-            }
-            // TOTP display
-            if (service.totp != null && totpCode.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val formatted = if (totpCode.all { it.isDigit() }) {
-                        if (totpCode.length == 8)
-                            totpCode.substring(0, 4) + " " + totpCode.substring(4)
-                        else
-                            totpCode.substring(0, 3) + " " + totpCode.substring(3)
-                    } else totpCode
-                    Text(
-                        text = formatted,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "${totpRemaining}s",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    IconButton(onClick = {
-                        if (totpCopied) return@IconButton
-                        copyAndClear("totp", totpCode)
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        totpCopied = true
-                        onCopy()
-                    }) {
-                        Icon(
-                            if (totpCopied) Icons.Default.Check else Icons.Default.ContentCopy,
-                            contentDescription = if (totpCopied) "Copied" else "Copy TOTP"
-                        )
-                    }
-                }
-                LinearProgressIndicator(
-                    progress = { totpRemaining.toFloat() / totpPeriod },
-                    modifier = Modifier.fillMaxWidth().height(4.dp),
-                )
-            }
-            // SSH display
-            if (service.ssh != null) {
-                val sshKeyName = service.ssh.optString("key_name", "")
-                if (sshKeyName.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primary,
-                            shape = MaterialTheme.shapes.small
-                        ) {
-                            Text(
-                                "SSH",
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
+        Spacer(Modifier.width(4.dp))
+        IconButton(onClick = {
+            if (sshPrivCopied) return@IconButton
+            if (!sshPrivConfirmed) { showSshPrivDialog = true; return@IconButton }
+            scope.launch {
+                try {
+                    val sshCounter = ssh.optInt("counter", 1)
+                    val pem = withContext(Dispatchers.Default) {
+                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
+                        try {
+                            val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
+                            SshEngine.formatOpensshPrivateKey(kp.seed, kp.publicKey, comment)
+                        } finally {
+                            kp.seed.fill(0)
                         }
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = sshKeyName,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = {
-                            if (sshCopied) return@IconButton
-                            scope.launch {
-                                try {
-                                    val sshCounter = service.ssh.optInt("counter", 1)
-                                    val line = withContext(Dispatchers.Default) {
-                                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
-                                        val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
-                                        SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
-                                    }
-                                    copyAndClear("ssh-pubkey", line)
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    sshCopied = true
-                                } catch (e: Exception) {
-                                    android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
-                                }
+                    }
+                    val clip = ClipData.newPlainText("ssh-privkey", pem)
+                    if (android.os.Build.VERSION.SDK_INT >= 33) {
+                        clip.description.extras = android.os.PersistableBundle().apply {
+                            putBoolean("android.content.extra.IS_SENSITIVE", true)
+                        }
+                    }
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(clip)
+                    if (android.os.Build.VERSION.SDK_INT >= 28) {
+                        clipboardScope.launch {
+                            delay(30_000)
+                            // Only clear if the clipboard still holds this private key.
+                            val current = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+                            if (current == pem) {
+                                clipboard.clearPrimaryClip()
                             }
-                        }) {
-                            Icon(
-                                if (sshCopied) Icons.Default.Check else Icons.Default.ContentCopy,
-                                contentDescription = if (sshCopied) "Copied" else "Copy SSH public key"
-                            )
-                        }
-                        Spacer(Modifier.width(4.dp))
-                        IconButton(onClick = {
-                            if (sshPrivCopied) return@IconButton
-                            if (!sshPrivConfirmed) { showSshPrivDialog = true; return@IconButton }
-                            scope.launch {
-                                try {
-                                    val sshCounter = service.ssh.optInt("counter", 1)
-                                    val pem = withContext(Dispatchers.Default) {
-                                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
-                                        try {
-                                            val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
-                                            SshEngine.formatOpensshPrivateKey(kp.seed, kp.publicKey, comment)
-                                        } finally {
-                                            kp.seed.fill(0)
-                                        }
-                                    }
-                                    val clip = ClipData.newPlainText("ssh-privkey", pem)
-                                    if (android.os.Build.VERSION.SDK_INT >= 33) {
-                                        clip.description.extras = android.os.PersistableBundle().apply {
-                                            putBoolean("android.content.extra.IS_SENSITIVE", true)
-                                        }
-                                    }
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(clip)
-                                    if (android.os.Build.VERSION.SDK_INT >= 28) {
-                                        scope.launch { delay(30_000); clipboard.clearPrimaryClip() }
-                                    }
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    sshPrivCopied = true
-                                    android.widget.Toast.makeText(context, "Private key copied", android.widget.Toast.LENGTH_SHORT).show()
-                                } catch (e: Exception) {
-                                    android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }) {
-                            Icon(
-                                if (sshPrivCopied) Icons.Default.Check else Icons.Default.VpnKey,
-                                contentDescription = if (sshPrivCopied) "Copied" else "Copy SSH private key"
-                            )
-                        }
-                        if (showSshPrivDialog) {
-                            AlertDialog(
-                                onDismissRequest = { showSshPrivDialog = false },
-                                title = { Text("Copy Private Key") },
-                                text = { Text("The private key will be copied to clipboard and cleared after 30 seconds. Continue?") },
-                                confirmButton = {
-                                    TextButton(onClick = {
-                                        showSshPrivDialog = false
-                                        sshPrivConfirmed = true
-                                    }) { Text("Copy") }
-                                },
-                                dismissButton = {
-                                    TextButton(onClick = { showSshPrivDialog = false }) { Text("Cancel") }
-                                }
-                            )
                         }
                     }
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    sshPrivCopied = true
+                    android.widget.Toast.makeText(context, "Private key copied", android.widget.Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, "SSH error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
+        }) {
+            Icon(
+                if (sshPrivCopied) Icons.Default.Check else Icons.Default.VpnKey,
+                contentDescription = if (sshPrivCopied) "Copied" else "Copy SSH private key"
+            )
+        }
+        if (showSshPrivDialog) {
+            AlertDialog(
+                onDismissRequest = { showSshPrivDialog = false },
+                title = { Text("Copy Private Key") },
+                text = { Text("The private key will be copied to clipboard and cleared after 30 seconds. Continue?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showSshPrivDialog = false
+                        sshPrivConfirmed = true
+                    }) { Text("Copy") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSshPrivDialog = false }) { Text("Cancel") }
+                }
+            )
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AddServiceDialog(
+private fun ServiceCard(
+    service: ServiceEntry,
+    masterSecret: String,
+    clipboardScope: CoroutineScope,
+    onOpenDetail: () -> Unit,
+    onCopy: () -> Unit,
+    context: Context
+) {
+    Card(
+        onClick = onOpenDetail,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Tap anywhere on the card opens the read-only Detail. Inner IconButtons
+            // (visibility/copy/TOTP/SSH) consume their own taps, so they still work.
+            Column {
+                Text(service.name, style = MaterialTheme.typography.titleMedium)
+                Text(service.email, style = MaterialTheme.typography.bodySmall)
+            }
+            PasswordRow(service, masterSecret, clipboardScope, context, onCopy)
+            TotpRow(service, masterSecret, clipboardScope, context, onCopy)
+            SshRow(service, masterSecret, clipboardScope, context)
+        }
+    }
+}
+
+@Composable
+private fun CopyableRow(
+    label: String,
+    value: String,
+    clipboardScope: CoroutineScope,
+    context: Context
+) {
+    val haptic = LocalHapticFeedback.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) { delay(1500); copied = false }
+    }
+    // Single merged semantics node = one TalkBack stop for the whole row, with a
+    // "Copy <label>" action label; the trailing icon is decorative (null description).
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClickLabel = "Copy $label") {
+                if (copied) return@clickable
+                copyAndClear(context, clipboardScope, label, value)
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                copied = true
+            }
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$label: $value"
+            }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(value, style = MaterialTheme.typography.bodyLarge)
+        }
+        Icon(
+            if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+            contentDescription = null
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ServiceDetailScreen(
+    service: ServiceEntry,
+    masterSecret: String,
+    clipboardScope: CoroutineScope,
+    context: Context,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onCopy: () -> Unit,
+    onInteraction: () -> Unit
+) {
+    // Always-enabled so Back returns to the list and never backgrounds the app.
+    BackHandler(enabled = true) { onBack() }
+    // Root pointerInput mirrors the list's idiom: observe on the Initial pass and never
+    // consume, so taps/scrolls reset the auto-lock timer without stealing child gestures.
+    Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                onInteraction()
+            }
+        }
+    }) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(service.name) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Identity fields — copyable (fixes "can't copy name/site/email").
+            CopyableRow("Service name", service.name, clipboardScope, context)
+            if (service.site.isNotBlank()) {
+                CopyableRow("Site", service.site, clipboardScope, context)
+            }
+            CopyableRow("Email", service.email, clipboardScope, context)
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // Credentials — reuse the exact card rows (identical derivation + copy).
+            Text(
+                "Password",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            PasswordRow(service, masterSecret, clipboardScope, context, onCopy)
+
+            if (service.totp != null) {
+                Text(
+                    "TOTP",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TotpRow(service, masterSecret, clipboardScope, context, onCopy)
+            }
+
+            if (service.ssh?.optString("key_name", "").orEmpty().isNotEmpty()) {
+                Text(
+                    "SSH key",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SshRow(service, masterSecret, clipboardScope, context)
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // Symbols — copyable (raw set; the one customized parameter worth backing up).
+            CopyableRow("Symbols", service.symbols, clipboardScope, context)
+
+            // Length / Counter — muted, non-copyable caption (trivial ints, not credentials).
+            Text(
+                "Length ${service.length} · Counter ${service.counter}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onDelete,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Delete")
+            }
+        }
+    }
+    } // Box (auto-lock interaction)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ServiceEditorScreen(
     onDismiss: () -> Unit,
-    onAdd: (ServiceEntry) -> Unit,
+    onSave: (ServiceEntry) -> Boolean,
+    onInteraction: () -> Unit,
     initialEntry: ServiceEntry? = null,
     initialSite: String = "",
     detectedFullDomain: String? = null,
     defaultEmail: String = ""
 ) {
-    var name by remember { mutableStateOf(initialEntry?.name ?: "") }
-    var site by remember { mutableStateOf(initialEntry?.site ?: initialSite) }
-    var email by remember { mutableStateOf(initialEntry?.email ?: defaultEmail) }
-    var length by remember { mutableStateOf(initialEntry?.length?.toString() ?: "20") }
-    var symbols by remember { mutableStateOf(initialEntry?.symbols ?: Keygrain.DEFAULT_SYMBOLS) }
-    var counter by remember { mutableStateOf(initialEntry?.counter?.toString() ?: "1") }
-    var showAdvanced by remember { mutableStateOf(initialEntry != null) }
     val isEdit = initialEntry != null
+
+    // Initial values captured once — used both to seed fields and to detect a dirty form.
+    val initName = initialEntry?.name ?: ""
+    val initSite = initialEntry?.site ?: initialSite
+    val initEmail = initialEntry?.email ?: defaultEmail
+    val initLength = initialEntry?.length?.toString() ?: "20"
+    val initSymbols = initialEntry?.symbols ?: Keygrain.DEFAULT_SYMBOLS
+    val initCounter = initialEntry?.counter?.toString() ?: "1"
+    val initSshKeyName: String = initialEntry?.ssh?.optString("key_name", "") ?: ""
+
+    // rememberSaveable so input survives config changes not covered by
+    // android:configChanges (and any future narrowing of it). NOTE: the reported
+    // data-loss bug is fixed by removing the sheet's drag-to-dismiss (full-screen
+    // Scaffold below), not by this — full process-death still returns to Unlock
+    // because the master secret is never persisted.
+    var name by rememberSaveable { mutableStateOf(initName) }
+    var site by rememberSaveable { mutableStateOf(initSite) }
+    var email by rememberSaveable { mutableStateOf(initEmail) }
+    var length by rememberSaveable { mutableStateOf(initLength) }
+    var symbols by rememberSaveable { mutableStateOf(initSymbols) }
+    var counter by rememberSaveable { mutableStateOf(initCounter) }
+    var showAdvanced by rememberSaveable { mutableStateOf(isEdit) }
     val pwChanged = isEdit && (
         (length.toIntOrNull() ?: 20) != initialEntry!!.length ||
         symbols != initialEntry.symbols ||
@@ -1445,12 +1691,15 @@ private fun AddServiceDialog(
         "derived" -> 2
         else -> 0
     }
-    var totpModeIndex by remember { mutableIntStateOf(initialTotpMode) }
+    var totpModeIndex by rememberSaveable { mutableIntStateOf(initialTotpMode) }
     val originalTotpSeed = remember { initialEntry?.totp?.optString("seed", "") ?: "" }
+    // totpSeed is intentionally plain remember (NOT rememberSaveable): a Stored TOTP
+    // secret must never be written to the saved-instance Bundle (persisted to disk).
+    // See decision driver-d-001.
     var totpSeed by remember { mutableStateOf(originalTotpSeed) }
 
     // SSH state
-    var sshKeyName by remember { mutableStateOf(initialEntry?.ssh?.optString("key_name", "") ?: "") }
+    var sshKeyName by rememberSaveable { mutableStateOf(initSshKeyName) }
 
     // QR Scanner state
     var showQrScanner by remember { mutableStateOf(false) }
@@ -1466,35 +1715,46 @@ private fun AddServiceDialog(
         }
     }
 
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    if (isEdit) "Edit Service" else "Add Service",
-                    style = MaterialTheme.typography.titleLarge
-                )
-                Row {
-                    TextButton(onClick = {
-                        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
-                    }) { Text("Cancel") }
+    val isDirty = name != initName || site != initSite || email != initEmail ||
+        length != initLength || symbols != initSymbols || counter != initCounter ||
+        sshKeyName != initSshKeyName || totpModeIndex != initialTotpMode ||
+        totpSeed != originalTotpSeed
+
+    var showDiscardDialog by remember { mutableStateOf(false) }
+    val handleExit: () -> Unit = {
+        if (isDirty) showDiscardDialog = true else onDismiss()
+    }
+
+    // enabled=true (not enabled=isDirty) so a clean-form Back returns to the list and
+    // never falls through to the system to background the app.
+    BackHandler(enabled = true) { handleExit() }
+
+    // Root pointerInput mirrors the list's idiom: observe on the Initial pass and never
+    // consume, so taps/scrolls reset the auto-lock timer. Typing is handled separately in
+    // each field's onValueChange (Compose has no global soft-keyboard hook).
+    Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                onInteraction()
+            }
+        }
+    }) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (isEdit) "Edit Service" else "Add Service") },
+                navigationIcon = {
+                    IconButton(onClick = handleExit) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                },
+                actions = {
                     TextButton(
+                        enabled = name.isNotBlank() && email.isNotBlank(),
                         onClick = {
                             val totpJson = when (totpModeIndex) {
                                 1 -> { // Stored
@@ -1529,7 +1789,7 @@ private fun AddServiceDialog(
                                     put("counter", sshCounter)
                                 }
                             } else null
-                            onAdd(ServiceEntry(
+                            val ok = onSave(ServiceEntry(
                                 name = name.trim(),
                                 site = site.trim().ifEmpty { name.trim().lowercase() },
                                 email = email.trim(),
@@ -1539,11 +1799,27 @@ private fun AddServiceDialog(
                                 totp = totpJson,
                                 ssh = sshJson
                             ))
-                        },
-                        enabled = name.isNotBlank() && email.isNotBlank()
+                            if (!ok) {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("A service with that site and email already exists.")
+                                }
+                            }
+                        }
                     ) { Text(if (isEdit) "Save" else "Add") }
                 }
-            }
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Text(
                 "ℹ️ Changing any field will generate a different password.",
                 style = MaterialTheme.typography.bodySmall,
@@ -1551,14 +1827,14 @@ private fun AddServiceDialog(
             )
             OutlinedTextField(
                 value = name,
-                onValueChange = { name = it },
+                onValueChange = { name = it; onInteraction() },
                 label = { Text("Service name") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
                 value = site,
-                onValueChange = { if (!isEdit) site = it },
+                onValueChange = { if (!isEdit) site = it; onInteraction() },
                 label = { Text("Site") },
                 supportingText = if (detectedFullDomain != null && site == initialSite) {
                     { Text("Detected $detectedFullDomain \u2014 matches all subdomains") }
@@ -1569,7 +1845,7 @@ private fun AddServiceDialog(
             )
             OutlinedTextField(
                 value = email,
-                onValueChange = { email = it },
+                onValueChange = { email = it; onInteraction() },
                 label = { Text("Email") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -1591,7 +1867,7 @@ private fun AddServiceDialog(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = length,
-                        onValueChange = { length = it.filter { c -> c.isDigit() } },
+                        onValueChange = { length = it.filter { c -> c.isDigit() }; onInteraction() },
                         label = { Text("Length") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -1599,14 +1875,14 @@ private fun AddServiceDialog(
                     )
                     OutlinedTextField(
                         value = symbols,
-                        onValueChange = { symbols = it },
+                        onValueChange = { symbols = it; onInteraction() },
                         label = { Text("Symbols") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = counter,
-                        onValueChange = { counter = it.filter { c -> c.isDigit() } },
+                        onValueChange = { counter = it.filter { c -> c.isDigit() }; onInteraction() },
                         label = { Text("Counter") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -1634,7 +1910,7 @@ private fun AddServiceDialog(
                     if (totpModeIndex == 1) {
                         OutlinedTextField(
                             value = totpSeed,
-                            onValueChange = { totpSeed = it },
+                            onValueChange = { totpSeed = it; onInteraction() },
                             label = { Text("Seed / otpauth:// URI") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
@@ -1659,7 +1935,7 @@ private fun AddServiceDialog(
                     Text("🔐 SSH Key", style = MaterialTheme.typography.labelLarge)
                     OutlinedTextField(
                         value = sshKeyName,
-                        onValueChange = { sshKeyName = it.filter { c -> !c.isWhitespace() } },
+                        onValueChange = { sshKeyName = it.filter { c -> !c.isWhitespace() }; onInteraction() },
                         label = { Text("Key name (optional)") },
                         placeholder = { Text("e.g. github, work-servers") },
                         singleLine = true,
@@ -1668,6 +1944,21 @@ private fun AddServiceDialog(
                 }
             }
         }
+    }
+    } // Box (auto-lock interaction)
+
+    if (showDiscardDialog) {
+        AlertDialog(
+            onDismissRequest = { showDiscardDialog = false },
+            title = { Text("Discard changes?") },
+            text = { Text("You have unsaved changes. Discard them?") },
+            confirmButton = {
+                TextButton(onClick = { showDiscardDialog = false; onDismiss() }) { Text("Discard") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardDialog = false }) { Text("Keep editing") }
+            }
+        )
     }
 
     if (showQrScanner) {
