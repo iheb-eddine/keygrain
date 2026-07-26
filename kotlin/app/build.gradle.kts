@@ -44,6 +44,13 @@ android {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
+        debug {
+            // Local dev builds install side-by-side with the Play Store build
+            // (com.secbytech.keygrain). The .dev applicationId avoids the
+            // signature-mismatch conflict without uninstalling the Play app.
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+        }
     }
 
     compileOptions {

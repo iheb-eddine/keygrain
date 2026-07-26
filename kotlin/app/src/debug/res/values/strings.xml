@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug source-set override: distinct launcher label so the local dev build
+     is visually distinguishable from the Play Store build when both are
+     installed side-by-side. Overrides app_name from src/main. -->
+<resources>
+    <string name="app_name">Keygrain Dev</string>
+</resources>
