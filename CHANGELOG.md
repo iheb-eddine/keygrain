@@ -70,25 +70,12 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ### [1.1.0] - 2026-07-26
 
-A friendlier, safer way to view and edit your entries.
+- Tap an entry to view it, and copy any field with a single tap.
+- Adding and editing now happen on a full screen with a "Discard changes?" prompt, so an accidental swipe can't lose your work.
+- A copied value still clears from the clipboard after 30 seconds if you move to another screen.
+- The auto-lock timer resets while you view or edit, so long edits aren't cut short.
 
-#### New
-- **Tap to view** — tap any entry to open a detail view where you can copy each
-  field with a single tap: name, site, email, password, one-time code, SSH key,
-  and symbols.
-
-#### Improved
-- **Full-screen editor** — adding and editing now happen on a full screen with a
-  "Discard changes?" prompt, so an accidental swipe or back press can't lose your
-  work. What you've typed is kept if the screen rotates.
-- **Smarter clipboard clearing** — a copied value clears from the clipboard after
-  30 seconds even if you move to another screen, and only the value you copied is
-  cleared.
-- **No mid-edit lockouts** — the auto-lock timer resets while you're viewing or
-  editing, so long edits aren't cut short by a lock.
-
-No algorithm changes — every password, code, key, and seed is byte-identical to
-before (SPEC v4).
+No algorithm changes — every password, code, key and seed is byte-identical (SPEC v4).
 
 ### [1.0.0] - 2026-07-24
 
