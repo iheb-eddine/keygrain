@@ -32,10 +32,25 @@ async function deriveStorageKey(secret, email) {
   return hmacSHA256(strengthened, message);
 }
 
-async function encryptServices(storageKey, email, services, wallets, walletAuditLog) {
+// Local encrypted payload, version 2 (Sync v3 — see
+// designs/sync-deletion-reconciliation.md §1). Adds, relative to version 1:
+//   - services[].synced   : identity has been confirmed on the server at least once
+//   - tombstones          : [{id, deleted_at}] pending deletions, local-only
+//   - deletion_review     : [{service, deleted_at, seen}] conflict cases, local-only
+// tombstones and deletion_review are NEVER synced; they do not enter the sync blob.
+const LOCAL_PAYLOAD_VERSION = 2;
+
+async function encryptServices(storageKey, email, services, wallets, walletAuditLog, tombstones = [], deletionReview = []) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const aad = new TextEncoder().encode(email.toLowerCase());
-  const plaintext = new TextEncoder().encode(JSON.stringify({version: 1, services, wallets, wallet_audit_log: walletAuditLog}));
+  const plaintext = new TextEncoder().encode(JSON.stringify({
+    version: LOCAL_PAYLOAD_VERSION,
+    services,
+    wallets,
+    wallet_audit_log: walletAuditLog,
+    tombstones,
+    deletion_review: deletionReview
+  }));
   const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["encrypt"]);
   const ciphertext = await crypto.subtle.encrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, plaintext);
   return {
@@ -55,6 +70,9 @@ async function decryptServices(storageKey, email, stored) {
   return {
     services: data.services || data,
     wallets: data.wallets || [],
-    walletAuditLog: data.wallet_audit_log || []
+    walletAuditLog: data.wallet_audit_log || [],
+    tombstones: data.tombstones || [],
+    deletionReview: data.deletion_review || [],
+    payloadVersion: Array.isArray(data) ? 1 : (data.version || 1)
   };
 }

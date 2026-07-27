@@ -79,6 +79,7 @@
     <div id="breach-warnings" role="alert" aria-live="assertive"></div>
 
     <div id="conflict-banner" class="hidden" role="status" aria-live="polite"></div>
+    <div id="deletion-review-banner" class="hidden" role="status" aria-live="polite"></div>
 
     <div id="shortcut-tip" class="hidden" role="status" aria-live="polite">
       <span id="shortcut-tip-text"></span>
@@ -153,6 +154,10 @@
   <div id="delete-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
     <h2 id="delete-dialog-title">Delete <span id="delete-service-name"></span>?</h2>
     <p>This cannot be undone.</p>
+    <p id="delete-totp-warning" class="hidden">This service stores a TOTP seed that is
+      <strong>not derivable</strong> from your master secret. Deleting it permanently
+      destroys that seed — you will need to re-enroll two-factor authentication on the
+      site.</p>
     <div class="dialog-actions">
       <button id="delete-cancel">Cancel</button>
       <button id="delete-confirm">Delete</button>

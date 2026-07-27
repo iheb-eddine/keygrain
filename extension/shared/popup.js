@@ -45,6 +45,7 @@
   // Delete dialog
   const deleteDialog = document.getElementById("delete-dialog");
   const deleteServiceName = document.getElementById("delete-service-name");
+  const deleteTotpWarning = document.getElementById("delete-totp-warning");
   const deleteCancel = document.getElementById("delete-cancel");
   const deleteConfirm = document.getElementById("delete-confirm");
 
@@ -117,6 +118,9 @@
   let services = [];
   let wallets = [];
   let walletAuditLog = [];
+  // Sync v3 local-only state (never sent to the server).
+  let tombstones = [];        // [{id, deleted_at}] deletions pending propagation
+  let deletionReview = [];    // [{service, deleted_at, seen}] conflict cases only
   let deleteTarget = null;
   let editIndex = null;
   let clearTimer = null;
@@ -156,6 +160,7 @@
   const quickFill = document.getElementById("quick-fill");
   const breachWarnings = document.getElementById("breach-warnings");
   const conflictBanner = document.getElementById("conflict-banner");
+  const deletionReviewBanner = document.getElementById("deletion-review-banner");
 
   // === Focus trap ===
   let settingsState = null;
@@ -259,7 +264,8 @@
     "services", "syncKnownUUIDs", "syncKnownWalletKeys", "syncMetadataCache",
     "syncConflicts", "conflictsDismissed", "lastSyncTime", "lastSyncError",
     "syncRetryState", "aadEnabled", "pinData", "pinFailCount", "lastEmail",
-    "dismissedBreaches", "migrationChecklist", "offlineMode", "popupActive"
+    "dismissedBreaches", "migrationChecklist", "offlineMode", "popupActiveUntil",
+    "lastSuccessfulSyncAt"
   ];
 
   // Wipe all account-scoped data on this device and reset in-memory state. Shared
@@ -284,6 +290,8 @@
     services = [];
     wallets = [];
     walletAuditLog = [];
+    tombstones = [];
+    deletionReview = [];
     offlineMode = false;
     lastSyncTime = null;
     lastSyncError = null;
@@ -509,9 +517,33 @@
       const key = await deriveStorageKey(currentSecret, currentEmail);
       try {
         const result = await decryptServices(key, currentEmail, stored);
+        if (result.payloadVersion < 2) {
+          // One-time migration from the v1 knownUUIDs model (design §8). Runs before any
+          // sync so a pending deletion is preserved as a tombstone rather than lost.
+          const knownData = await chrome.storage.local.get("syncKnownUUIDs");
+          const migrated = migrateLocalPayload({
+            services: result.services,
+            wallets: result.wallets,
+            wallet_audit_log: result.walletAuditLog,
+            deletion_review: result.deletionReview
+          }, new Set(knownData.syncKnownUUIDs || []), Date.now());
+          services = migrated.services;
+          wallets = migrated.wallets;
+          walletAuditLog = migrated.wallet_audit_log;
+          tombstones = migrated.tombstones;
+          deletionReview = migrated.deletion_review;
+          const legacy = await chrome.storage.local.get("lastSyncTime");
+          await chrome.storage.local.set({lastSuccessfulSyncAt: legacy.lastSyncTime || 0});
+          skipNextDebounce = true;
+          await saveServices();
+          await chrome.storage.local.remove("syncKnownUUIDs");
+          return true;
+        }
         services = result.services;
         wallets = result.wallets;
         walletAuditLog = result.walletAuditLog;
+        tombstones = result.tombstones;
+        deletionReview = result.deletionReview;
         return true;
       } catch {
         return false;
@@ -527,7 +559,7 @@
     if (isDemoMode) return;
     const key = await deriveStorageKey(currentSecret, currentEmail);
     try {
-      const encrypted = await encryptServices(key, currentEmail, services, wallets, walletAuditLog);
+      const encrypted = await encryptServices(key, currentEmail, services, wallets, walletAuditLog, tombstones, deletionReview);
       await chrome.storage.local.set({services: encrypted});
     } finally {
       key.fill(0);
@@ -548,15 +580,21 @@
     updateSyncIndicator();
     const gen = syncGeneration;
     try {
-      const result = await syncWithServer(currentSecret, currentEmail, services, wallets, walletAuditLog);
+      const result = await syncWithServer(currentSecret, currentEmail, services, wallets, walletAuditLog, tombstones);
       if (syncGeneration !== gen) return;
       skipNextDebounce = true;
       services = result.services;
       wallets = result.wallets;
       walletAuditLog = result.wallet_audit_log;
+      tombstones = result.tombstones;
+      if (result.review && result.review.length) {
+        // Cap at 50: conflicts are rare, and this list is never allowed to grow without
+        // bound. Oldest entries are evicted first.
+        deletionReview = [...deletionReview, ...result.review].slice(-50);
+      }
       await saveServices();
-      await setKnownUUIDs(result.knownUUIDs);
       if (!serviceList.querySelector(".password-display")) renderServiceList();
+      renderDeletionReview();
       lastSyncTime = Date.now();
       lastSyncError = null;
       await chrome.storage.local.set({lastSyncTime, lastSyncError: null});
@@ -643,6 +681,67 @@
     });
     conflictBanner.appendChild(text);
     conflictBanner.appendChild(dismiss);
+  }
+
+  // === Deletion review (Sync v3, Frozen Req 7) ===
+  // Shown ONLY for the genuine delete-vs-edit conflict: a service this device had
+  // unsynced changes to was deleted on another device. Routine deletions from another
+  // device are applied silently and never appear here — that is what keeps this quiet.
+  // Restoring re-pushes under the ORIGINAL id with a bumped updated_at and synced=false,
+  // so a failed push re-pushes rather than risking deletion (Frozen Req 10).
+  function renderDeletionReview() {
+    if (!deletionReviewBanner) return;
+    const pending = deletionReview.filter(e => e && !e.seen);
+    if (pending.length === 0) { deletionReviewBanner.classList.add("hidden"); return; }
+    deletionReviewBanner.className = "conflict-banner";
+    deletionReviewBanner.textContent = "";
+
+    const text = document.createElement("span");
+    text.className = "conflict-text";
+    text.textContent = "\u26A0 " + pending.length + " service" + (pending.length > 1 ? "s" : "") +
+      " you changed on this device " + (pending.length > 1 ? "were" : "was") + " deleted on another device";
+    deletionReviewBanner.appendChild(text);
+
+    const list = document.createElement("div");
+    list.className = "deletion-review-list";
+    for (const entry of pending) {
+      const row = document.createElement("div");
+      row.className = "deletion-review-item";
+      const label = document.createElement("span");
+      label.textContent = (entry.service.name || entry.service.site) + " (" + (entry.service.email || "") + ")";
+      const restore = document.createElement("button");
+      restore.textContent = "Restore";
+      restore.addEventListener("click", async () => {
+        services.push({...entry.service, updated_at: nextTimestamp(services), synced: false});
+        deletionReview = deletionReview.filter(e => e !== entry);
+        await saveServices();
+        renderServiceList();
+        renderDeletionReview();
+      });
+      const discard = document.createElement("button");
+      discard.textContent = "Discard";
+      discard.addEventListener("click", async () => {
+        deletionReview = deletionReview.filter(e => e !== entry);
+        await saveServices();
+        renderDeletionReview();
+      });
+      row.appendChild(label);
+      row.appendChild(restore);
+      row.appendChild(discard);
+      list.appendChild(row);
+    }
+    deletionReviewBanner.appendChild(list);
+
+    const dismissAll = document.createElement("button");
+    dismissAll.className = "conflict-dismiss";
+    dismissAll.textContent = "\u00D7";
+    dismissAll.setAttribute("aria-label", "Dismiss deletion review");
+    dismissAll.addEventListener("click", async () => {
+      deletionReview = deletionReview.map(e => ({...e, seen: true}));
+      await saveServices();
+      renderDeletionReview();
+    });
+    deletionReviewBanner.appendChild(dismissAll);
   }
 
 
@@ -751,6 +850,7 @@
     renderServiceList();
     startTOTPInterval();
     renderConflictBanner();
+    renderDeletionReview();
     updateOfflineBtn();
     if (!syncIndicatorInterval) {
       syncIndicatorInterval = setInterval(updateSyncIndicator, 1000);
@@ -1189,12 +1289,12 @@
     if (services.length === 0 && !offlineMode) {
       try {
         showStatus(statusEl, "Checking server...", statusTimerState);
-        const result = await syncWithServer(s, e, services);
+        const result = await syncWithServer(s, e, services, [], [], tombstones);
         if (result.services.length > 0) {
           // Server had data — returning user
           services = result.services;
+          tombstones = result.tombstones;
           await saveServices();
-          await setKnownUUIDs(result.knownUUIDs);
         }
       } catch { /* server unreachable or 404 — new user */ }
     }
@@ -1771,7 +1871,7 @@
       if (newCounter > oldCounter) delete services[editIndex].migrating;
       services[editIndex] = {...services[editIndex], name, email, length, symbols, totp, ssh, counter: newCounter, updated_at: nextTimestamp(services)};
     } else {
-      services.push({name, site: normalizeSite(site), email, length, symbols, counter: 1, totp, ssh, id: crypto.randomUUID(), updated_at: nextTimestamp(services)});
+      services.push({name, site: normalizeSite(site), email, length, symbols, counter: 1, totp, ssh, id: crypto.randomUUID(), updated_at: nextTimestamp(services), synced: false});
     }
     await saveServices();
     closeDialog(addDialog, addState);
@@ -1797,6 +1897,12 @@
   function handleDeletePrompt(idx) {
     deleteTarget = idx;
     deleteServiceName.textContent = services[idx].name;
+    // A `stored` TOTP seed is the ONLY thing a deletion destroys irrecoverably:
+    // passwords, derived TOTP, SSH keys and wallets are all re-derivable from the master
+    // secret, so re-adding the service regenerates them. Warn only in that case.
+    const svc = services[idx];
+    const storedSeed = !!(svc.totp && svc.totp.mode === "stored");
+    if (deleteTotpWarning) deleteTotpWarning.classList.toggle("hidden", !storedSeed);
     deleteState = openDialog(deleteDialog);
   }
 
@@ -1844,7 +1950,16 @@
 
   deleteConfirm.addEventListener("click", async () => {
     if (deleteTarget !== null) {
+      const removed = services[deleteTarget];
       services.splice(deleteTarget, 1);
+      // Frozen Req 4: a tombstone is written in the SAME commit as the removal, and
+      // regardless of `synced`. Writing it unconditionally is what closes the
+      // lost-response window: if a push reached the server but its response was lost,
+      // `synced` is still false locally while the server does hold the record, and
+      // without a tombstone the deletion would be lost and the service would resurrect.
+      if (removed && removed.id) {
+        tombstones.push({id: removed.id, deleted_at: nextTimestamp(services)});
+      }
       await saveServices();
       renderServiceList();
     }
@@ -2091,6 +2206,20 @@
   document.addEventListener("click", () => sendMsg({action: "heartbeat"}));
   document.addEventListener("keydown", () => sendMsg({action: "heartbeat"}));
 
+  // === Popup-active lease (Frozen Req 14) ===
+  // The background skips its 5-minute sync while this lease is valid, so a popup sync
+  // and a background sync never run concurrently on the same lookup_id. Concurrency was
+  // the root cause of the spurious 429s: two syncs -> stale If-Match -> 409 -> retry
+  // chain -> per-lookup token exhaustion. The lease is refreshed periodically and
+  // expires on its own, so a popup killed without firing `unload` cannot wedge
+  // background sync permanently.
+  const POPUP_LEASE_MS = 30000;
+  function renewPopupLease() {
+    return chrome.storage.local.set({popupActiveUntil: Date.now() + POPUP_LEASE_MS});
+  }
+  await renewPopupLease();
+  const popupLeaseTimer = setInterval(renewPopupLease, POPUP_LEASE_MS / 3);
+
   // === Init ===
   // One-time migration: clear stale data from pre-Argon2id algorithm
   const migCheck = await chrome.storage.local.get("v2_migrated");
@@ -2152,5 +2281,8 @@
       }
     }
   }
-  window.addEventListener("unload", () => { chrome.storage.local.set({popupActive: false}); });
+  window.addEventListener("unload", () => {
+    clearInterval(popupLeaseTimer);
+    chrome.storage.local.set({popupActiveUntil: 0});
+  });
 })();

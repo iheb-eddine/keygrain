@@ -1,0 +1,173 @@
+{
+  "_comment": "Sync v3 deletion-reconciliation oracle, consumed by BOTH extension/tests/test.mjs and kotlin SyncReconcileTest.kt. One table, two platforms — closes the 'no cross-platform integration test' drift vector for sync (designs/sync-deletion-reconciliation.md, Test Plan). NOT to be confused with sync-vectors.json (a derivation/decrypt fixture). Each scenario feeds reconcileServices(local, tombstones, remoteContent, remoteMeta, lastSuccessfulSyncAt, remoteExists); the harness splits each 'remote' entry into content (site/email/...) and metadata (updated_at). Winner vectors give local and remote DIFFERENT sites so the compared 'site' fingerprint proves the right record's content won. Services that would be materially different on dedup are avoided so no SyncConflict is constructed (org.json semantics differ in the Kotlin unit runtime). Expectations: merged is sorted by id as [{id,synced,updated_at,site}]; deletedIds/review/tombstones/resurrected are sorted id lists.",
+  "vectors": [
+    {
+      "name": "rule3_local_newer_wins",
+      "lastSuccessfulSyncAt": 0,
+      "remoteExists": true,
+      "local": [{"id": "a", "site": "local3.com", "email": "a@b.com", "updated_at": 200, "synced": true}],
+      "tombstones": [],
+      "remote": [{"id": "a", "site": "remote3.com", "email": "a@b.com", "updated_at": 100}],
+      "expect": {
+        "merged": [{"id": "a", "synced": true, "updated_at": 200, "site": "local3.com"}],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "rules12_remote_wins_ties",
+      "lastSuccessfulSyncAt": 0,
+      "remoteExists": true,
+      "local": [{"id": "a", "site": "local12.com", "email": "a@b.com", "updated_at": 100, "synced": true}],
+      "tombstones": [],
+      "remote": [{"id": "a", "site": "remote12.com", "email": "a@b.com", "updated_at": 100}],
+      "expect": {
+        "merged": [{"id": "a", "synced": true, "updated_at": 100, "site": "remote12.com"}],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "rule4_unsynced_local_only_is_pushed_not_deleted",
+      "lastSuccessfulSyncAt": 0,
+      "remoteExists": true,
+      "local": [{"id": "new1", "site": "brand-new.com", "email": "a@b.com", "updated_at": 300, "synced": false}],
+      "tombstones": [],
+      "remote": [],
+      "expect": {
+        "merged": [{"id": "new1", "synced": false, "updated_at": 300, "site": "brand-new.com"}],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "rule5_remote_only_is_created_locally",
+      "lastSuccessfulSyncAt": 0,
+      "remoteExists": true,
+      "local": [],
+      "tombstones": [],
+      "remote": [{"id": "b", "site": "new.com", "email": "a@b.com", "updated_at": 50}],
+      "expect": {
+        "merged": [{"id": "b", "synced": true, "updated_at": 50, "site": "new.com"}],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "rule6_synced_local_only_deleted_silently",
+      "lastSuccessfulSyncAt": 500,
+      "remoteExists": true,
+      "local": [
+        {"id": "d", "site": "gone.com", "email": "a@b.com", "updated_at": 100, "synced": true},
+        {"id": "keep", "site": "keep.com", "email": "a@b.com", "updated_at": 100, "synced": true}
+      ],
+      "tombstones": [],
+      "remote": [{"id": "keep", "site": "keep.com", "email": "a@b.com", "updated_at": 400}],
+      "expect": {
+        "merged": [{"id": "keep", "synced": true, "updated_at": 400, "site": "keep.com"}],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "req7_edited_then_deleted_elsewhere_is_retained",
+      "lastSuccessfulSyncAt": 500,
+      "remoteExists": true,
+      "local": [
+        {"id": "d", "site": "edited.com", "email": "a@b.com", "updated_at": 900, "synced": true},
+        {"id": "keep", "site": "keep.com", "email": "a@b.com", "updated_at": 100, "synced": true}
+      ],
+      "tombstones": [],
+      "remote": [{"id": "keep", "site": "keep.com", "email": "a@b.com", "updated_at": 400}],
+      "expect": {
+        "merged": [{"id": "keep", "synced": true, "updated_at": 400, "site": "keep.com"}],
+        "deletedIds": [], "review": ["d"], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "rule7_newer_remote_edit_resurrects_over_tombstone",
+      "lastSuccessfulSyncAt": 0,
+      "remoteExists": true,
+      "local": [],
+      "tombstones": [{"id": "x", "deleted_at": 100}],
+      "remote": [{"id": "x", "site": "edited-elsewhere.com", "email": "a@b.com", "updated_at": 200}],
+      "expect": {
+        "merged": [{"id": "x", "synced": true, "updated_at": 200, "site": "edited-elsewhere.com"}],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": ["x"]
+      }
+    },
+    {
+      "name": "rule7_older_remote_stays_deleted_and_is_declared",
+      "lastSuccessfulSyncAt": 0,
+      "remoteExists": true,
+      "local": [],
+      "tombstones": [{"id": "x", "deleted_at": 300}],
+      "remote": [{"id": "x", "site": "stale.com", "email": "a@b.com", "updated_at": 200}],
+      "expect": {
+        "merged": [],
+        "deletedIds": ["x"], "review": [], "tombstones": ["x"], "resurrected": []
+      }
+    },
+    {
+      "name": "tombstone_for_already_absent_id_clears_without_declaring",
+      "lastSuccessfulSyncAt": 0,
+      "remoteExists": true,
+      "local": [{"id": "keep", "site": "keep.com", "email": "a@b.com", "updated_at": 400, "synced": true}],
+      "tombstones": [{"id": "ghost", "deleted_at": 300}],
+      "remote": [{"id": "keep", "site": "keep.com", "email": "a@b.com", "updated_at": 400}],
+      "expect": {
+        "merged": [{"id": "keep", "synced": true, "updated_at": 400, "site": "keep.com"}],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "lost_response_repair_matches_by_id_no_duplicate",
+      "lastSuccessfulSyncAt": 0,
+      "remoteExists": true,
+      "local": [{"id": "r", "site": "repair-local.com", "email": "a@b.com", "updated_at": 100, "synced": false}],
+      "tombstones": [],
+      "remote": [{"id": "r", "site": "repair-remote.com", "email": "a@b.com", "updated_at": 100}],
+      "expect": {
+        "merged": [{"id": "r", "synced": true, "updated_at": 100, "site": "repair-remote.com"}],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "remote_absent_never_infers_deletions",
+      "lastSuccessfulSyncAt": 500,
+      "remoteExists": false,
+      "local": [{"id": "a", "site": "s-a.com", "email": "a@b.com", "updated_at": 100, "synced": true}],
+      "tombstones": [{"id": "t", "deleted_at": 300}],
+      "remote": [],
+      "expect": {
+        "merged": [{"id": "a", "synced": false, "updated_at": 100, "site": "s-a.com"}],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "empty_remote_deletes_synced_local_records",
+      "lastSuccessfulSyncAt": 500,
+      "remoteExists": true,
+      "local": [{"id": "a", "site": "s-a.com", "email": "a@b.com", "updated_at": 100, "synced": true}],
+      "tombstones": [],
+      "remote": [],
+      "expect": {
+        "merged": [],
+        "deletedIds": [], "review": [], "tombstones": [], "resurrected": []
+      }
+    },
+    {
+      "name": "duplicate_collapse_synced_loser_is_declared_and_tombstoned",
+      "lastSuccessfulSyncAt": 0,
+      "remoteExists": true,
+      "local": [
+        {"id": "a", "site": "dup.com", "email": "a@b.com", "updated_at": 200, "synced": true},
+        {"id": "b", "site": "dup.com", "email": "a@b.com", "updated_at": 100, "synced": true}
+      ],
+      "tombstones": [],
+      "remote": [
+        {"id": "a", "site": "dup.com", "email": "a@b.com", "updated_at": 200},
+        {"id": "b", "site": "dup.com", "email": "a@b.com", "updated_at": 100}
+      ],
+      "expect": {
+        "merged": [{"id": "a", "synced": true, "updated_at": 200, "site": "dup.com"}],
+        "deletedIds": ["b"], "review": [], "tombstones": ["b"], "resurrected": []
+      }
+    }
+  ]
+}

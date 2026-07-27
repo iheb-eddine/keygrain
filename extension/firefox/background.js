@@ -79,8 +79,11 @@ let lockDeferred = false;
 
 async function backgroundSync() {
   if (!sessionSecret || !sessionEmail) return;
-  const {popupActive, offlineMode} = await browser.storage.local.get(["popupActive", "offlineMode"]);
-  if (popupActive) return;
+  const {popupActiveUntil, offlineMode} = await browser.storage.local.get(["popupActiveUntil", "offlineMode"]);
+  // Lease, not a boolean: the popup refreshes popupActiveUntil via its heartbeat. A
+  // boolean would stick `true` forever if the popup was killed without firing `unload`,
+  // silently disabling background sync. An expired lease self-heals.
+  if (popupActiveUntil && Date.now() < popupActiveUntil) return;
   if (offlineMode) return;  // Offline mode: never touch the server.
   bgSyncInProgress = true;
   const enc = new TextEncoder();
@@ -98,9 +101,13 @@ async function backgroundSync() {
     const localServices = parsed.services || [];
     const localWallets = parsed.wallets || [];
     const localAuditLog = parsed.wallet_audit_log || [];
-    const result = await syncWithServer(sessionSecret, sessionEmail, localServices, localWallets, localAuditLog);
-    await setKnownUUIDs(result.knownUUIDs);
-    const newPlaintext = enc.encode(JSON.stringify({version: 1, services: result.services, wallets: result.wallets, wallet_audit_log: result.wallet_audit_log}));
+    const localTombstones = parsed.tombstones || [];
+    const localReview = parsed.deletion_review || [];
+    const result = await syncWithServer(sessionSecret, sessionEmail, localServices, localWallets, localAuditLog, localTombstones);
+    const newReview = (result.review && result.review.length)
+      ? [...localReview, ...result.review].slice(-50)
+      : localReview;
+    const newPlaintext = enc.encode(JSON.stringify({version: 2, services: result.services, wallets: result.wallets, wallet_audit_log: result.wallet_audit_log, tombstones: result.tombstones, deletion_review: newReview}));
     const newIv = crypto.getRandomValues(new Uint8Array(12));
     const newKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["encrypt"]);
     const newCiphertext = await crypto.subtle.encrypt({name: "AES-GCM", iv: newIv, additionalData: aad}, newKey, newPlaintext);

@@ -54,6 +54,7 @@ import com.secbytech.keygrain.data.PublicSuffixList
 import com.secbytech.keygrain.data.SecretManager
 import com.secbytech.keygrain.data.ServiceEntry
 import com.secbytech.keygrain.data.ServiceManager
+import com.secbytech.keygrain.data.DeletionReviewEntry
 import com.secbytech.keygrain.data.SyncCrypto
 import com.secbytech.keygrain.data.TotpEngine
 import com.secbytech.keygrain.data.SshEngine
@@ -341,6 +342,12 @@ private fun ServiceListScreen(
     var showWalletScreen by remember { mutableStateOf(false) }
     var showSwitchAccountDialog by remember { mutableStateOf(false) }
     var showSyncEmailDialog by remember { mutableStateOf(false) }
+    // Sync v3 deletion review (Frozen Req 7): services this device changed that were
+    // deleted on another device. Populated by SyncManager on a confirmed sync.
+    var deletionReview by remember {
+        mutableStateOf(if (isDemoMode) emptyList() else serviceManager.getDeletionReview())
+    }
+    var showDeletionReviewScreen by remember { mutableStateOf(false) }
     var syncEmail by remember { mutableStateOf("") }
     var isSyncing by remember { mutableStateOf(false) }
     var syncFailed by remember { mutableStateOf(false) }
@@ -392,6 +399,7 @@ private fun ServiceListScreen(
                             syncManager.setSyncEmail(context, email)
                             skipNextDebounce = true
                             services = serviceManager.getServices()
+                            deletionReview = serviceManager.getDeletionReview()
                             lastSyncTime = System.currentTimeMillis()
                             syncFailed = false
                         }
@@ -415,7 +423,20 @@ private fun ServiceListScreen(
     }
 
     // Auto-sync on unlock (initial load)
-    LaunchedEffect(Unit) { performAutoSync() }
+    LaunchedEffect(Unit) {
+        if (!isDemoMode) {
+            // Sync v3 one-time migration (design §8): must run before the first v3 sync so
+            // a deletion that had not yet propagated is preserved as a tombstone rather
+            // than lost. Self-guarded (no-op once known_uuids is gone), safe to call every
+            // launch. Runs regardless of offline mode — it only rewrites local state.
+            withContext(Dispatchers.IO) {
+                syncManager.migrateFromKnownUUIDs(context, serviceManager)
+            }
+            services = serviceManager.getServices()
+            deletionReview = serviceManager.getDeletionReview()
+        }
+        performAutoSync()
+    }
 
     // Auto-lock timer (15 min)
     var lockSecondsRemaining by remember { mutableIntStateOf(15 * 60) }
@@ -517,6 +538,37 @@ private fun ServiceListScreen(
 
     if (showHelpScreen) {
         HelpScreen(onBack = { showHelpScreen = false })
+        return
+    }
+
+    if (showDeletionReviewScreen) {
+        DeletionReviewScreen(
+            entries = deletionReview,
+            onRestore = { entry ->
+                // Re-insert under the original id (synced=false so a failed push re-pushes
+                // rather than risking deletion), then push so other devices recreate it.
+                serviceManager.restoreFromReview(entry)
+                services = serviceManager.getServices()
+                deletionReview = serviceManager.getDeletionReview()
+                triggerDebouncedSync()
+                if (deletionReview.none { !it.seen }) showDeletionReviewScreen = false
+            },
+            onDiscard = { entry ->
+                // Accept the deletion: drop the review entry, keep the service deleted.
+                serviceManager.setDeletionReview(
+                    deletionReview.filter { it.service.id != entry.service.id }
+                )
+                deletionReview = serviceManager.getDeletionReview()
+                if (deletionReview.isEmpty()) showDeletionReviewScreen = false
+            },
+            onDismissAll = {
+                // Keep entries but stop nagging (mirrors the extension's dismiss-all).
+                serviceManager.setDeletionReview(deletionReview.map { it.copy(seen = true) })
+                deletionReview = serviceManager.getDeletionReview()
+                showDeletionReviewScreen = false
+            },
+            onBack = { showDeletionReviewScreen = false }
+        )
         return
     }
 
@@ -775,6 +827,31 @@ private fun ServiceListScreen(
                 )
             }
         }
+        // Sync v3 deletion-review banner (Frozen Req 7). Non-blocking: shown only when
+        // this device held unsynced changes to services that were deleted elsewhere.
+        val pendingReview = deletionReview.filter { !it.seen }
+        AnimatedVisibility(visible = pendingReview.isNotEmpty()) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (pendingReview.size == 1)
+                            "1 service you changed here was deleted on another device"
+                        else
+                            "${pendingReview.size} services you changed here were deleted on another device",
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    TextButton(onClick = { showDeletionReviewScreen = true }) { Text("Review") }
+                }
+            }
+        }
         if (services.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -870,6 +947,7 @@ private fun ServiceListScreen(
                                         syncManager.setSyncEmail(context, syncEmail)
                                         skipNextDebounce = true
                                         services = serviceManager.getServices()
+                                        deletionReview = serviceManager.getDeletionReview()
                                         lastSyncTime = System.currentTimeMillis()
                                         UserMessages.syncSuccess(r.services.size)
                                     }
@@ -976,9 +1054,19 @@ private fun ServiceListScreen(
 
     showDeleteDialog?.let { id ->
         val deleteName = services.firstOrNull { it.id == id }?.name ?: ""
+        val hasStoredTotp = services.firstOrNull { it.id == id }?.totp?.optString("mode") == "stored"
         AlertDialog(
             onDismissRequest = { showDeleteDialog = null },
             title = { Text("Delete $deleteName?") },
+            text = if (hasStoredTotp) {
+                {
+                    Text(
+                        "⚠️ This service has a stored TOTP seed that is NOT derivable. " +
+                            "Deleting it here and syncing removes it from all your devices, and " +
+                            "it cannot be recovered."
+                    )
+                }
+            } else null,
             confirmButton = {
                 TextButton(onClick = {
                     if (isDemoMode) {
@@ -2090,4 +2178,104 @@ private fun showBiometric(context: Context, onSuccess: () -> Unit, onFailed: () 
             .setNegativeButtonText("Cancel")
             .build()
     )
+}
+
+/**
+ * Sync v3 deletion review (Frozen Req 7). Surfaces services this device had unsynced
+ * changes to that were deleted on another device. Per-item Restore (re-create under the
+ * original id) / Discard (accept the deletion), plus Dismiss all (stop nagging, keep the
+ * list). Mirrors the extension's deletion-review UI (designs/sync-deletion-reconciliation.md §7).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DeletionReviewScreen(
+    entries: List<DeletionReviewEntry>,
+    onRestore: (DeletionReviewEntry) -> Unit,
+    onDiscard: (DeletionReviewEntry) -> Unit,
+    onDismissAll: () -> Unit,
+    onBack: () -> Unit
+) {
+    BackHandler(onBack = onBack)
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Deleted elsewhere") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    if (entries.any { !it.seen }) {
+                        TextButton(onClick = onDismissAll) { Text("Dismiss all") }
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        if (entries.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Nothing to review.")
+            }
+            return@Scaffold
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                "These services were deleted on another device, but you had changes to " +
+                    "them here that hadn't synced yet. Restore the ones you want to keep — " +
+                    "the rest stay deleted.",
+                modifier = Modifier.padding(16.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            entries.forEach { entry ->
+                val svc = entry.service
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            svc.name.ifBlank { svc.site },
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        if (svc.site.isNotBlank()) {
+                            Text(svc.site, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (svc.email.isNotBlank()) {
+                            Text(svc.email, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text(
+                            "Deleted " + java.text.DateFormat
+                                .getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+                                .format(java.util.Date(entry.deletedAt)),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(onClick = { onDiscard(entry) }) { Text("Discard") }
+                            Spacer(Modifier.width(8.dp))
+                            Button(onClick = { onRestore(entry) }) { Text("Restore") }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
 }
