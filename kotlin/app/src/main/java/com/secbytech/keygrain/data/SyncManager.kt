@@ -3,6 +3,7 @@ package com.secbytech.keygrain.data
 import android.content.Context
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -135,6 +136,8 @@ data class WalletAuditEntry(
 class SyncManager(
     private val baseUrl: String = "https://keygrain.com"
 ) {
+    private val KEY_LAST_SUCCESSFUL_SYNC_AT = "last_successful_sync_at"
+
     private fun getPrefs(context: Context) =
         context.getSharedPreferences("keygrain_sync", Context.MODE_PRIVATE)
 
@@ -154,12 +157,104 @@ class SyncManager(
         getPrefs(context).edit().clear().apply()
     }
 
-    private fun getKnownUUIDs(context: Context): Set<String> =
-        getPrefs(context).getStringSet("known_uuids", emptySet()) ?: emptySet()
-
-    private fun setKnownUUIDs(context: Context, uuids: Set<String>) {
-        getPrefs(context).edit().putStringSet("known_uuids", uuids).apply()
+    /**
+     * One-time migration from the v1 knownUUIDs model to v2 (synced + tombstones).
+     * Design §8. Runs before the first v3 sync so a deletion that had not yet propagated
+     * is preserved as a tombstone rather than lost (which would resurrect the service).
+     *
+     * `synced` is taken ONLY from knownUUIDs; anything unknown defaults to false. Never
+     * default to true: a false `false` causes a harmless idempotent re-push under the
+     * same UUID, whereas a false `true` risks deletion.
+     */
+    fun migrateFromKnownUUIDs(context: Context, serviceManager: ServiceManager) {
+        val prefs = getPrefs(context)
+        if (!prefs.contains("known_uuids")) return
+        val known = prefs.getStringSet("known_uuids", emptySet()) ?: emptySet()
+        val services = serviceManager.getServices()
+        serviceManager.replaceAll(services.map { it.copy(synced = it.id != null && known.contains(it.id)) })
+        val liveIds = services.mapNotNull { it.id }.toSet()
+        val now = System.currentTimeMillis()
+        val synthesized = known.filter { !liveIds.contains(it) }.map { Tombstone(it, now) }
+        if (synthesized.isNotEmpty()) {
+            serviceManager.setTombstones(serviceManager.getTombstones() + synthesized)
+        }
+        // Seed the barrier from the legacy last-sync timestamp when available.
+        if (!prefs.contains(KEY_LAST_SUCCESSFUL_SYNC_AT)) {
+            prefs.edit().putLong(KEY_LAST_SUCCESSFUL_SYNC_AT, prefs.getLong("last_sync_time", 0L)).apply()
+        }
+        prefs.edit().remove("known_uuids").apply()
     }
+
+    /**
+     * The causal barrier used to tell a routine remote deletion (apply silently) from one
+     * that would destroy an unsynced local change (retain for review). Advanced ONLY on a
+     * fully confirmed sync — Frozen Req 8.
+     */
+    private fun getLastSuccessfulSyncAt(context: Context): Long =
+        getPrefs(context).getLong(KEY_LAST_SUCCESSFUL_SYNC_AT, 0L)
+
+    private fun setLastSuccessfulSyncAt(context: Context, ts: Long) {
+        getPrefs(context).edit().putLong(KEY_LAST_SUCCESSFUL_SYNC_AT, ts).apply()
+    }
+
+    internal fun conflictBackoffMs(retryCount: Int): Long =
+        when (retryCount) {
+            0 -> 250L
+            1 -> 1000L
+            else -> 3000L
+        }
+
+    /**
+     * Canonical serialization of a sync blob payload, used ONLY to decide whether a PUT
+     * can be skipped (Frozen Req 9). MUST stay byte-identical to canonicalBlobPayload()
+     * in extension/shared/sync.js, so ordering and key order are fixed here. Local-only
+     * fields (synced, frecency) are excluded because they never affect remote state.
+     */
+    internal fun canonicalBlobPayload(
+        services: List<ServiceEntry>,
+        wallets: List<WalletEntry>,
+        auditLog: List<WalletAuditEntry>,
+        syncConflicts: List<SyncConflict>
+    ): String {
+        val sb = StringBuilder()
+        sb.append("{\"services\":[")
+        services.sortedBy { it.id ?: "" }.forEachIndexed { i, s ->
+            if (i > 0) sb.append(",")
+            sb.append("{\"id\":").append(jsonStr(s.id))
+                .append(",\"updated_at\":").append(s.updatedAt)
+                .append(",\"name\":").append(jsonStr(s.name))
+                .append(",\"site\":").append(jsonStr(s.site))
+                .append(",\"email\":").append(jsonStr(s.email))
+                .append(",\"length\":").append(s.length)
+                .append(",\"symbols\":").append(jsonStr(s.symbols))
+                .append(",\"counter\":").append(s.counter)
+                .append(",\"totp\":").append(s.totp?.toString() ?: "null")
+                .append(",\"ssh\":").append(s.ssh?.toString() ?: "null")
+                .append("}")
+        }
+        sb.append("],\"wallets\":[")
+        wallets.sortedBy { it.walletName.lowercase() + ":" + it.chain.lowercase() }
+            .forEachIndexed { i, w ->
+                if (i > 0) sb.append(",")
+                sb.append(w.toJson().toString())
+            }
+        sb.append("],\"wallet_audit_log\":[")
+        auditLog.sortedBy { "${it.timestamp}\u0000${it.walletName}\u0000${it.chain}\u0000${it.action}" }
+            .forEachIndexed { i, e ->
+                if (i > 0) sb.append(",")
+                sb.append(e.toJson().toString())
+            }
+        sb.append("],\"sync_conflicts\":[")
+        syncConflicts.sortedBy { it.dedupeKey() }.forEachIndexed { i, c ->
+            if (i > 0) sb.append(",")
+            sb.append(c.toJson().toString())
+        }
+        sb.append("]}")
+        return sb.toString()
+    }
+
+    private fun jsonStr(s: String?): String =
+        if (s == null) "null" else JSONObject.quote(s)
 
     private fun getMetadataCache(context: Context): List<Pair<String?, Long>>? {
         val json = getPrefs(context).getString("sync_metadata_cache", null) ?: return null
@@ -341,7 +436,8 @@ class SyncManager(
             // Step 1: GET remote state
             val getResult = doGet(lookupId, authHeader)
             val localServices = serviceManager.getServices()
-            val knownUUIDs = getKnownUUIDs(context).toMutableSet()
+            val localTombstones = serviceManager.getTombstones()
+            val lastSyncAt = getLastSuccessfulSyncAt(context)
             var knownWKeys = getKnownWalletKeys(context)
 
             var remoteServices: List<ServiceEntry> = emptyList()
@@ -351,11 +447,13 @@ class SyncManager(
             var remoteMetadata: List<Pair<String?, Long>> = emptyList()
             var etag: String? = null
             var status = "created"
+            var remoteExists = false
 
             when (getResult) {
                 is GetResult.Success -> {
                     etag = getResult.etag
                     status = "synced"
+                    remoteExists = true
 
                     // Validate checksum
                     val blobBytes = Base64.decode(getResult.encryptedBlob, Base64.DEFAULT)
@@ -397,13 +495,11 @@ class SyncManager(
                     }
                 }
                 is GetResult.NotFound -> {
-                    // No remote state — treat as fresh first sync to prevent data loss.
-                    // If knownUUIDs is populated, server data was lost; clear to avoid
-                    // interpreting all local services as "deleted remotely."
-                    // Persist immediately so the fix survives a subsequent PUT failure.
-                    knownUUIDs.clear()
+                    // Frozen Req 11: no remote record. NEVER inferred as deletions — see
+                    // reconcileServices(remoteExists=false). Wallet known-keys are also
+                    // reset so local wallets are not read as "deleted remotely".
+                    remoteExists = false
                     knownWKeys = emptySet()
-                    setKnownUUIDs(context, emptySet())
                     setKnownWalletKeys(context, emptySet())
                 }
                 is GetResult.AuthError -> return@withContext SyncResult.AuthError(getResult.code)
@@ -411,19 +507,25 @@ class SyncManager(
                 is GetResult.NetworkError -> return@withContext SyncResult.NetworkError(getResult.cause)
             }
 
-            // Step 2: Merge
-            val mergeResult = mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs)
-            val merged = mergeResult.merged
-            val allMergedIds = mergeResult.allMergedIds
-            val newConflicts = mergeResult.syncConflicts
+            // Step 2: Reconcile
+            val recResult = reconcileServices(
+                localServices, localTombstones, remoteServices, remoteMetadata, lastSyncAt, remoteExists
+            )
+            val merged = recResult.merged
+            val newConflicts = recResult.syncConflicts
             val localWallets = getWallets(context)
             val localAuditLog = getAuditLog(context)
             val (mergedWallets, newWKeys) = mergeWallets(localWallets, remoteWallets, knownWKeys)
             val mergedAuditLog = mergeAuditLog(localAuditLog, remoteAuditLog)
 
-            // Empty-push protection: refuse to push empty if remote had data
+            // Empty-push protection: an empty push is legitimate only when every remote
+            // id it drops is explicitly declared as deleted.
             if (merged.isEmpty() && remoteMetadata.isNotEmpty()) {
-                return@withContext SyncResult.IntegrityError("empty push blocked: merge produced no services but remote had ${remoteMetadata.size}")
+                val declared = recResult.deletedIds.toSet()
+                val allDeclared = remoteMetadata.all { it.first != null && declared.contains(it.first) }
+                if (!allDeclared) {
+                    return@withContext SyncResult.IntegrityError("empty push blocked: merge produced no services but remote had ${remoteMetadata.size}")
+                }
             }
 
             // Step 3: Build push payload
@@ -452,6 +554,29 @@ class SyncManager(
             val syncConflicts = mergedConflicts.takeLast(50)
 
             val conflictsArray = JSONArray().apply { syncConflicts.forEach { put(it.toJson()) } }
+
+            // Step 3b: no-op skip (Frozen Req 9). An idle sync costs one GET and no PUT,
+            // which also stops the random-IV/new-ETag churn that manufactures cross-device
+            // 409s and exhausts the per-lookup rate-limit bucket.
+            if (remoteExists && recResult.deletedIds.isEmpty()) {
+                val localCanon = canonicalBlobPayload(merged, mergedWallets, mergedAuditLog, syncConflicts)
+                val remoteWithMeta = remoteMetadata.indices.mapNotNull { i ->
+                    val id = remoteMetadata[i].first ?: return@mapNotNull null
+                    remoteServices[i].copy(id = id, updatedAt = remoteMetadata[i].second)
+                }
+                val remoteCanon = canonicalBlobPayload(remoteWithMeta, remoteWallets, remoteAuditLog, remoteConflicts)
+                if (localCanon == remoteCanon) {
+                    serviceManager.replaceAll(merged)
+                    serviceManager.setTombstones(emptyList())
+                    if (recResult.review.isNotEmpty()) {
+                        serviceManager.setDeletionReview(serviceManager.getDeletionReview() + recResult.review)
+                    }
+                    setKnownWalletKeys(context, newWKeys)
+                    setLastSuccessfulSyncAt(context, System.currentTimeMillis())
+                    return@withContext SyncResult.Success(merged, mergedWallets, mergedAuditLog, syncConflicts, "unchanged")
+                }
+            }
+
             val blobPayload = JSONObject().apply {
                 put("services", contentArray)
                 put("wallets", walletsArray)
@@ -469,6 +594,7 @@ class SyncManager(
                 put("services", metadataArray)
                 put("encrypted_blob", encryptedB64)
                 put("checksum", checksum)
+                put("deleted_ids", JSONArray().apply { recResult.deletedIds.forEach { put(it) } })
             }.toString()
 
             // Step 4: PUT
@@ -476,20 +602,33 @@ class SyncManager(
 
             when (putResult) {
                 is PutResult.Success -> {
-                    serviceManager.replaceAll(merged)
+                    // Confirmed 2xx: only now is it safe to mark the pushed ids synced,
+                    // clear the tombstones the server no longer holds, and advance the
+                    // sync barrier (§3 steps 5-6, Frozen Reqs 1/5/8).
+                    val pushedIds = merged.mapNotNull { it.id }.toSet()
+                    val confirmed = merged.map {
+                        if (it.id != null && pushedIds.contains(it.id)) it.copy(synced = true) else it
+                    }
+                    serviceManager.replaceAll(confirmed)
+                    serviceManager.setTombstones(recResult.tombstones.filter { pushedIds.contains(it.id) })
+                    if (recResult.review.isNotEmpty()) {
+                        serviceManager.setDeletionReview(serviceManager.getDeletionReview() + recResult.review)
+                    }
                     setMetadataCache(context, putResult.services)
-
-                    // Update known UUIDs (from pre-dedup set to include loser UUIDs) and wallet keys
-                    setKnownUUIDs(context, allMergedIds)
                     setKnownWalletKeys(context, newWKeys)
                     saveWallets(context, mergedWallets)
                     saveAuditLog(context, mergedAuditLog)
+                    setLastSuccessfulSyncAt(context, System.currentTimeMillis())
                     getPrefs(context).edit().putBoolean("conflicts_dismissed", false).apply()
 
-                    SyncResult.Success(merged, mergedWallets, mergedAuditLog, syncConflicts, status)
+                    SyncResult.Success(confirmed, mergedWallets, mergedAuditLog, syncConflicts, status)
                 }
                 is PutResult.Conflict -> {
                     if (retryCount < 3) {
+                        // Bounded jittered backoff: immediate recursion could burn 8
+                        // requests in milliseconds against the per-lookup bucket and
+                        // self-inflict a 429.
+                        delay(conflictBackoffMs(retryCount))
                         sync(secret, email, serviceManager, context, retryCount + 1)
                     } else {
                         SyncResult.ConflictError
@@ -508,22 +647,32 @@ class SyncManager(
         }
     }
 
-    private data class MergeResult(
+    internal data class ReconcileResult(
         val merged: List<ServiceEntry>,
-        val allMergedIds: Set<String>,
+        val tombstones: List<Tombstone>,
+        val deletedIds: List<String>,
+        val review: List<DeletionReviewEntry>,
+        val resurrected: List<String>,
         val syncConflicts: List<SyncConflict>
     )
 
-    private fun mergeServices(
+    /**
+     * Sync v3 deletion reconciliation — MUST stay behaviourally identical to
+     * reconcileServices() in extension/shared/sync.js. See
+     * designs/sync-deletion-reconciliation.md §2.
+     */
+    internal fun reconcileServices(
         local: List<ServiceEntry>,
+        localTombstones: List<Tombstone>,
         remote: List<ServiceEntry>,
         remoteMeta: List<Pair<String?, Long>>,
-        knownUUIDs: Set<String>
-    ): MergeResult {
-        val remoteByID = mutableMapOf<String, Pair<ServiceEntry, Long>>()
+        lastSyncAt: Long,
+        remoteExists: Boolean
+    ): ReconcileResult {
+        val remoteByID = mutableMapOf<String, ServiceEntry>()
         for (i in remoteMeta.indices) {
             val id = remoteMeta[i].first ?: continue
-            remoteByID[id] = Pair(remote[i], remoteMeta[i].second)
+            remoteByID[id] = remote[i].copy(id = id, updatedAt = remoteMeta[i].second)
         }
 
         val localByID = mutableMapOf<String, ServiceEntry>()
@@ -533,44 +682,78 @@ class SyncManager(
             else localWithoutId.add(svc)
         }
 
+        // Latest deletion intent per id.
+        val tombByID = mutableMapOf<String, Long>()
+        for (t in localTombstones) {
+            val prev = tombByID[t.id]
+            if (prev == null || t.deletedAt > prev) tombByID[t.id] = t.deletedAt
+        }
+
         val merged = mutableListOf<ServiceEntry>()
+        val tombstones = mutableListOf<Tombstone>()
+        val deletedIds = mutableListOf<String>()
+        val review = mutableListOf<DeletionReviewEntry>()
+        val resurrected = mutableListOf<String>()
 
-        // Remote services
-        for ((id, pair) in remoteByID) {
-            val (remoteSvc, remoteTs) = pair
-            val localSvc = localByID.remove(id)
-            if (localSvc != null) {
-                // Both have it — newer wins, remote wins ties
-                if (localSvc.updatedAt > remoteTs) merged.add(localSvc)
-                else merged.add(remoteSvc.copy(id = id, updatedAt = remoteTs))
-            } else {
-                // Remote-only
-                if (knownUUIDs.contains(id)) {
-                    // Deleted locally — don't include
-                } else {
-                    // New from another device
-                    merged.add(remoteSvc.copy(id = id, updatedAt = remoteTs))
+        if (!remoteExists) {
+            // Frozen Req 11: no server record (fresh account, or server-side data loss).
+            // NEVER interpreted as deletions — otherwise a lost blob would wipe every
+            // device. Pending tombstones are dropped: the server holds nothing to delete.
+            for (svc in localByID.values) merged.add(svc.copy(synced = false))
+        } else {
+            val allIds = localByID.keys + remoteByID.keys + tombByID.keys
+            for (id in allIds) {
+                val l = localByID[id]
+                val r = remoteByID[id]
+                val t = tombByID[id]
+
+                if (t != null) {
+                    if (r != null && r.updatedAt > t) {
+                        // Rule 7: a newer remote edit supersedes this pending deletion.
+                        merged.add(r.copy(synced = true))
+                        resurrected.add(id)
+                    } else {
+                        // Stays deleted. Declared only if the server still holds it;
+                        // otherwise the tombstone clears without forcing a PUT (§3, §4).
+                        if (r != null) {
+                            deletedIds.add(id)
+                            tombstones.add(Tombstone(id, t))
+                        }
+                    }
+                    continue
                 }
+
+                if (l != null && r != null) {
+                    // Rules 1-3: newer wins, remote wins ties.
+                    val winner = if (l.updatedAt > r.updatedAt) l else r
+                    merged.add(winner.copy(id = id, synced = true))
+                    continue
+                }
+
+                if (l != null) {
+                    if (!l.synced) {
+                        // Rule 4: never reached the server -> create remotely.
+                        merged.add(l)
+                    } else {
+                        // Rule 6: was on the server, now gone -> deleted elsewhere.
+                        // Retained for review ONLY when this device holds an unsynced
+                        // change (Frozen Req 7).
+                        if (l.updatedAt > lastSyncAt) {
+                            review.add(DeletionReviewEntry(l, System.currentTimeMillis(), false))
+                        }
+                    }
+                    continue
+                }
+
+                // Rule 5: remote-only -> create locally.
+                if (r != null) merged.add(r.copy(synced = true))
             }
         }
 
-        // Local-only services
-        for ((id, svc) in localByID) {
-            if (knownUUIDs.contains(id)) {
-                // Was previously seen from server but now gone → deleted remotely
-            } else {
-                // Never seen from server → new local service → preserve
-                merged.add(svc)
-            }
-        }
-
-        // Preserve local services without ID (assign UUIDs)
+        // Legacy records with no id yet: assign one and treat as unsynced creates.
         for (svc in localWithoutId) {
-            merged.add(svc.copy(id = java.util.UUID.randomUUID().toString()))
+            merged.add(svc.copy(id = java.util.UUID.randomUUID().toString(), synced = false))
         }
-
-        // Compute all pre-dedup UUIDs (includes losers) for knownUUIDs tracking
-        val allMergedIds = merged.mapNotNull { it.id }.toSet()
 
         // Dedup by (normalizeSite(site), email) — keep highest updatedAt, lower UUID wins ties
         val conflicts = mutableListOf<SyncConflict>()
@@ -598,9 +781,20 @@ class SyncManager(
                 }
                 conflicts.add(SyncConflict(winner.id ?: "", loserJson, java.time.Instant.now().toString()))
             }
+            // A SYNCED loser must be removed server-side too, not merely dropped locally,
+            // so it is tombstoned and declared. This is INDEPENDENT of whether the two
+            // records differed materially (which only controls conflict reporting) —
+            // mirrors the two separate blocks in extension/shared/sync.js.
+            val loserId = loser.id
+            if (loser.synced && loserId != null && remoteByID.containsKey(loserId)) {
+                if (!deletedIds.contains(loserId)) deletedIds.add(loserId)
+                if (tombstones.none { it.id == loserId }) {
+                    tombstones.add(Tombstone(loserId, System.currentTimeMillis()))
+                }
+            }
         }
 
-        return MergeResult(deduped.values.toList(), allMergedIds, conflicts)
+        return ReconcileResult(deduped.values.toList(), tombstones, deletedIds, review, resurrected, conflicts)
     }
 
     private fun sha256Hex(data: ByteArray): String {

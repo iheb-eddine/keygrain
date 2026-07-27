@@ -110,14 +110,24 @@ function validateMetadataIntegrity(receivedMetadata, cachedMetadata) {
   }
 }
 
-// Load known UUIDs from storage
-async function getKnownUUIDs() {
-  const data = await chrome.storage.local.get("syncKnownUUIDs");
-  return new Set(data.syncKnownUUIDs || []);
+// Bounded jittered backoff for the 409 (ETag conflict) retry chain.
+const CONFLICT_BACKOFF_MS = [250, 1000, 3000];
+
+function sleepWithJitter(ms) {
+  const jittered = ms * (0.75 + Math.random() * 0.5); // +/-25%
+  return new Promise(r => setTimeout(r, jittered));
 }
 
-async function setKnownUUIDs(uuids) {
-  await chrome.storage.local.set({syncKnownUUIDs: [...uuids]});
+// lastSuccessfulSyncAt is the causal barrier used to tell a routine remote deletion
+// (apply silently) from one that would destroy an unsynced local change (retain for
+// review). It is advanced ONLY on a fully confirmed sync — Frozen Req 8.
+async function getLastSuccessfulSyncAt() {
+  const data = await chrome.storage.local.get("lastSuccessfulSyncAt");
+  return data.lastSuccessfulSyncAt || 0;
+}
+
+async function setLastSuccessfulSyncAt(ts) {
+  await chrome.storage.local.set({lastSuccessfulSyncAt: ts});
 }
 
 // Known wallet keys (wallet_name:chain pairs seen from server)
@@ -215,67 +225,133 @@ function parseBlobContent(parsed) {
 }
 
 /**
- * Merge local and remote services.
- * localServices: [{name, site, email, length, symbols, counter, id, updated_at}, ...]
- * remoteServices: same format (decrypted from blob)
- * remoteMetadata: [{id, updated_at}, ...] from server response
- * knownUUIDs: Set of UUIDs previously seen from server
+ * Sync v3 deletion reconciliation.
+ * See designs/sync-deletion-reconciliation.md §2.
  *
- * Returns: {merged: [...], knownUUIDs: Set}
+ * The central invariant: `synced === true` means a record bearing this id has been
+ * confirmed present on the server at least once. It is a property of IDENTITY, not of
+ * content — editing a service MUST NOT clear it, or rule 6 becomes unreachable for
+ * edited records and deleted services resurrect.
+ *
+ * localServices:  [{id, site, email, ..., updated_at, synced}]
+ * localTombstones:[{id, deleted_at}]  pending local deletions
+ * remoteServices: decrypted blob service contents, index-aligned with remoteMetadata
+ * remoteMetadata: [{id, updated_at}] from the server response
+ * lastSyncAt:     lastSuccessfulSyncAt (ms); 0 when never synced
+ *
+ * Returns {merged, tombstones, deletedIds, review, resurrected, syncConflicts}
+ *   merged      — services to keep locally and push
+ *   tombstones  — tombstones to retain (cleared ones are dropped)
+ *   deletedIds  — ids to declare in the PUT (only ids the server still holds)
+ *   review      — records deleted remotely that this device had unsynced changes to
+ *   resurrected — ids where a newer remote edit superseded a pending local deletion
  */
-function mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs) {
+function reconcileServices(localServices, localTombstones, remoteServices, remoteMetadata, lastSyncAt, remoteExists = true) {
   const remoteByID = new Map();
   for (let i = 0; i < remoteMetadata.length; i++) {
-    if (!remoteMetadata[i].id) continue;
-    remoteByID.set(remoteMetadata[i].id, {meta: remoteMetadata[i], data: remoteServices[i]});
+    if (!remoteMetadata[i] || !remoteMetadata[i].id) continue;
+    remoteByID.set(remoteMetadata[i].id, {
+      ...remoteServices[i],
+      id: remoteMetadata[i].id,
+      updated_at: remoteMetadata[i].updated_at
+    });
   }
 
   const localByID = new Map();
+  const localWithoutId = [];
   for (const svc of localServices) {
-    localByID.set(svc.id, svc);
+    if (!svc) continue;
+    if (svc.id) localByID.set(svc.id, svc);
+    // Legacy records (pre-UUID v1 stores) can lack an id. They MUST be given one and
+    // treated as unsynced creates — dropping them would silently lose the service. This
+    // mirrors the same branch in SyncManager.kt.
+    else localWithoutId.push(svc);
   }
 
-  const merged = [];
+  // Latest deletion intent per id.
+  const tombByID = new Map();
+  for (const t of localTombstones) {
+    if (!t || !t.id) continue;
+    const prev = tombByID.get(t.id);
+    if (!prev || t.deleted_at > prev) tombByID.set(t.id, t.deleted_at);
+  }
 
-  // Services present in both local and remote (by UUID)
-  for (const [id, remote] of remoteByID) {
-    const local = localByID.get(id);
-    if (local) {
-      // Both have it — newer wins, remote wins ties
-      if (local.updated_at > remote.meta.updated_at) {
-        merged.push(local);
-      } else {
-        merged.push({...remote.data, id, updated_at: remote.meta.updated_at});
+  let merged = [];
+  let tombstones = [];
+  let deletedIds = [];
+  let review = [];
+  const resurrected = [];
+
+  if (!remoteExists) {
+    // Frozen Req 11: no server record (fresh account, or server-side data loss). This is
+    // NEVER interpreted as deletions — otherwise a lost blob would wipe every device.
+    // Everything local is re-created, and pending tombstones are dropped because the
+    // server holds nothing to delete.
+    merged = localServices.filter(s => s && s.id).map(s => ({...s, synced: false}));
+  } else {
+    const allIds = new Set([...localByID.keys(), ...remoteByID.keys(), ...tombByID.keys()]);
+
+    for (const id of allIds) {
+      const L = localByID.get(id);
+      const R = remoteByID.get(id);
+      const T = tombByID.get(id);
+
+      if (T !== undefined) {
+        if (R && R.updated_at > T) {
+          // Rule 7: a newer remote edit supersedes this pending deletion.
+          merged.push({...R, synced: true});
+          resurrected.push(id);
+          // tombstone dropped
+        } else {
+          // Stays deleted. Declare it only if the server still holds it; otherwise the
+          // deletion is already reflected remotely and the tombstone can be cleared
+          // without forcing a PUT (§3 step 3, §4).
+          if (R) {
+            deletedIds.push(id);
+            tombstones.push({id, deleted_at: T});
+          }
+        }
+        continue;
       }
-      localByID.delete(id);
-    } else {
-      // Remote-only: new from another device or deleted locally?
-      if (knownUUIDs.has(id)) {
-        // Was known → deleted locally → don't include
-      } else {
-        // New from another device → add
-        merged.push({...remote.data, id, updated_at: remote.meta.updated_at});
+
+      if (L && R) {
+        // Rules 1-3: newer wins, remote wins ties.
+        const winner = L.updated_at > R.updated_at ? L : R;
+        merged.push({...winner, id, synced: true});
+        continue;
       }
+
+      if (L) {
+        if (!L.synced) {
+          // Rule 4: never reached the server yet -> create remotely. Never deleted.
+          merged.push(L);
+        } else {
+          // Rule 6: it was on the server and is now gone -> deleted elsewhere.
+          // Retain for review ONLY when this device holds an unsynced change to it
+          // (Frozen Req 7). Routine deletions leave no trace.
+          if (L.updated_at > lastSyncAt) {
+            review.push({service: L, deleted_at: Date.now(), seen: false});
+          }
+          // No tombstone: the server already lacks it.
+        }
+        continue;
+      }
+
+      // Rule 5: remote-only, no tombstone -> create locally.
+      merged.push({...R, synced: true});
     }
   }
 
-  // Local services with UUID not in remote → deleted on another device
-  for (const [id, svc] of localByID) {
-    if (remoteByID.has(id)) continue; // already handled
-    if (knownUUIDs.has(id)) {
-      // Was previously seen from server but now gone → deleted remotely → don't include
-    } else {
-      // Never seen from server → new local service → preserve
-      merged.push(svc);
-    }
+  // Legacy records with no id yet: assign one and treat as unsynced creates (rule 4).
+  for (const svc of localWithoutId) {
+    merged.push({...svc, id: crypto.randomUUID(), synced: false});
   }
 
-  // knownUUIDs from pre-dedup merged (includes loser UUIDs to prevent resurrection)
-  const newKnown = new Set(merged.map(svc => svc.id));
-
-  // Dedup by (normalizeSite(site), email) — last-write-wins, lower UUID breaks ties
+  // Second pass — semantic duplicate collapse by (normalizeSite(site), email).
+  // Unchanged from v2 except that a synced loser is now tombstoned + declared so the
+  // duplicate is removed server-side instead of merely dropped locally.
   const seen = new Map();
-  const sync_conflicts = [];
+  const syncConflicts = [];
   for (const svc of merged) {
     const key = (normalizeSite(svc.site) || svc.id) + "\n" + (svc.email || "").toLowerCase();
     const existing = seen.get(key);
@@ -291,11 +367,91 @@ function mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs
         loser.counter !== winner.counter ||
         JSON.stringify(loser.totp || null) !== JSON.stringify(winner.totp || null) ||
         JSON.stringify(loser.ssh || null) !== JSON.stringify(winner.ssh || null)) {
-      sync_conflicts.push({winner_id: winner.id, loser, detected_at: new Date().toISOString()});
+      syncConflicts.push({winner_id: winner.id, loser, detected_at: new Date().toISOString()});
+    }
+    if (loser.synced && remoteByID.has(loser.id)) {
+      if (!deletedIds.includes(loser.id)) deletedIds.push(loser.id);
+      if (!tombstones.some(t => t.id === loser.id)) tombstones.push({id: loser.id, deleted_at: Date.now()});
     }
   }
 
-  return {merged: [...seen.values()], knownUUIDs: newKnown, sync_conflicts};
+  return {merged: [...seen.values()], tombstones, deletedIds, review, resurrected, syncConflicts};
+}
+
+/**
+ * Canonical serialization of a sync blob payload, used ONLY to decide whether a PUT can
+ * be skipped (Frozen Req 9). Must be byte-identical across platforms for the skip to
+ * work, so ordering and key order are fixed here. Local-only fields (synced, frecency)
+ * are excluded because they never enter the blob.
+ */
+function canonicalBlobPayload(services, metadata, wallets, auditLog, syncConflicts) {
+  const svcByID = new Map();
+  for (let i = 0; i < metadata.length; i++) {
+    if (!metadata[i] || !metadata[i].id) continue;
+    svcByID.set(metadata[i].id, {content: services[i] || {}, updated_at: metadata[i].updated_at});
+  }
+  const orderedServices = [...svcByID.keys()].sort().map(id => {
+    const {content, updated_at} = svcByID.get(id);
+    return {
+      id,
+      updated_at,
+      name: content.name ?? null,
+      site: content.site ?? null,
+      email: content.email ?? null,
+      length: content.length ?? null,
+      symbols: content.symbols ?? null,
+      counter: content.counter ?? null,
+      migrating: content.migrating ?? null,
+      totp: content.totp ?? null,
+      ssh: content.ssh ?? null
+    };
+  });
+  const orderedWallets = [...wallets].sort((a, b) => {
+    const ka = walletKey(a), kb = walletKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  const auditKey = e => [e.timestamp, e.wallet_name, e.chain, e.action].join("\u0000");
+  const orderedAudit = [...auditLog].sort((a, b) => {
+    const ka = auditKey(a), kb = auditKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  const conflictKey = c => [c.detected_at, c.winner_id, c.loser && c.loser.id].join("\u0000");
+  const orderedConflicts = [...syncConflicts].sort((a, b) => {
+    const ka = conflictKey(a), kb = conflictKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  return JSON.stringify({
+    services: orderedServices,
+    wallets: orderedWallets,
+    wallet_audit_log: orderedAudit,
+    sync_conflicts: orderedConflicts
+  });
+}
+
+/**
+ * One-time migration of the local payload from v1 (knownUUIDs) to v2 (synced +
+ * tombstones). See design §8.
+ *
+ * `synced` defaults to FALSE when unknown: a false `false` only causes a harmless
+ * idempotent re-push under the same UUID, whereas a false `true` risks deletion.
+ * Every id that was known from the server but is no longer live becomes a tombstone,
+ * so deletions that had not yet propagated are preserved.
+ */
+function migrateLocalPayload(payload, knownUUIDs, now) {
+  const known = knownUUIDs instanceof Set ? knownUUIDs : new Set(knownUUIDs || []);
+  const services = (payload.services || []).map(s => ({...s, synced: known.has(s.id)}));
+  const liveIds = new Set(services.map(s => s.id));
+  const tombstones = [...known]
+    .filter(id => !liveIds.has(id))
+    .map(id => ({id, deleted_at: now}));
+  return {
+    version: 2,
+    services,
+    wallets: payload.wallets || [],
+    wallet_audit_log: payload.wallet_audit_log || [],
+    tombstones,
+    deletion_review: payload.deletion_review || []
+  };
 }
 
 /**
@@ -309,7 +465,7 @@ function mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs
  * Returns: {services, wallets, wallet_audit_log, status, etag, knownUUIDs}
  * Throws on auth/network/server errors.
  */
-async function syncWithServer(secret, email, localServices, localWallets = [], localAuditLog = [], retryCount = 0) {
+async function syncWithServer(secret, email, localServices, localWallets = [], localAuditLog = [], localTombstones = [], retryCount = 0) {
   const lookupId = await deriveLookupId(secret, email);
   const authPassword = await deriveAuthPassword(secret, email);
   const encKey = await deriveEncryptionKey(secret, email);
@@ -333,10 +489,12 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     let remoteConflicts = [];
     let remoteMetadata = [];
     let etag = null;
-    let knownUUIDs = await getKnownUUIDs();
+    let remoteExists = false;
     let knownWKeys = await getKnownWalletKeys();
+    const lastSyncAt = await getLastSuccessfulSyncAt();
 
     if (getResp.status === 200) {
+      remoteExists = true;
       const remote = await getResp.json();
       etag = (getResp.headers.get("ETag") || "").replace(/"/g, "");
       remoteMetadata = remote.services;
@@ -374,11 +532,11 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
         validateMetadataIntegrity(remoteMetadata, cachedMeta);
       }
     } else if (getResp.status === 404) {
-      // No remote state — treat as fresh first sync to prevent data loss
-      // If knownUUIDs is populated, server data was lost; clear to avoid interpreting all local services as "deleted remotely"
-      knownUUIDs = new Set();
+      // Frozen Req 11: no remote record. NEVER inferred as deletions — see
+      // reconcileServices(remoteExists=false). Wallet known-keys are also reset so
+      // local wallets are not read as "deleted remotely".
+      remoteExists = false;
       knownWKeys = new Set();
-      await setKnownUUIDs(knownUUIDs);
       await setKnownWalletKeys(knownWKeys);
     } else if (getResp.status === 401) {
       throw new Error("auth_failed");
@@ -390,18 +548,22 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       throw new Error("server_error");
     }
 
-    // Step 2: Merge
-    const {merged, knownUUIDs: newKnown, sync_conflicts: newConflicts} = mergeServices(localServices, remoteServices, remoteMetadata, knownUUIDs);
+    // Step 2: Reconcile
+    const rec = reconcileServices(localServices, localTombstones, remoteServices, remoteMetadata, lastSyncAt, remoteExists);
+    const merged = rec.merged;
     const {merged: mergedWallets, knownWalletKeys: newWKeys} = mergeWallets(localWallets, remoteWallets, knownWKeys);
     const mergedAuditLog = mergeAuditLog(localAuditLog, remoteAuditLog);
 
-    // Empty-push protection: refuse to push empty if remote had data
+    // Empty-push protection: an empty push is legitimate only when every remote id it
+    // drops is explicitly declared as deleted.
     if (merged.length === 0 && remoteMetadata.length > 0) {
-      throw new Error("empty_push_blocked");
+      const declared = new Set(rec.deletedIds);
+      const allDeclared = remoteMetadata.every(m => m && m.id && declared.has(m.id));
+      if (!allDeclared) throw new Error("empty_push_blocked");
     }
 
     // Step 3: Build push payload
-    const contentArray = merged.map(({id, updated_at, ...content}) => content);
+    const contentArray = merged.map(({id, updated_at, synced, ...content}) => content);
     const metadataArray = merged.map(s => ({id: s.id, updated_at: s.updated_at}));
 
     // Merge conflicts: remote + new, dedup by winner_id+loser.id, cap at 50
@@ -409,7 +571,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     const effectiveRemoteConflicts = dismissData.conflictsDismissed ? [] : remoteConflicts;
     const conflictKeySet = new Set();
     const mergedConflicts = [];
-    for (const c of [...effectiveRemoteConflicts, ...newConflicts]) {
+    for (const c of [...effectiveRemoteConflicts, ...rec.syncConflicts]) {
       const ck = c.winner_id + "+" + (c.loser && c.loser.id);
       if (conflictKeySet.has(ck)) continue;
       conflictKeySet.add(ck);
@@ -417,6 +579,23 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     }
     mergedConflicts.sort((a, b) => a.detected_at < b.detected_at ? -1 : 1);
     const sync_conflicts = mergedConflicts.slice(-50);
+
+    // Step 3b: no-op skip (Frozen Req 9). An idle sync costs one GET and no PUT, which
+    // also stops the random-IV/new-ETag churn that manufactured cross-device 409s.
+    if (remoteExists && rec.deletedIds.length === 0) {
+      const localCanon = canonicalBlobPayload(contentArray, metadataArray, mergedWallets, mergedAuditLog, sync_conflicts);
+      const remoteCanon = canonicalBlobPayload(remoteServices, remoteMetadata, remoteWallets, remoteAuditLog, remoteConflicts);
+      if (localCanon === remoteCanon) {
+        await setKnownWalletKeys(newWKeys);
+        await setLastSuccessfulSyncAt(Date.now());
+        return {
+          services: merged, wallets: mergedWallets, wallet_audit_log: mergedAuditLog,
+          sync_conflicts, status: "unchanged", etag,
+          tombstones: rec.tombstones, review: rec.review, resurrected: rec.resurrected,
+          skippedPut: true
+        };
+      }
+    }
 
     const blobPayload = {services: contentArray, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, sync_conflicts};
     const plaintext = new TextEncoder().encode(JSON.stringify(blobPayload));
@@ -437,14 +616,24 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       putResp = await fetch(syncServer + "/api/sync/" + lookupId, {
         method: "PUT",
         headers: putHeaders,
-        body: JSON.stringify({services: metadataArray, encrypted_blob: encryptedB64, checksum}),
+        body: JSON.stringify({
+          services: metadataArray,
+          encrypted_blob: encryptedB64,
+          checksum,
+          deleted_ids: rec.deletedIds
+        }),
       });
     } catch (e) {
       throw new Error("network_error");
     }
 
     if (putResp.status === 409) {
-      if (retryCount < 3) return syncWithServer(secret, email, localServices, localWallets, localAuditLog, retryCount + 1);
+      // Bounded jittered backoff. Immediate recursion could burn 8 requests in
+      // milliseconds against a per-lookup bucket of 20, self-inflicting a 429.
+      if (retryCount < 3) {
+        await sleepWithJitter(CONFLICT_BACKOFF_MS[retryCount]);
+        return syncWithServer(secret, email, localServices, localWallets, localAuditLog, localTombstones, retryCount + 1);
+      }
       throw new Error("conflict");
     }
     if (putResp.status === 401) throw new Error("auth_failed");
@@ -457,13 +646,23 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
 
     const putResult = await putResp.json();
 
-    // Update known UUIDs and wallet keys
+    // Confirmed 2xx: only now is it safe to treat the pushed ids as synced, clear the
+    // tombstones the server no longer holds, and advance the sync barrier (§3 step 5-6).
     await setMetadataCache(putResult.services);
     await setKnownWalletKeys(newWKeys);
+    const pushedIds = new Set(metadataArray.map(m => m.id));
+    const confirmedServices = merged.map(s => pushedIds.has(s.id) ? {...s, synced: true} : s);
+    const remainingTombstones = rec.tombstones.filter(t => pushedIds.has(t.id));
+    await setLastSuccessfulSyncAt(Date.now());
 
-    const status = getResp.status === 404 ? "created" : "synced";
+    const status = remoteExists ? "synced" : "created";
     await chrome.storage.local.set({syncConflicts: sync_conflicts, conflictsDismissed: false});
-    return {services: merged, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, sync_conflicts, status, etag: putResult.etag, knownUUIDs: newKnown};
+    return {
+      services: confirmedServices, wallets: mergedWallets, wallet_audit_log: mergedAuditLog,
+      sync_conflicts, status, etag: putResult.etag,
+      tombstones: remainingTombstones, review: rec.review, resurrected: rec.resurrected,
+      skippedPut: false
+    };
   } finally {
     if (encKey) encKey.fill(0);
   }

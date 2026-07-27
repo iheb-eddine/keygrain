@@ -118,6 +118,23 @@ No algorithm changes — output is byte-identical across all Keygrain platforms 
 
 ## Sync server
 
+### [1.1.0] - 2026-07-27
+
+#### New
+- **Declared deletions** — `PUT /api/sync/:lookup_id` accepts an optional `deleted_ids`
+  list naming the service ids a push intends to remove. When it is present, the server
+  rejects any push that silently drops a stored service (422 `undeclared service
+  removal`), catching a client bug that would otherwise lose data. Declaring the id of
+  your last service makes deleting it a legitimate empty push. The list is validated
+  (UUIDv4, at most 1000 entries) and **never stored** — the server still keeps no
+  deletion records.
+
+#### Unchanged
+- Legacy clients that don't send `deleted_ids` keep the previous behaviour, so older apps
+  continue to sync during rollout.
+- The server still only ever stores opaque ciphertext — it cannot read your passwords,
+  service names, or email address.
+
 ### [1.0.0] - 2026-07-24
 
 #### New

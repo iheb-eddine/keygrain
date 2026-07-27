@@ -303,6 +303,13 @@ button { cursor: pointer; }
 .conflict-banner { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning-text); border-radius: var(--radius-lg); margin-bottom: 6px; font-size: 0.82rem; }
 .conflict-banner .conflict-text { flex: 1; font-weight: 600; }
 .conflict-banner .conflict-dismiss { background: none; border: none; color: var(--warning-text); font-size: 1.1rem; cursor: pointer; padding: 0 4px; }
+/* Deletion review (Sync v3): shown only for delete-vs-edit conflicts, so it must
+   accommodate a per-service Restore/Discard row inside the warning banner. */
+#deletion-review-banner { flex-wrap: wrap; }
+.deletion-review-list { flex: 1 1 100%; display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.deletion-review-item { display: flex; align-items: center; gap: 6px; font-weight: 400; }
+.deletion-review-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deletion-review-item button { font-size: 0.75rem; padding: 2px 8px; cursor: pointer; }
 
 /* Version info */
 .version-info { font-size: 0.7rem; color: var(--text-secondary); text-align: center; margin: 12px 0 0; }

@@ -7,6 +7,25 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+/**
+ * A pending deletion (Sync v3). Local-only: tombstones are never sent to the server, and
+ * the server stores none. A tombstone lives from the local deletion until a sync confirms
+ * the server no longer holds the id (Frozen Req 5) — so there is no unbounded growth and
+ * no GC window.
+ */
+data class Tombstone(val id: String, val deletedAt: Long)
+
+/**
+ * A service that was deleted on another device while THIS device held an unsynced change
+ * to it (Frozen Req 7). Routine deletions are applied silently and never appear here,
+ * which is what keeps this list quiet.
+ */
+data class DeletionReviewEntry(
+    val service: ServiceEntry,
+    val deletedAt: Long,
+    val seen: Boolean = false
+)
+
 data class ServiceEntry(
     val name: String,
     val site: String,
@@ -18,7 +37,12 @@ data class ServiceEntry(
     val updatedAt: Long = System.currentTimeMillis(),
     val totp: JSONObject? = null,
     val ssh: JSONObject? = null,
-    val frecency: Double = 0.0
+    val frecency: Double = 0.0,
+    // Sync v3 (designs/sync-deletion-reconciliation.md): true iff a record bearing this
+    // id has been confirmed present on the server at least once. A property of IDENTITY,
+    // not of content — editing MUST NOT clear it, or a remote deletion of an edited
+    // record becomes undetectable and the service resurrects. Local-only: never synced.
+    val synced: Boolean = false
 ) {
     /** Serialize all content fields (everything except sync metadata id/updated_at). */
     fun toJsonContent(): JSONObject = JSONObject().apply {
@@ -42,6 +66,29 @@ class ServiceManager(context: Context) {
                 .trimEnd('/').lowercase()
             return s.removePrefix("www.")
         }
+
+        /**
+         * Build the stored record for an edit. Pure, so the Frozen Req 1 invariant is
+         * unit-testable without a Context.
+         *
+         * `synced` is taken from [existing], NEVER from [newEntry]: it is a property of
+         * IDENTITY, not content. The UI builds newEntry without a synced value (it
+         * defaults to false), so copying it through would silently clear the flag. A
+         * cleared flag makes a later remote deletion of this id look like an unsynced
+         * local create (rule 4), which RESURRECTS a service the user deleted on another
+         * device.
+         */
+        fun applyEdit(
+            existing: ServiceEntry,
+            newEntry: ServiceEntry,
+            normalizedSite: String,
+            updatedAt: Long
+        ): ServiceEntry = newEntry.copy(
+            site = normalizedSite,
+            id = existing.id,
+            updatedAt = updatedAt,
+            synced = existing.synced
+        )
     }
 
     private val masterKey = MasterKey.Builder(context)
@@ -73,7 +120,11 @@ class ServiceManager(context: Context) {
                     updatedAt = obj.optLong("updated_at", System.currentTimeMillis()),
                     totp = if (obj.has("totp") && !obj.isNull("totp")) obj.getJSONObject("totp") else null,
                     ssh = if (obj.has("ssh") && !obj.isNull("ssh")) obj.getJSONObject("ssh") else null,
-                    frecency = obj.optDouble("frecency", 0.0)
+                    frecency = obj.optDouble("frecency", 0.0),
+                    // Absent (v1 store) => false. Defaulting to false is the safe
+                    // direction: a false `false` only causes a harmless idempotent
+                    // re-push under the same UUID, whereas a false `true` risks deletion.
+                    synced = obj.optBoolean("synced", false)
                 )
             } catch (_: Exception) {
                 null
@@ -99,8 +150,112 @@ class ServiceManager(context: Context) {
     }
 
     fun deleteService(id: String) {
-        val services = getServices().filter { it.id != id }
+        val remaining = getServices().filter { it.id != id }
+        // Frozen Req 4: the tombstone is written in the SAME commit as the removal, and
+        // regardless of `synced`. A single SharedPreferences editor makes the two writes
+        // atomic, so the removal and its tombstone can never be observed apart. Writing it
+        // unconditionally closes the lost-response window: if a push reached the server
+        // but its response was lost, `synced` is still false locally while the server DOES
+        // hold the record, and without a tombstone the deletion would be lost and the
+        // service would resurrect.
+        //
+        // deleted_at is nextTimestamp(remaining) — computed over the REMAINING services,
+        // NOT including the record being deleted — to stay byte-identical to the extension
+        // (popup.js computes it after splicing the record out). Divergence here would make
+        // rule 7 resolve differently per platform.
+        val deletedAt = nextTimestamp(remaining)
+        val tombs = getTombstones().filter { it.id != id } + Tombstone(id, deletedAt)
+        prefs.edit()
+            .putString("services", servicesJson(remaining))
+            .putString("tombstones", tombstonesJson(tombs))
+            .apply()
+    }
+
+    // === Sync v3 tombstones (local-only, never sent to the server) ===
+
+    fun getTombstones(): List<Tombstone> {
+        val json = prefs.getString("tombstones", "[]") ?: "[]"
+        val arr = JSONArray(json)
+        return (0 until arr.length()).mapNotNull { i ->
+            try {
+                val obj = arr.getJSONObject(i)
+                Tombstone(obj.getString("id"), obj.getLong("deleted_at"))
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    private fun tombstonesJson(tombstones: List<Tombstone>): String {
+        val arr = JSONArray()
+        tombstones.forEach { t ->
+            arr.put(JSONObject().apply {
+                put("id", t.id)
+                put("deleted_at", t.deletedAt)
+            })
+        }
+        return arr.toString()
+    }
+
+    fun setTombstones(tombstones: List<Tombstone>) {
+        prefs.edit().putString("tombstones", tombstonesJson(tombstones)).apply()
+    }
+
+    // === Sync v3 deletion review (local-only; conflict cases only) ===
+
+    fun getDeletionReview(): List<DeletionReviewEntry> {
+        val json = prefs.getString("deletion_review", "[]") ?: "[]"
+        val arr = JSONArray(json)
+        return (0 until arr.length()).mapNotNull { i ->
+            try {
+                val obj = arr.getJSONObject(i)
+                val svc = parseJson(JSONArray().put(obj.getJSONObject("service")).toString()).firstOrNull()
+                    ?: return@mapNotNull null
+                DeletionReviewEntry(
+                    service = svc,
+                    deletedAt = obj.getLong("deleted_at"),
+                    seen = obj.optBoolean("seen", false)
+                )
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    fun setDeletionReview(entries: List<DeletionReviewEntry>) {
+        val arr = JSONArray()
+        entries.takeLast(50).forEach { e ->
+            arr.put(JSONObject().apply {
+                put("service", JSONObject().apply {
+                    put("name", e.service.name)
+                    put("site", e.service.site)
+                    put("email", e.service.email)
+                    put("length", e.service.length)
+                    put("symbols", e.service.symbols)
+                    put("counter", e.service.counter)
+                    put("id", e.service.id ?: JSONObject.NULL)
+                    put("updated_at", e.service.updatedAt)
+                    if (e.service.totp != null) put("totp", e.service.totp)
+                    if (e.service.ssh != null) put("ssh", e.service.ssh)
+                })
+                put("deleted_at", e.deletedAt)
+                put("seen", e.seen)
+            })
+        }
+        prefs.edit().putString("deletion_review", arr.toString()).apply()
+    }
+
+    /**
+     * Restore a service that was deleted on another device while this device held an
+     * unsynced change (Frozen Req 10). Re-inserts under the ORIGINAL id with a bumped
+     * updatedAt and synced=false, so a failed push re-pushes rather than risking
+     * deletion.
+     */
+    fun restoreFromReview(entry: DeletionReviewEntry) {
+        val services = getServices().toMutableList()
+        services.add(entry.service.copy(updatedAt = nextTimestamp(services), synced = false))
         save(services)
+        setDeletionReview(getDeletionReview().filter { it.service.id != entry.service.id })
     }
 
     fun updateService(id: String, newEntry: ServiceEntry): Boolean {
@@ -111,7 +266,7 @@ class ServiceManager(context: Context) {
         val duplicate = services.any { it.id != id && normalizeSite(it.site) == normalizedSite && it.email.lowercase() == emailLower }
         if (duplicate) return false
         val updated = services.map {
-            if (it.id == id) newEntry.copy(site = normalizedSite, id = it.id, updatedAt = nextTimestamp(services))
+            if (it.id == id) applyEdit(it, newEntry, normalizedSite, nextTimestamp(services))
             else it
         }
         save(updated)
@@ -192,7 +347,7 @@ class ServiceManager(context: Context) {
         }
     }
 
-    private fun save(services: List<ServiceEntry>) {
+    private fun servicesJson(services: List<ServiceEntry>): String {
         val arr = JSONArray()
         services.forEach { s ->
             arr.put(JSONObject().apply {
@@ -204,11 +359,18 @@ class ServiceManager(context: Context) {
                 put("counter", s.counter)
                 put("id", s.id ?: JSONObject.NULL)
                 put("updated_at", s.updatedAt)
+                // Local-only sync state. Deliberately NOT in exportJson(): an exported
+                // file imported on another device must start as unsynced.
+                put("synced", s.synced)
                 if (s.totp != null) put("totp", s.totp)
                 if (s.ssh != null) put("ssh", s.ssh)
                 if (s.frecency != 0.0) put("frecency", s.frecency)
             })
         }
-        prefs.edit().putString("services", arr.toString()).apply()
+        return arr.toString()
+    }
+
+    private fun save(services: List<ServiceEntry>) {
+        prefs.edit().putString("services", servicesJson(services)).apply()
     }
 }

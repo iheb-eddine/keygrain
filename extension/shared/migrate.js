@@ -431,7 +431,7 @@
     selectedEntries.forEach(e => {
       const exists = existingServices.some(s => normalizeSite(s.site) === normalizeSite(e.serviceName) && s.email.toLowerCase() === e.email.toLowerCase());
       if (!exists) {
-        newServices.push({ name: e.serviceName, site: normalizeSite(e.serviceName), email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, counter: 1, migrating: true, id: crypto.randomUUID(), updated_at: Date.now() });
+        newServices.push({ name: e.serviceName, site: normalizeSite(e.serviceName), email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, counter: 1, migrating: true, id: crypto.randomUUID(), updated_at: Date.now(), synced: false });
       }
     });
     const merged = existingServices.concat(newServices);

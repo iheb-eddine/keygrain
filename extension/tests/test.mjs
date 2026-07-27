@@ -101,6 +101,7 @@ const sshVectors = JSON.parse(readFileSync(resolve(root, 'ssh-vectors.json'), 'u
 const walletVectors = JSON.parse(readFileSync(resolve(root, 'wallet-vectors.json'), 'utf8'));
 const coreVectors = JSON.parse(readFileSync(resolve(root, 'vectors.json'), 'utf8'));
 const syncVectors = JSON.parse(readFileSync(resolve(root, 'sync-vectors.json'), 'utf8'));
+const reconcileVectors = JSON.parse(readFileSync(resolve(root, 'sync-reconcile-vectors.json'), 'utf8'));
 
 // ============================================================
 // TOTP TESTS
@@ -325,66 +326,324 @@ await test('bip85DeriveMnemonic: 12-word index 0', async () => {
 });
 
 // ============================================================
-// SYNC MERGE TESTS
+// SYNC RECONCILIATION TESTS (Sync v3 — deletion reconciliation)
 // ============================================================
-console.log('\nSync Merge Tests:');
+// Supersedes the v2 mergeServices tests: mergeServices was replaced by
+// reconcileServices, which adds tombstones, the synced flag and the
+// lastSuccessfulSyncAt barrier. See designs/sync-deletion-reconciliation.md.
+console.log('\nSync Reconciliation Tests:');
 
-await test('mergeServices: both have same service, local newer wins', async () => {
-  const local = [{ id: 'a', site: 'local.com', updated_at: 200 }];
-  const remote = [{ site: 'remote.com' }];
-  const meta = [{ id: 'a', updated_at: 100 }];
-  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();
-  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
-  assert.equal(result.merged.length, 1);
-  assert.equal(result.merged[0].site, 'local.com');
+// Helper: reconcileServices(local, tombstones, remoteServices, remoteMeta, lastSyncAt, remoteExists)
+function reconcile(ctx, local, tombstones, remote, meta, lastSyncAt = 0, remoteExists = true) {
+  ctx._local = local; ctx._tombs = tombstones; ctx._remote = remote; ctx._meta = meta;
+  ctx._lastSync = lastSyncAt; ctx._exists = remoteExists;
+  return runInContext(`reconcileServices(_local, _tombs, _remote, _meta, _lastSync, _exists)`, ctx);
+}
+
+// Cross-platform reconcile oracle (sync-reconcile-vectors.json) — the SAME table drives
+// the Kotlin SyncReconcileTest. Normalizes reconcile output to a platform-neutral shape so
+// any JS/Kotlin divergence is a test failure. See designs/sync-deletion-reconciliation.md.
+function normReconcile(r) {
+  const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return {
+    merged: r.merged.map(s => ({ id: s.id, synced: !!s.synced, updated_at: s.updated_at, site: s.site })).sort(byId),
+    deletedIds: [...r.deletedIds].sort(),
+    review: r.review.map(e => e.service.id).sort(),
+    tombstones: r.tombstones.map(t => t.id).sort(),
+    resurrected: [...r.resurrected].sort(),
+  };
+}
+for (const v of reconcileVectors.vectors) {
+  await test(`reconcile vector: ${v.name}`, async () => {
+    const remoteContent = v.remote.map(({ id, updated_at, ...content }) => content);
+    const meta = v.remote.map(r => ({ id: r.id, updated_at: r.updated_at }));
+    const r = reconcile(ctx, v.local, v.tombstones, remoteContent, meta, v.lastSuccessfulSyncAt, v.remoteExists);
+    const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const expected = {
+      merged: v.expect.merged.map(m => ({ id: m.id, synced: m.synced, updated_at: m.updated_at, site: m.site })).sort(byId),
+      deletedIds: [...v.expect.deletedIds].sort(),
+      review: [...v.expect.review].sort(),
+      tombstones: [...v.expect.tombstones].sort(),
+      resurrected: [...v.expect.resurrected].sort(),
+    };
+    // JSON string compare: reconcile output objects live in the VM realm, so
+    // deepStrictEqual fails on prototype identity. Structure equality is what matters.
+    assert.equal(JSON.stringify(normReconcile(r)), JSON.stringify(expected));
+  });
+}
+
+// Rule 3: both sides have it, local newer wins.
+await test('reconcile rule 3: local newer wins', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'a', site: 'local.com', updated_at: 200, synced: true }],
+    [], [{ site: 'remote.com' }], [{ id: 'a', updated_at: 100 }]);
+  assert.equal(r.merged.length, 1);
+  assert.equal(r.merged[0].site, 'local.com');
+  assert.equal(r.merged[0].synced, true);
 });
 
-await test('mergeServices: both have same service, remote newer wins (tie goes to remote)', async () => {
-  const local = [{ id: 'a', site: 'local.com', updated_at: 100 }];
-  const remote = [{ site: 'remote.com' }];
-  const meta = [{ id: 'a', updated_at: 100 }];
-  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();
-  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
-  assert.equal(result.merged[0].site, 'remote.com');
+// Rules 1+2: remote newer or equal wins (tie goes to remote).
+await test('reconcile rules 1-2: remote wins ties', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'a', site: 'local.com', updated_at: 100, synced: true }],
+    [], [{ site: 'remote.com' }], [{ id: 'a', updated_at: 100 }]);
+  assert.equal(r.merged[0].site, 'remote.com');
 });
 
-await test('mergeServices: remote-only new service added', async () => {
-  const local = [];
-  const remote = [{ site: 'new.com' }];
-  const meta = [{ id: 'b', updated_at: 50 }];
-  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();
-  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
-  assert.equal(result.merged.length, 1);
-  assert.equal(result.merged[0].id, 'b');
+// Rule 5: remote-only with no tombstone is created locally.
+await test('reconcile rule 5: remote-only creates locally', async () => {
+  const r = reconcile(ctx, [], [], [{ site: 'new.com' }], [{ id: 'b', updated_at: 50 }]);
+  assert.equal(r.merged.length, 1);
+  assert.equal(r.merged[0].id, 'b');
+  assert.equal(r.merged[0].synced, true);
 });
 
-await test('mergeServices: remote-only known UUID = deleted locally, not included', async () => {
-  const local = [];
-  const remote = [{ site: 'deleted.com' }];
-  const meta = [{ id: 'c', updated_at: 50 }];
-  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set(['c']);
-  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
-  assert.equal(result.merged.length, 0);
+// Rule 4: local-only and never synced is pushed, NEVER deleted.
+await test('reconcile rule 4: unsynced local-only is pushed not deleted', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'local-1', site: 'brand-new.com', updated_at: 300, synced: false }],
+    [], [], []);
+  assert.equal(r.merged.length, 1);
+  assert.equal(r.merged[0].site, 'brand-new.com');
+  assert.equal(r.review.length, 0);
 });
 
-await test('mergeServices: local-only with UUID in knownUUIDs = deleted remotely', async () => {
-  const local = [{ id: 'd', site: 'gone.com', updated_at: 100 }];
-  const remote = [];
-  const meta = [];
-  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set(['d']);
-  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
-  assert.equal(result.merged.length, 0);
+// Rule 6: local-only but previously synced was deleted elsewhere.
+await test('reconcile rule 6: synced local-only is deleted', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'd', site: 'gone.com', updated_at: 100, synced: true }],
+    [], [], [], 500);
+  assert.equal(r.merged.length, 0);
 });
 
-await test('mergeServices: local new (with UUID, not in remote) preserved', async () => {
-  const local = [{ id: 'local-uuid-1', site: 'brand-new.com', updated_at: 300 }];
-  const remote = [];
-  const meta = [];
-  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();
-  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
-  assert.equal(result.merged.length, 1);
-  assert.equal(result.merged[0].site, 'brand-new.com');
+// Frozen Req 7 negative: no unsynced change -> silent, nothing retained.
+await test('reconcile: routine remote deletion retains nothing', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'd', site: 'gone.com', updated_at: 100, synced: true }],
+    [], [], [], 500);
+  assert.equal(r.review.length, 0);
 });
+
+// Frozen Req 7: unsynced local change destroyed by a remote deletion -> retained.
+await test('reconcile: remote deletion of locally-edited service is retained for review', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'd', site: 'edited.com', updated_at: 900, synced: true }],
+    [], [], [], 500);
+  assert.equal(r.merged.length, 0);
+  assert.equal(r.review.length, 1);
+  assert.equal(r.review[0].service.id, 'd');
+});
+
+// Rule 7: a newer remote edit supersedes a pending local deletion.
+await test('reconcile rule 7: newer remote edit resurrects over tombstone', async () => {
+  const r = reconcile(ctx, [],
+    [{ id: 'x', deleted_at: 100 }],
+    [{ site: 'edited-elsewhere.com' }], [{ id: 'x', updated_at: 200 }]);
+  assert.equal(r.merged.length, 1);
+  assert.equal(r.merged[0].id, 'x');
+  assert.equal(r.resurrected.length, 1);
+  assert.equal(r.resurrected[0], 'x');
+  assert.equal(r.tombstones.length, 0);
+  assert.equal(r.deletedIds.length, 0);
+});
+
+// Rule 7 negative: deletion is newer than the remote record -> delete, declared.
+await test('reconcile rule 7: older remote record stays deleted and is declared', async () => {
+  const r = reconcile(ctx, [],
+    [{ id: 'x', deleted_at: 300 }],
+    [{ site: 'stale.com' }], [{ id: 'x', updated_at: 200 }]);
+  assert.equal(r.merged.length, 0);
+  assert.equal(r.deletedIds.length, 1);
+  assert.equal(r.deletedIds[0], 'x');
+  assert.equal(r.tombstones.length, 1);
+});
+
+// Frozen Req 5: a tombstone for an id the server no longer holds is cleared and does
+// NOT force a PUT (it must not appear in deletedIds).
+await test('reconcile: tombstone for already-absent id is cleared without a PUT', async () => {
+  const r = reconcile(ctx, [], [{ id: 'x', deleted_at: 300 }], [], []);
+  assert.equal(r.merged.length, 0);
+  assert.equal(r.tombstones.length, 0);
+  assert.equal(r.deletedIds.length, 0);
+});
+
+// Lost-response repair: the server holds the record under the SAME client-generated
+// UUID, so it matches by id — no duplicate, and the flag flips to synced.
+await test('reconcile: lost PUT response repairs by id without duplicating', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'same', site: 'a.com', email: 'u@e.com', updated_at: 100, synced: false }],
+    [], [{ site: 'a.com', email: 'u@e.com' }], [{ id: 'same', updated_at: 100 }]);
+  assert.equal(r.merged.length, 1);
+  assert.equal(r.merged[0].id, 'same');
+  assert.equal(r.merged[0].synced, true);
+});
+
+// A deletion inside the lost-response window still propagates, because the tombstone
+// is written regardless of `synced`.
+await test('reconcile: deletion in the lost-response window still propagates', async () => {
+  const r = reconcile(ctx, [], [{ id: 'inflight', deleted_at: 500 }],
+    [{ site: 'a.com' }], [{ id: 'inflight', updated_at: 100 }]);
+  assert.equal(r.merged.length, 0);
+  assert.equal(r.deletedIds.length, 1);
+  assert.equal(r.deletedIds[0], 'inflight');
+});
+
+// Frozen Req 11: a 404 must NEVER be read as deletions, or a lost server blob would
+// wipe every device.
+await test('reconcile: absent remote record never infers deletions', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'a', site: 'x.com', updated_at: 100, synced: true },
+     { id: 'b', site: 'y.com', updated_at: 200, synced: true }],
+    [{ id: 'c', deleted_at: 50 }], [], [], 999, false);
+  assert.equal(r.merged.length, 2);
+  assert.equal(r.review.length, 0);
+  assert.equal(r.tombstones.length, 0);
+  assert.equal(r.deletedIds.length, 0);
+  assert.equal(r.merged.every(s => s.synced === false), true);
+});
+
+// A 200 with zero services IS a legitimate delete-all (unlike a 404).
+await test('reconcile: empty remote record deletes synced local records', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'a', site: 'x.com', updated_at: 100, synced: true }],
+    [], [], [], 500, true);
+  assert.equal(r.merged.length, 0);
+});
+
+// Duplicate collapse: the synced loser is tombstoned AND declared, so it is removed
+// server-side rather than merely dropped locally. Both ids must be present remotely —
+// a synced local record ABSENT remotely is a rule 6 deletion and never reaches dedup.
+await test('reconcile: duplicate collapse tombstones and declares the synced loser', async () => {
+  const r = reconcile(ctx, [], [],
+    [{ site: 'example.com', email: 'a@b.com', counter: 1 },
+     { site: 'example.com', email: 'a@b.com', counter: 2 }],
+    [{ id: 'y1', updated_at: 100 }, { id: 'y2', updated_at: 200 }]);
+  assert.equal(r.merged.length, 1);
+  assert.equal(r.merged[0].id, 'y2');
+  assert.equal(r.deletedIds.length, 1);
+  assert.equal(r.deletedIds[0], 'y1');
+  assert.equal(r.tombstones.some(t => t.id === 'y1'), true);
+});
+
+await test('reconcile: empty-normalizing sites use id as dedup key, no collision', async () => {
+  const r = reconcile(ctx, [
+    { id: 'x1', site: 'www.', email: 'a@b.com', updated_at: 100, synced: false },
+    { id: 'x2', site: 'https://', email: 'a@b.com', updated_at: 200, synced: false }
+  ], [], [], []);
+  assert.equal(r.merged.length, 2);
+});
+
+await test('reconcile: same non-empty normalized site still deduplicates', async () => {
+  const r = reconcile(ctx, [
+    { id: 'y1', site: 'https://example.com/path', email: 'a@b.com', updated_at: 100, synced: false },
+    { id: 'y2', site: 'http://www.example.com', email: 'a@b.com', updated_at: 200, synced: false }
+  ], [], [], []);
+  assert.equal(r.merged.length, 1);
+  assert.equal(r.merged[0].id, 'y2');
+});
+
+// An unsynced duplicate loser must NOT be declared (the server never had it).
+await test('reconcile: unsynced duplicate loser is not declared for deletion', async () => {
+  const r = reconcile(ctx, [
+    { id: 'z1', site: 'example.com', email: 'a@b.com', updated_at: 100, synced: false, counter: 1 },
+    { id: 'z2', site: 'example.com', email: 'a@b.com', updated_at: 200, synced: false, counter: 2 }
+  ], [], [], []);
+  assert.equal(r.merged.length, 1);
+  assert.equal(r.deletedIds.length, 0);
+});
+
+// Editing must NOT clear `synced` — otherwise rule 6 becomes unreachable for edited
+// records and deleted services resurrect. Guards the invariant directly.
+await test('reconcile: an edited synced record is still subject to remote deletion', async () => {
+  const r = reconcile(ctx,
+    [{ id: 'e', site: 'edited.com', updated_at: 900, synced: true }],
+    [], [], [], 1000);
+  assert.equal(r.merged.length, 0);
+  assert.equal(r.review.length, 0);
+});
+
+// Legacy pre-UUID records must be given an id and pushed, never silently dropped.
+// Kotlin already did this; the JS previously discarded them.
+await test('reconcile: local service without an id is assigned one, not dropped', async () => {
+  const r = reconcile(ctx, [{ site: 'legacy.com', email: 'a@b.com', updated_at: 100 }], [], [], []);
+  assert.equal(r.merged.length, 1);
+  assert.equal(typeof r.merged[0].id, 'string');
+  assert.equal(r.merged[0].site, 'legacy.com');
+  assert.equal(r.merged[0].synced, false);
+});
+
+await test('reconcile: id-less local service survives an absent remote record', async () => {
+  const r = reconcile(ctx, [{ site: 'legacy.com', email: 'a@b.com', updated_at: 100 }], [], [], [], 0, false);
+  assert.equal(r.merged.length, 1);
+  assert.equal(typeof r.merged[0].id, 'string');
+});
+
+// ---- canonicalBlobPayload (no-op skip, Frozen Req 9) ----
+
+await test('canonicalBlobPayload: order-independent for services', async () => {
+  ctx._c1 = [{ site: 'a.com' }, { site: 'b.com' }];
+  ctx._m1 = [{ id: 'i1', updated_at: 1 }, { id: 'i2', updated_at: 2 }];
+  ctx._c2 = [{ site: 'b.com' }, { site: 'a.com' }];
+  ctx._m2 = [{ id: 'i2', updated_at: 2 }, { id: 'i1', updated_at: 1 }];
+  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx);
+  const b = runInContext(`canonicalBlobPayload(_c2, _m2, [], [], [])`, ctx);
+  assert.equal(a, b);
+});
+
+await test('canonicalBlobPayload: differs when a field changes', async () => {
+  ctx._c1 = [{ site: 'a.com', counter: 1 }];
+  ctx._m1 = [{ id: 'i1', updated_at: 1 }];
+  ctx._c2 = [{ site: 'a.com', counter: 2 }];
+  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx);
+  const b = runInContext(`canonicalBlobPayload(_c2, _m1, [], [], [])`, ctx);
+  assert.notEqual(a, b);
+});
+
+await test('canonicalBlobPayload: differs when wallets change (not just services)', async () => {
+  ctx._c1 = [{ site: 'a.com' }];
+  ctx._m1 = [{ id: 'i1', updated_at: 1 }];
+  ctx._w1 = [{ wallet_name: 'main', chain: 'bitcoin' }];
+  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx);
+  const b = runInContext(`canonicalBlobPayload(_c1, _m1, _w1, [], [])`, ctx);
+  assert.notEqual(a, b);
+});
+
+await test('canonicalBlobPayload: excludes local-only synced flag', async () => {
+  ctx._c1 = [{ site: 'a.com' }];
+  ctx._c2 = [{ site: 'a.com', synced: true }];
+  ctx._m1 = [{ id: 'i1', updated_at: 1 }];
+  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx);
+  const b = runInContext(`canonicalBlobPayload(_c2, _m1, [], [], [])`, ctx);
+  assert.equal(a, b);
+});
+
+// ---- migrateLocalPayload (design §8) ----
+
+await test('migrateLocalPayload: knownUUIDs become synced flags', async () => {
+  ctx._p = { services: [{ id: 'k1' }, { id: 'k2' }] };
+  ctx._k = ['k1'];
+  const r = runInContext(`JSON.parse(JSON.stringify(migrateLocalPayload(_p, new Set(_k), 1000)))`, ctx);
+  assert.equal(r.services.find(s => s.id === 'k1').synced, true);
+  assert.equal(r.services.find(s => s.id === 'k2').synced, false);
+  assert.equal(r.version, 2);
+});
+
+await test('migrateLocalPayload: known-but-absent ids become tombstones', async () => {
+  ctx._p = { services: [{ id: 'k1' }] };
+  ctx._k = ['k1', 'deleted-pending'];
+  const r = runInContext(`JSON.parse(JSON.stringify(migrateLocalPayload(_p, new Set(_k), 1000)))`, ctx);
+  assert.equal(r.tombstones.length, 1);
+  assert.equal(r.tombstones[0].id, 'deleted-pending');
+  assert.equal(r.tombstones[0].deleted_at, 1000);
+});
+
+await test('migrateLocalPayload: absent knownUUIDs defaults synced to false', async () => {
+  ctx._p = { services: [{ id: 'k1' }] };
+  const r = runInContext(`JSON.parse(JSON.stringify(migrateLocalPayload(_p, new Set(), 1000)))`, ctx);
+  assert.equal(r.services[0].synced, false);
+  assert.equal(r.tombstones.length, 0);
+});
+
 
 await test('mergeWallets: both have same key, newer created_at wins', async () => {
   const local = [{ wallet_name: 'main', chain: 'bitcoin', created_at: 200 }];
@@ -446,31 +705,6 @@ await test('parseBlobContent: new format', async () => {
   const result = runInContext(`JSON.parse(JSON.stringify(parseBlobContent({services:[{site:"b.com"}],wallets:[{wallet_name:"x"}],wallet_audit_log:[{action:"y"}]})))`, ctx);
   assert.deepEqual(result.services, [{ site: 'b.com' }]);
   assert.deepEqual(result.wallets, [{ wallet_name: 'x' }]);
-});
-
-await test('mergeServices: empty-normalizing sites use id as dedup key, no collision', async () => {
-  const local = [
-    { id: 'x1', site: 'www.', email: 'a@b.com', updated_at: 100 },
-    { id: 'x2', site: 'https://', email: 'a@b.com', updated_at: 200 }
-  ];
-  const remote = [];
-  const meta = [];
-  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();
-  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
-  assert.equal(result.merged.length, 2);
-});
-
-await test('mergeServices: same non-empty normalized site still deduplicates', async () => {
-  const local = [
-    { id: 'y1', site: 'https://example.com/path', email: 'a@b.com', updated_at: 100 },
-    { id: 'y2', site: 'http://www.example.com', email: 'a@b.com', updated_at: 200 }
-  ];
-  const remote = [];
-  const meta = [];
-  ctx._local = local; ctx._remote = remote; ctx._meta = meta; ctx._known = new Set();
-  const result = runInContext(`mergeServices(_local, _remote, _meta, _known)`, ctx);
-  assert.equal(result.merged.length, 1);
-  assert.equal(result.merged[0].id, 'y2');
 });
 
 // ============================================================

@@ -102,9 +102,26 @@ If-Match: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
     {"id": null, "updated_at": 1715000200}
   ],
   "encrypted_blob": "<base64-encoded ciphertext>",
-  "checksum": "<sha256-hex-of-decoded-blob>"
+  "checksum": "<sha256-hex-of-decoded-blob>",
+  "deleted_ids": ["6ba7b810-9dad-41d1-a0b4-00c04fd430c8"]
 }
 ```
+
+**deleted_ids (optional):**
+
+Declares which previously-stored service ids this push intends to remove. It is
+validated but **never persisted** — the server stores no deletion records.
+
+- **When present:** every currently-stored id absent from `services` MUST appear in
+  `deleted_ids`, otherwise the push is rejected with 422 `undeclared service removal`.
+  This makes an intentional deletion explicit and catches a client bug that silently
+  drops a subset of services. A push with an empty `services` array is accepted when all
+  stored ids are declared, so deleting your last service is legitimate.
+- **When absent (legacy clients):** the older heuristic applies instead — a push with 0
+  services against a non-empty record is rejected, and subset removals are accepted
+  without declaration.
+- Maximum 1000 entries; each must be a valid UUIDv4. Declaring an id the record does not
+  hold is harmless (idempotent retry).
 
 **If-Match header:**
 
@@ -174,6 +191,10 @@ Possible `detail` values:
 | `invalid timestamp` | A service `updated_at` is not a positive integer |
 | `too many services` | `services` array exceeds 1000 entries |
 | `invalid blob encoding` | `encrypted_blob` is not valid base64 |
+| `undeclared service removal` | `deleted_ids` was sent, but a currently-stored id is absent from both `services` and `deleted_ids` |
+| `too many deleted_ids` | `deleted_ids` array exceeds 1000 entries |
+| `invalid deleted_ids format` | A `deleted_ids` entry is not a valid UUIDv4 |
+| `cannot overwrite non-empty record with empty services` | Legacy path only (`deleted_ids` absent): 0-service push against a non-empty record |
 
 #### 401 Unauthorized
 
