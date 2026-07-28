@@ -36,6 +36,17 @@ cd extension/dist
 sha256sum keygrain-chrome-*.zip keygrain-firefox-*.zip
 ```
 
+> **Verifying 1.2.0 specifically:** `build.sh` at the 1.2.0 tag did not normalise the
+> builder's timezone or umask, so it only reproduced our hash on a UTC machine with a
+> `022` umask. That is fixed on `main`. To verify 1.2.0, take the fixed builder — it is a
+> ~40-line shell script you can read in full before running it:
+> ```bash
+> git checkout firefox-v1.2.0
+> git checkout main -- extension/build.sh
+> bash extension/build.sh
+> ```
+> From the next release onward, the plain instructions above are enough.
+
 Compare the output against `SHA256SUMS.txt` on the matching
 [GitHub Release](https://github.com/iheb-eddine/keygrain/releases) — or download that
 file into `extension/dist/` and run `sha256sum -c SHA256SUMS.txt`. If they match, the
