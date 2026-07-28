@@ -12,9 +12,10 @@ minified/bundled code that can't realistically be audited.
   string is substituted at build time). Because the entry order does not depend on your
   filesystem, the same commit produces byte-identical zips with the same SHA-256 on any
   POSIX machine with `bash`, `zip`, and `sha256sum`.
-- **Published checksums.** Every [GitHub Release](https://github.com/iheb-eddine/keygrain/releases)
-  carries the exact `keygrain-chrome-<version>.zip` and `keygrain-firefox-<version>.zip`
-  plus a `SHA256SUMS.txt`, built by GitHub Actions from this repository.
+- **Published checksums.** Each [GitHub Release](https://github.com/iheb-eddine/keygrain/releases)
+  from extension 1.2.0 onward carries the exact `keygrain-chrome-<version>.zip` and
+  `keygrain-firefox-<version>.zip` plus a `SHA256SUMS.txt`, built by GitHub Actions from the
+  tagged commit in this repository.
 
 > **Store caveat:** the Chrome Web Store and Firefox Add-ons re-package and re-sign
 > what we upload, so the installed **container** (`.crx` / `.xpi`) will *not* hash-match
@@ -29,7 +30,7 @@ minified/bundled code that can't realistically be audited.
 ```bash
 git clone https://github.com/iheb-eddine/keygrain.git
 cd keygrain
-git checkout v<version>          # the version you installed (see the extension's About/Help)
+git checkout firefox-v<version>   # the version you installed (see About/Help)
 bash extension/build.sh
 cd extension/dist
 sha256sum keygrain-chrome-*.zip keygrain-firefox-*.zip
@@ -41,11 +42,27 @@ file into `extension/dist/` and run `sha256sum -c SHA256SUMS.txt`. If they match
 released zip was built from exactly this source. (You need `bash`, `zip`, and
 `sha256sum` — no other toolchain.)
 
+**What is covered today.** Hash verification is available for **Firefox 1.2.0 and later**.
+Chrome and Firefox carry independent versions and independent tags (`chrome-v<version>`,
+`firefox-v<version>`) because store review times differ, and tags are only created for
+versions that were published with checksums. Two gaps we would rather state than hide:
+
+- **Chrome.** The version currently in the Chrome Web Store predates this and has no tag or
+  published checksums, so Method A cannot be completed for it. Tags and checksums will follow
+  with the next Chrome release. Until then, use Method B, or use Firefox.
+- **Extension 1.1.0** was published without a tag or checksum file. There is nothing to
+  compare it against. Update to 1.2.0 or later to verify by hash.
+
+Releases before 1.2.0 used a single tag for all components (`v1.0.0`, `v0.11.0`).
+
 ### Method B — inspect what's actually installed
 
 Method B compares against the assembled build output, so **first run
 `bash extension/build.sh`** (it writes `extension/dist/chrome/` and
-`extension/dist/firefox/`).
+`extension/dist/firefox/`). If a tag exists for your version, check it out first; if not,
+build from the closest tag you can and read the diff — because nothing is minified or
+bundled, this is inspection you can do with your own eyes rather than a pass/fail hash, and
+genuine differences between versions will show up alongside anything else.
 
 **Firefox:** download the add-on's `.xpi` (or find it under your profile's
 `extensions/` folder), unzip it, and diff against the build:
@@ -110,7 +127,8 @@ the wheel is what `pip install` uses for this pure-Python package.
 ```bash
 git clone https://github.com/iheb-eddine/keygrain.git
 cd keygrain
-git checkout v<version>                       # the version you installed
+git checkout v<version>                       # CLI 1.0.0 is tagged v1.0.0; later
+                                              # releases use cli-v<version>
 export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
 cd python
 python -m build --wheel
