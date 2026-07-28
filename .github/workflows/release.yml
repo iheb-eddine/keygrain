@@ -14,6 +14,10 @@ permissions:
 
 jobs:
   extension:
+    # Only for extension releases. Tags are per component (chrome-vX.Y.Z,
+    # firefox-vX.Y.Z), and the `release` event cannot filter by tag, so the guard
+    # lives here. Without it, publishing a cli-* release would also run this job.
+    if: startsWith(github.event.release.tag_name, 'chrome-v') || startsWith(github.event.release.tag_name, 'firefox-v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

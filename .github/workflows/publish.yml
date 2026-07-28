@@ -9,6 +9,11 @@ permissions: {}
 
 jobs:
   publish:
+    # Only for CLI releases. Tags are per component (cli-vX.Y.Z), and the `release`
+    # event cannot filter by tag, so the guard lives here. Without it, publishing a
+    # firefox-* or chrome-* release would also attempt a PyPI upload — which fails
+    # noisily because that version already exists on PyPI.
+    if: startsWith(github.event.release.tag_name, 'cli-v')
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # REQUIRED: mint the OIDC token for PyPI Trusted Publishing
