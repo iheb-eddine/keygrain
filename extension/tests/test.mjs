@@ -67,7 +67,7 @@ function buildContext() {
   runInContext(`var module = {exports:{}}; var exports = module.exports;\n${tweetnaclSrc}\nvar nacl = module.exports;`, ctx);
 
   // Load source files in order
-  for (const file of ['keygrain.js', 'bip39-wordlist.js', 'wallet.js', 'bip85.js', 'totp.js', 'ssh.js', 'sync.js', 'autofill.js', 'inline-autofill.js']) {
+  for (const file of ['keygrain.js', 'bip39-wordlist.js', 'wallet.js', 'bip85.js', 'totp.js', 'ssh.js', 'sync.js', 'autofill.js', 'inline-autofill.js', 'migrate.js']) {
     const src = readFileSync(resolve(shared, file), 'utf8');
     runInContext(src, ctx);
   }
@@ -93,6 +93,12 @@ function ka(method, ...args) {
 function ki(method, ...args) {
   ctx._kiArgs = args;
   return runInContext(`KeygrainInline.${method}(..._kiArgs)`, ctx);
+}
+
+// Helper to call KeygrainMigrate.* pure helpers (migrate.js) in the VM context.
+function km(method, ...args) {
+  ctx._kmArgs = args;
+  return runInContext(`KeygrainMigrate.${method}(..._kmArgs)`, ctx);
 }
 
 // --- Load test vectors ---
@@ -1929,6 +1935,111 @@ await test('classifyDeleteStatus: only 200 and 404 are ok:true across 100-599', 
     if (call('classifyDeleteStatus', s).ok) okStatuses.push(s);
   }
   assert.deepEqual(okStatuses, [200, 404]);
+});
+
+// ============================================================
+// migrate.js — extractDomain (bare-host bug fix, see migrate.js)
+// ============================================================
+// Managers like KeePassXC put a bare host (no scheme) in the URL column. Before
+// the fix `new URL("github.com")` threw, host stayed "", and the fn fell back to
+// the entry title lowercased ("github") — a DIFFERENT site than "github.com",
+// producing a different derived password and breaking autofill matching.
+await test('extractDomain: bare host resolves to the host', async () => {
+  assert.equal(km('extractDomain', 'github.com', 'GitHub'), 'github.com');
+});
+await test('extractDomain: bare host with path resolves to the host', async () => {
+  assert.equal(km('extractDomain', 'github.com/login', 'GitHub'), 'github.com');
+});
+await test('extractDomain: scheme-ful URL still resolves (regression)', async () => {
+  assert.equal(km('extractDomain', 'https://github.com', 'GitHub'), 'github.com');
+});
+await test('extractDomain: STRIP_PREFIXES applies to a bare host', async () => {
+  assert.equal(km('extractDomain', 'accounts.google.com', 'Google'), 'google.com');
+});
+await test('extractDomain: garbage URL falls back to the title', async () => {
+  // Whitespace makes this invalid even with an https:// prefix, so BOTH parses
+  // throw and the fn falls back to the title. (A dotless token WITHOUT invalid
+  // chars, e.g. "foobar", instead resolves to itself — see the test below.)
+  assert.equal(km('extractDomain', 'not a url', 'MyBank'), 'mybank');
+});
+await test('extractDomain: empty URL falls back to the title', async () => {
+  assert.equal(km('extractDomain', '', 'MyBank'), 'mybank');
+});
+await test('extractDomain: IP address is preserved', async () => {
+  assert.equal(km('extractDomain', '192.168.1.1', 'Router'), '192.168.1.1');
+});
+await test('extractDomain: www. is stripped from a bare host', async () => {
+  assert.equal(km('extractDomain', 'www.example.com', 'Example'), 'example.com');
+});
+// A single dotless token in the URL column now resolves to that token as the
+// host (rather than falling back to the title). Locked in intentionally: a bare
+// label has no TLD, matches no real domain, and the URL column is authoritative.
+await test('extractDomain: single dotless token resolves to that token', async () => {
+  assert.equal(km('extractDomain', 'foobar', 'SomeTitle'), 'foobar');
+});
+
+// ============================================================
+// migrate.js — resolveSiteFields (provenance classifier, see migrate.js)
+// ============================================================
+// resolveSiteFields returns { site, source } so the migration preview can show
+// the user the ORIGINAL export address next to the guessed Site. `source` is one
+// of "url" | "title" | "empty". extractDomain delegates to it (returns .site), so
+// the byte-identity of the derived site is guarded by the extractDomain tests
+// above PLUS the consistency test below.
+await test('resolveSiteFields: scheme-ful URL classifies as url', async () => {
+  const r = km('resolveSiteFields', 'https://github.com', 'GitHub');
+  assert.equal(r.site, 'github.com'); assert.equal(r.source, 'url');
+});
+await test('resolveSiteFields: bare host with path classifies as url', async () => {
+  const r = km('resolveSiteFields', 'github.com/login', 'GitHub');
+  assert.equal(r.site, 'github.com'); assert.equal(r.source, 'url');
+});
+await test('resolveSiteFields: STRIP_PREFIXES host still classifies as url', async () => {
+  const r = km('resolveSiteFields', 'accounts.google.com', 'Google');
+  assert.equal(r.site, 'google.com'); assert.equal(r.source, 'url');
+});
+await test('resolveSiteFields: IP host classifies as url', async () => {
+  const r = km('resolveSiteFields', '192.168.1.1', 'Router');
+  assert.equal(r.site, '192.168.1.1'); assert.equal(r.source, 'url');
+});
+await test('resolveSiteFields: garbage url + title falls back to title', async () => {
+  const r = km('resolveSiteFields', 'not a url', 'MyBank');
+  assert.equal(r.site, 'mybank'); assert.equal(r.source, 'title');
+});
+await test('resolveSiteFields: empty url + title falls back to title', async () => {
+  const r = km('resolveSiteFields', '', 'MyBank');
+  assert.equal(r.site, 'mybank'); assert.equal(r.source, 'title');
+});
+await test('resolveSiteFields: empty url + empty title is empty', async () => {
+  const r = km('resolveSiteFields', '', '');
+  assert.equal(r.site, ''); assert.equal(r.source, 'empty');
+});
+await test('resolveSiteFields: garbage url + empty title is empty', async () => {
+  const r = km('resolveSiteFields', 'not a url', '');
+  assert.equal(r.site, ''); assert.equal(r.source, 'empty');
+});
+// Consistency: the delegation refactor must not let extractDomain drift from
+// resolveSiteFields(...).site on ANY branch. Pinned inputs = every existing
+// extractDomain test input PLUS an explicit STRIP_PREFIXES case and a
+// MULTI_PART_TLDS case, so the prefix and multi-part-TLD branches are covered.
+await test('resolveSiteFields: extractDomain === resolveSiteFields(...).site for pinned inputs', async () => {
+  const inputs = [
+    ['github.com', 'GitHub'],
+    ['github.com/login', 'GitHub'],
+    ['https://github.com', 'GitHub'],
+    ['accounts.google.com', 'Google'],
+    ['not a url', 'MyBank'],
+    ['', 'MyBank'],
+    ['192.168.1.1', 'Router'],
+    ['www.example.com', 'Example'],
+    ['foobar', 'SomeTitle'],
+    ['login.github.com', 'GitHub'],          // STRIP_PREFIXES branch
+    ['accounts.foo.co.uk', 'Foo'],           // MULTI_PART_TLDS branch
+    ['', ''],                                // empty branch
+  ];
+  for (const [url, name] of inputs) {
+    assert.equal(km('extractDomain', url, name), km('resolveSiteFields', url, name).site, `mismatch for [${url}, ${name}]`);
+  }
 });
 
 // ============================================================

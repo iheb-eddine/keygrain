@@ -115,16 +115,34 @@
     return /^[\d.]+$/.test(host) || host.includes(":");
   }
 
-  function extractDomain(url, name) {
+  // Resolve both the derived site and its provenance from a CSV export row.
+  // `source` records WHERE the site came from so the preview can show the user
+  // the original address next to the guess (see migrate wizard step 2):
+  //   "url"   -> a host was parsed from the url field; site is the processed host
+  //   "title" -> no host; site is the entry title, lowercased/trimmed
+  //   "empty" -> no host and no title; site is ""
+  // This is pure code-motion of the former extractDomain body (same statement
+  // order: url parse -> www strip -> isIP -> STRIP_PREFIXES) so extractDomain's
+  // output is byte-identical to before.
+  function resolveSiteFields(url, name) {
     let host = "";
     if (url) {
       try {
         host = new URL(url).hostname.toLowerCase();
       } catch { /* invalid URL */ }
+      // Some managers (e.g. KeePassXC) store a bare host with no scheme, which
+      // new URL() rejects. Retry with an https:// prefix so those still resolve.
+      if (!host && !url.includes("://")) {
+        try {
+          host = new URL("https://" + url).hostname.toLowerCase();
+        } catch { /* still invalid */ }
+      }
     }
-    if (!host) return name ? name.toLowerCase().trim() : "";
+    if (!host) {
+      return name ? { site: name.toLowerCase().trim(), source: "title" } : { site: "", source: "empty" };
+    }
     host = host.replace(/^www\./, "");
-    if (isIP(host)) return host;
+    if (isIP(host)) return { site: host, source: "url" };
     for (const prefix of STRIP_PREFIXES) {
       if (host.startsWith(prefix)) {
         const rest = host.slice(prefix.length);
@@ -137,7 +155,11 @@
         break;
       }
     }
-    return host;
+    return { site: host, source: "url" };
+  }
+
+  function extractDomain(url, name) {
+    return resolveSiteFields(url, name).site;
   }
 
   function deduplicateEntries(entries) {
@@ -153,6 +175,10 @@
   }
 
   // === Wizard UI + Storage Integration ===
+
+  // Test hook: expose the pure domain helper to the Node VM. No-op in the browser
+  // (document is defined there, so this block is skipped and init proceeds).
+  if (typeof document === "undefined") { globalThis.KeygrainMigrate = { extractDomain, resolveSiteFields }; return; }
 
   // DOM refs
   const errorScreen = document.getElementById("error-screen");
@@ -244,12 +270,27 @@
     const fields = extractFields(rows, format);
     if (fields.length === 0) { showParseError("No services found in file."); return; }
 
-    // Apply domain extraction
-    const entries = fields.map(f => ({
-      serviceName: extractDomain(f.url, f.name) || f.name || "unknown",
-      email: f.email,
-      oldPassword: f.oldPassword
-    }));
+    // Apply domain extraction. resolveSiteFields returns both the derived site
+    // and its provenance so the preview can show the original export address
+    // read-only next to the editable Site. `source`/`sourceText` are in-memory
+    // preview-only fields — they are never persisted (dropped at import when
+    // parsedEntries is nulled). serviceName is byte-identical to the previous
+    // `extractDomain(f.url, f.name) || f.name || "unknown"`.
+    const entries = fields.map(f => {
+      const { site, source } = resolveSiteFields(f.url, f.name);
+      // sourceText = the raw original value this row's Site was derived from,
+      // shown verbatim in the read-only cell. For "title" it is the ORIGINAL-CASE
+      // title (distinct from the lowercased Site). For "empty" it is "" and the
+      // cell renders a static literal instead.
+      const sourceText = source === "url" ? f.url : (source === "title" ? f.name : "");
+      return {
+        serviceName: site || f.name || "unknown",
+        source,
+        sourceText,
+        email: f.email,
+        oldPassword: f.oldPassword
+      };
+    });
 
     parsedEntries = deduplicateEntries(entries);
     previewHeader.textContent = "Found " + parsedEntries.length + " services in " + format + " export";
@@ -267,8 +308,15 @@
     previewBody.textContent = "";
     parsedEntries.forEach((entry, i) => {
       const tr = document.createElement("tr");
-      if (entry.isDuplicate) tr.className = "row-duplicate";
-      else if (entry.hasEmptyEmail) tr.className = "row-empty-email";
+      const rowClasses = [];
+      if (entry.isDuplicate) rowClasses.push("row-duplicate");
+      else if (entry.hasEmptyEmail) rowClasses.push("row-empty-email");
+      // Flag rows whose Site was NOT parsed from a real url (title/empty
+      // provenance) — the rows the user most needs to verify. Layered under
+      // duplicate/empty: the CSS defines .row-unverified BEFORE those, so
+      // duplicate/empty background wins when a row is both.
+      if (entry.source !== "url") rowClasses.push("row-unverified");
+      if (rowClasses.length) tr.className = rowClasses.join(" ");
 
       // Checkbox
       const tdCb = document.createElement("td");
@@ -280,16 +328,49 @@
       tdCb.appendChild(cb);
       tr.appendChild(tdCb);
 
-      // Service name (editable)
+      // Site (editable — this value drives password derivation)
       const tdName = document.createElement("td");
       const nameInput = document.createElement("input");
       nameInput.type = "text";
       nameInput.value = entry.serviceName;
       nameInput.className = "svc-name";
-      nameInput.setAttribute("aria-label", "Service name");
+      nameInput.setAttribute("aria-label", "Site (used to derive your password)");
       nameInput.addEventListener("change", () => { entry.serviceName = nameInput.value.trim(); });
       tdName.appendChild(nameInput);
       tr.appendChild(tdName);
+
+      // "From your export" — READ-ONLY provenance cell.
+      // SECURITY (FR-5): populated ONLY via textContent / text nodes. Never
+      // innerHTML, never an <a>/href, no tabindex, no event/attribute that can
+      // execute. A crafted CSV url such as `javascript:alert(1)` or
+      // `<img src=x onerror=alert(1)>` therefore renders as INERT text — it is
+      // the first place raw f.url reaches the DOM, so this is load-bearing.
+      // It is a plain <td> (no <input>/contenteditable/tabindex) so assistive
+      // tech does not announce it as editable and it is not in the tab order.
+      const tdSource = document.createElement("td");
+      tdSource.className = "source-cell";
+      if (entry.source === "empty") {
+        // Static literal, never entry.sourceText (which is "" here). No badge.
+        tdSource.textContent = "no address in your export";
+      } else {
+        // The full value stays in the DOM text node (truncation is CSS-only),
+        // so the cell's accessible name is the full value (FR-8, §9); title
+        // surfaces it on hover for sighted users.
+        const textSpan = document.createElement("span");
+        textSpan.className = "source-text";
+        textSpan.textContent = entry.sourceText;
+        textSpan.title = entry.sourceText;
+        tdSource.appendChild(textSpan);
+        if (entry.source === "title") {
+          // Provenance badge — meaning is in the visible text, not colour-only.
+          tdSource.appendChild(document.createTextNode(" "));
+          const badge = document.createElement("span");
+          badge.className = "prov-badge";
+          badge.textContent = "guessed from title";
+          tdSource.appendChild(badge);
+        }
+      }
+      tr.appendChild(tdSource);
 
       // Email (editable)
       const tdEmail = document.createElement("td");

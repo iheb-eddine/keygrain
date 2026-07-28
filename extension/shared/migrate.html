@@ -30,15 +30,17 @@
       <button id="select-all-btn">Select All</button>
       <button id="deselect-all-btn">Deselect All</button>
     </div>
+    <p id="site-warning" class="preview-warning">Site is used to generate each password. Verify it matches your real login address — changing it generates a different password.</p>
     <div class="table-wrapper">
       <table id="preview-table" aria-label="Imported services preview">
         <thead>
           <tr>
-            <th><input type="checkbox" id="toggle-all" aria-label="Toggle all" checked></th>
-            <th>Service Name</th>
-            <th>Email/Username</th>
-            <th>Old Password</th>
-            <th>Status</th>
+            <th scope="col"><input type="checkbox" id="toggle-all" aria-label="Toggle all" checked></th>
+            <th scope="col">Site</th>
+            <th scope="col">From your export</th>
+            <th scope="col">Email/Username</th>
+            <th scope="col">Old Password</th>
+            <th scope="col">Status</th>
           </tr>
         </thead>
         <tbody id="preview-body"></tbody>
