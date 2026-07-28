@@ -6,6 +6,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Components are 
 
 ## Chrome extension
 
+### [1.2.0] - 2026-07-28
+
+Deletions now sync properly across your devices, and importing from another password
+manager shows you exactly what it is about to use.
+
+#### Sync
+- **Deleting a service now sticks.** Remove an entry on one device and it stays removed
+  everywhere, instead of reappearing the next time another device syncs.
+- **Delete-versus-edit conflicts are kept, not guessed.** If you delete a service on one
+  device while editing it on another, Keygrain shows you both and lets you decide, rather
+  than silently picking a winner.
+- Fewer failed syncs when several devices write at once.
+
+#### Importing from another password manager
+- **You can now verify the login address before anything is imported.** The preview shows
+  the address read from your export next to the site Keygrain derived from it, because the
+  site is what generates your password — if the two disagree, you need to know before you
+  rotate a real password, not after.
+- **Fixed: imports from KeePassXC could get the wrong site.** Exports that store a bare
+  address (`github.com` rather than `https://github.com`) fell back to the entry title, so
+  a "GitHub" entry was imported as `github` instead of `github.com`. That produced a
+  different password than adding the same account by hand, and autofill never matched it.
+  If you already migrated from such an export, check the Site field on those entries.
+- Entries whose address had to be guessed from the entry title are now marked, and entries
+  with no address at all say so.
+
+No algorithm changes — every password, code, key and seed is byte-identical to before
+(SPEC v4).
+
 ### [1.1.0] - 2026-07-24
 
 The biggest Keygrain update yet: autofill, one-time codes, and full control over your
@@ -36,6 +65,35 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 (SPEC v4).
 
 ## Firefox extension
+
+### [1.2.0] - 2026-07-28
+
+Deletions now sync properly across your devices, and importing from another password
+manager shows you exactly what it is about to use.
+
+#### Sync
+- **Deleting a service now sticks.** Remove an entry on one device and it stays removed
+  everywhere, instead of reappearing the next time another device syncs.
+- **Delete-versus-edit conflicts are kept, not guessed.** If you delete a service on one
+  device while editing it on another, Keygrain shows you both and lets you decide, rather
+  than silently picking a winner.
+- Fewer failed syncs when several devices write at once.
+
+#### Importing from another password manager
+- **You can now verify the login address before anything is imported.** The preview shows
+  the address read from your export next to the site Keygrain derived from it, because the
+  site is what generates your password — if the two disagree, you need to know before you
+  rotate a real password, not after.
+- **Fixed: imports from KeePassXC could get the wrong site.** Exports that store a bare
+  address (`github.com` rather than `https://github.com`) fell back to the entry title, so
+  a "GitHub" entry was imported as `github` instead of `github.com`. That produced a
+  different password than adding the same account by hand, and autofill never matched it.
+  If you already migrated from such an export, check the Site field on those entries.
+- Entries whose address had to be guessed from the entry title are now marked, and entries
+  with no address at all say so.
+
+No algorithm changes — every password, code, key and seed is byte-identical to before
+(SPEC v4).
 
 ### [1.1.0] - 2026-07-24
 
