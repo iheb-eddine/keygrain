@@ -55,9 +55,25 @@ h2 { font-size: 1.1rem; margin-top: 0; }
 #preview-table th, #preview-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
 #preview-table thead th { background: var(--bg-secondary); font-weight: 600; }
 #preview-table input[type="text"] { border: none; border-bottom: 1px solid var(--border); width: 100%; padding: 2px 0; font: inherit; background: transparent; color: var(--text); }
+/* Provenance flag for rows whose Site was NOT parsed from a real url
+   (source "title" or "empty"). Declared BEFORE .row-duplicate/.row-empty-email
+   so, at equal specificity, those later rules win when a row is both — i.e.
+   duplicate/empty styling takes precedence. Colour is a supplementary cue; the
+   "guessed from title" badge / "no address in your export" text is the primary,
+   non-colour signal (a11y). */
+.row-unverified { background: var(--warning-bg); }
 .row-duplicate { background: var(--bg-secondary); }
 .row-duplicate .svc-name { text-decoration: line-through; color: var(--text-secondary); }
 .row-empty-email { background: var(--warning-bg); }
+
+/* Informational note above the preview table (not an alert). */
+.preview-warning { font-size: 0.85rem; color: var(--text-secondary); margin: 8px 0; }
+
+/* Read-only provenance cell. Truncation is CSS-only (text-overflow) so the full
+   value stays in the DOM text node for assistive tech / the title tooltip. */
+.source-cell { max-width: 220px; }
+.source-cell .source-text { display: inline-block; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.prov-badge { display: inline-block; font-size: 0.7rem; padding: 1px 6px; border: 1px solid var(--warning-border); border-radius: 3px; color: var(--text-secondary); white-space: nowrap; }
 
 #preview-footer { font-size: 0.85rem; color: var(--text-secondary); margin-top: 8px; }
 
