@@ -192,13 +192,24 @@ different key.
 apksigner verify --print-certs keygrain.apk
 ```
 
-**App signing certificate — compare against this one.** This is what an APK installed from
-Google Play is signed with:
+**App signing certificate — compare against this one.** This is the certificate reported by
+an APK installed from Google Play, measured on a real device (`adb pull` of the installed
+`base.apk`, then `apksigner verify --print-certs`). The DN is Google's, because Google holds
+this key and signs with it on our behalf:
 
 ```
-apksigner form:  8b967b5d0536433cde74ae39ff31d2e4540b7ab6db9756f12198b0a506c292e4
-keytool form:    8B:96:7B:5D:05:36:43:3C:DE:74:AE:39:FF:31:D2:E4:54:0B:7A:B6:DB:97:56:F1:21:98:B0:A5:06:C2:92:E4
+apksigner form:  ed8594df67738ebc5a66dca158150acf698c80485c16415ef7eb5689786e8100
+keytool form:    ED:85:94:DF:67:73:8E:BC:5A:66:DC:A1:58:15:0A:CF:69:8C:80:48:5C:16:41:5E:F7:EB:56:89:78:6E:81:00
+certificate DN:  CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US
 ```
+
+Our Play Console additionally lists an app signing certificate
+`8B:96:7B:5D:05:36:43:3C:DE:74:AE:39:FF:31:D2:E4:54:0B:7A:B6:DB:97:56:F1:21:98:B0:A5:06:C2:92:E4`
+and a post-quantum one
+`9A:8B:99:DD:2F:A5:4A:AA:3A:1B:65:9D:01:9D:F3:89:15:3C:5F:BD:D4:54:67:12:1C:37:A3:9F:6D:DA:E0:66`.
+We are reconciling why the installed artifact reports the value above instead; if your install
+reports one of these, that is ours too and not a cause for alarm. We would rather show you all
+three than quietly publish one and let you conclude the mismatch means tampering.
 
 **Upload certificate — for reference only.** This is the key our CI signs the build with
 before uploading to Play, and the value the CI drift guard enforces on every build. You will
@@ -210,9 +221,8 @@ keytool form:    AB:36:21:A4:49:40:5F:75:E9:4B:02:83:E5:A3:5F:0D:A8:61:27:40:99:
 ```
 
 (`apksigner verify --print-certs` prints lowercase hex with no colons; `keytool -list -v`
-prints it colon-separated — same value.) Google additionally holds a post-quantum app
-signing key (`9A:8B:99:DD:2F:A5:4A:AA:3A:1B:65:9D:01:9D:F3:89:15:3C:5F:BD:D4:54:67:12:1C:37:A3:9F:6D:DA:E0:66`);
-`apksigner` reports the classical certificate above.
+prints it colon-separated — same value. `apksigner` reports the classical certificate, not
+the post-quantum one.)
 
 > **Note on what this does and does not prove.** Because Google re-signs, the app signing
 > certificate proves the APK came through *our* Play listing and was not modified after
