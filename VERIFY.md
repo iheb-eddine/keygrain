@@ -175,10 +175,16 @@ shows a different publisher (or none), treat it as suspect.
 
 ## Verify the Android APK
 
-The Android app is distributed as a direct APK download from keygrain.com. Android
-build reproducibility is not guaranteed the way the extension's is, so the trust
-anchor for the APK is its **signing certificate**: every genuine Keygrain APK is
-signed with the same key, and Android refuses to install an update signed by a
+Keygrain for Android is distributed through Google Play (currently closed testing). Play
+uses **Play App Signing**: we sign our build with our own upload key, Google verifies it,
+then **re-signs** the APK delivered to your device with a separate app signing key that
+Google holds. So the certificate on an APK installed from Play is the *app signing*
+certificate below — not our upload certificate. Both are published so you can tell which
+you are looking at.
+
+Android build reproducibility is not guaranteed the way the extension's is, so the trust
+anchor for the APK is its **signing certificate**: every genuine Keygrain install is signed
+with the same app signing key, and Android refuses to install an update signed by a
 different key.
 
 ```bash
@@ -186,20 +192,32 @@ different key.
 apksigner verify --print-certs keygrain.apk
 ```
 
-Compare the printed certificate SHA-256 against Keygrain's signing fingerprint below.
-A match means the APK was signed by Keygrain and has not been tampered with since.
+**App signing certificate — compare against this one.** This is what an APK installed from
+Google Play is signed with:
 
-**Keygrain signing certificate — SHA-256:**
+```
+apksigner form:  8b967b5d0536433cde74ae39ff31d2e4540b7ab6db9756f12198b0a506c292e4
+keytool form:    8B:96:7B:5D:05:36:43:3C:DE:74:AE:39:FF:31:D2:E4:54:0B:7A:B6:DB:97:56:F1:21:98:B0:A5:06:C2:92:E4
+```
+
+**Upload certificate — for reference only.** This is the key our CI signs the build with
+before uploading to Play, and the value the CI drift guard enforces on every build. You will
+only ever see it on an APK taken directly from our build pipeline, never on a Play install:
 
 ```
 apksigner form:  ab3621a449405f75e94b0283e5a35f0da86127409984dd63db02a8e8d7a38e11
 keytool form:    AB:36:21:A4:49:40:5F:75:E9:4B:02:83:E5:A3:5F:0D:A8:61:27:40:99:84:DD:63:DB:02:A8:E8:D7:A3:8E:11
 ```
 
-(`apksigner verify --print-certs` prints it as lowercase hex with no colons; `keytool
--list -v` prints it colon-separated — same value.) This fingerprint is fixed for the
-life of the signing key, so it's the same for every Keygrain APK release, and CI
-enforces that each build matches it.
+(`apksigner verify --print-certs` prints lowercase hex with no colons; `keytool -list -v`
+prints it colon-separated — same value.) Google additionally holds a post-quantum app
+signing key (`9A:8B:99:DD:2F:A5:4A:AA:3A:1B:65:9D:01:9D:F3:89:15:3C:5F:BD:D4:54:67:12:1C:37:A3:9F:6D:DA:E0:66`);
+`apksigner` reports the classical certificate above.
+
+> **Note on what this does and does not prove.** Because Google re-signs, the app signing
+> certificate proves the APK came through *our* Play listing and was not modified after
+> Google signed it. It does not prove the bytes match a build you can reproduce yourself —
+> for that, the extension and the Python package are the stronger channels.
 
 ## Honest limitations
 
