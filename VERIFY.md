@@ -192,24 +192,36 @@ different key.
 apksigner verify --print-certs keygrain.apk
 ```
 
-**App signing certificate — compare against this one.** This is the certificate reported by
-an APK installed from Google Play, measured on a real device (`adb pull` of the installed
-`base.apk`, then `apksigner verify --print-certs`). The DN is Google's, because Google holds
-this key and signs with it on our behalf:
+**App signing certificates — compare against one of these.** Google holds these keys and
+signs on our behalf, so the DN you see is Google's, not ours. Play performed an **app signing
+key upgrade**, which means there are two valid certificates: installs made after the upgrade
+report the current key, while installs predating it continue to report the previous key.
+Android's signing-key rotation is what lets updates keep working across the change.
+
+Current app signing key:
 
 ```
-apksigner form:  ed8594df67738ebc5a66dca158150acf698c80485c16415ef7eb5689786e8100
-keytool form:    ED:85:94:DF:67:73:8E:BC:5A:66:DC:A1:58:15:0A:CF:69:8C:80:48:5C:16:41:5E:F7:EB:56:89:78:6E:81:00
-certificate DN:  CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US
+keytool form:  8B:96:7B:5D:05:36:43:3C:DE:74:AE:39:FF:31:D2:E4:54:0B:7A:B6:DB:97:56:F1:21:98:B0:A5:06:C2:92:E4
+apksigner:     8b967b5d0536433cde74ae39ff31d2e4540b7ab6db9756f12198b0a506c292e4
 ```
 
-Our Play Console additionally lists an app signing certificate
-`8B:96:7B:5D:05:36:43:3C:DE:74:AE:39:FF:31:D2:E4:54:0B:7A:B6:DB:97:56:F1:21:98:B0:A5:06:C2:92:E4`
-and a post-quantum one
-`9A:8B:99:DD:2F:A5:4A:AA:3A:1B:65:9D:01:9D:F3:89:15:3C:5F:BD:D4:54:67:12:1C:37:A3:9F:6D:DA:E0:66`.
-We are reconciling why the installed artifact reports the value above instead; if your install
-reports one of these, that is ours too and not a cause for alarm. We would rather show you all
-three than quietly publish one and let you conclude the mismatch means tampering.
+Previous app signing key — still reported by installs from before the upgrade (measured on a
+1.2.x-era device install on 2026-07-29):
+
+```
+keytool form:  ED:85:94:DF:67:73:8E:BC:5A:66:DC:A1:58:15:0A:CF:69:8C:80:48:5C:16:41:5E:F7:EB:56:89:78:6E:81:00
+apksigner:     ed8594df67738ebc5a66dca158150acf698c80485c16415ef7eb5689786e8100
+certificate DN: CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US
+```
+
+Post-quantum app signing key, listed by Play alongside the current classical key:
+
+```
+keytool form:  9A:8B:99:DD:2F:A5:4A:AA:3A:1B:65:9D:01:9D:F3:89:15:3C:5F:BD:D4:54:67:12:1C:37:A3:9F:6D:DA:E0:66
+```
+
+A match against either the current or the previous app signing key means the APK came through
+our Play listing. Anything else does not.
 
 **Upload certificate — for reference only.** This is the key our CI signs the build with
 before uploading to Play, and the value the CI drift guard enforces on every build. You will
