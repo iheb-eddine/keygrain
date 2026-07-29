@@ -150,10 +150,7 @@ SSH key, and wallet seed — no vault, nothing stored.
 - Resolved an ANR (app-not-responding) case.
 
 #### Note
-The app's package id is `com.secbytech.keygrain`. If you previously sideloaded an older
-build (`com.badrani.keygrain`), uninstall it — the Play build installs as a separate
-app. Your data is safe: sync is keyed by your derived identifier, so re-entering your
-master secret restores everything; only device-local settings reset.
+The app's package id is `com.secbytech.keygrain`.
 
 No algorithm changes — every password, code, key, and seed is byte-identical to before
 (SPEC v4).
