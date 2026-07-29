@@ -10,8 +10,11 @@ minified/bundled code that can't realistically be audited.
   list as UTC with no extra metadata, and performs **no minification, bundling, or
   transpilation** — the shipped files are the source (only the `manifest.json` version
   string is substituted at build time). Because the entry order does not depend on your
-  filesystem, the same commit produces byte-identical zips with the same SHA-256 on any
-  POSIX machine with `bash`, `zip`, and `sha256sum`.
+  filesystem, the same commit produces byte-identical zips with the same SHA-256 — provided
+  your `zip` matches ours. Compressed bytes depend on the deflate implementation and `zip`
+  bundles its own, so the build is pinned to **Info-ZIP `zip` 3.0**; check yours with
+  `zip --version` (it should print `This is Zip 3.0`). Beyond that you only need `bash` and
+  `sha256sum`. If your hash differs, check your `zip` before concluding anything is wrong.
 - **Published checksums.** Each [GitHub Release](https://github.com/iheb-eddine/keygrain/releases)
   from extension 1.2.0 onward carries the exact `keygrain-chrome-<version>.zip` and
   `keygrain-firefox-<version>.zip` plus a `SHA256SUMS.txt`, built by GitHub Actions from the
@@ -115,9 +118,12 @@ serves it **verbatim**, so you can compare what your browser loads against this 
 
 ```bash
 for f in index.html hash-wasm-argon2.js sw.js manifest.json; do
-  curl -fsS "https://keygrain.com/generate/$f" | diff - "web/$f" && echo "$f: identical"
+  curl -fsSL "https://keygrain.com/generate/$f" | diff - "web/$f" && echo "$f: identical"
 done
 ```
+
+(`-L` matters: `index.html` is served via a 301 to `generate/`, so without it `curl` returns
+zero bytes and `diff` reports a difference that is not there.)
 
 Any difference in the served JavaScript is a red flag; identical output means the live
 generator is exactly this source.
@@ -179,8 +185,9 @@ Keygrain for Android is distributed through Google Play (currently closed testin
 uses **Play App Signing**: we sign our build with our own upload key, Google verifies it,
 then **re-signs** the APK delivered to your device with a separate app signing key that
 Google holds. So the certificate on an APK installed from Play is the *app signing*
-certificate below — not our upload certificate. Both are published so you can tell which
-you are looking at.
+certificate below — not our upload certificate. Two certificates matter, and both are
+published below so you can tell which you are looking at: the **app signing** certificate
+(what you see on any Play install) and our **upload** certificate (reference only).
 
 Android build reproducibility is not guaranteed the way the extension's is, so the trust
 anchor for the APK is its **signing certificate**: every genuine Keygrain install is signed
@@ -192,36 +199,29 @@ different key.
 apksigner verify --print-certs keygrain.apk
 ```
 
-**App signing certificates — compare against one of these.** Google holds these keys and
-signs on our behalf, so the DN you see is Google's, not ours. Play performed an **app signing
-key upgrade**, which means there are two valid certificates: installs made after the upgrade
-report the current key, while installs predating it continue to report the previous key.
-Android's signing-key rotation is what lets updates keep working across the change.
-
-Current app signing key:
+**App signing certificate — this is the value you compare against.** Google holds this key and
+signs on our behalf, so the DN you see is Google's, not ours.
 
 ```
-keytool form:  8B:96:7B:5D:05:36:43:3C:DE:74:AE:39:FF:31:D2:E4:54:0B:7A:B6:DB:97:56:F1:21:98:B0:A5:06:C2:92:E4
-apksigner:     8b967b5d0536433cde74ae39ff31d2e4540b7ab6db9756f12198b0a506c292e4
-```
-
-Previous app signing key — still reported by installs from before the upgrade (measured on a
-1.2.x-era device install on 2026-07-29):
-
-```
-keytool form:  ED:85:94:DF:67:73:8E:BC:5A:66:DC:A1:58:15:0A:CF:69:8C:80:48:5C:16:41:5E:F7:EB:56:89:78:6E:81:00
-apksigner:     ed8594df67738ebc5a66dca158150acf698c80485c16415ef7eb5689786e8100
+apksigner:      ed8594df67738ebc5a66dca158150acf698c80485c16415ef7eb5689786e8100
+keytool form:   ED:85:94:DF:67:73:8E:BC:5A:66:DC:A1:58:15:0A:CF:69:8C:80:48:5C:16:41:5E:F7:EB:56:89:78:6E:81:00
 certificate DN: CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US
+key:            RSA 4096
 ```
 
-Post-quantum app signing key, listed by Play alongside the current classical key:
+Measured on 2026-07-29, two independent ways: an APK pulled off a device with `adb`, and the
+universal APK that Play itself generates for the current release (1.1.0, versionCode 10100),
+fetched through the Play Developer API. Both report a single signer and no key-rotation lineage.
 
-```
-keytool form:  9A:8B:99:DD:2F:A5:4A:AA:3A:1B:65:9D:01:9D:F3:89:15:3C:5F:BD:D4:54:67:12:1C:37:A3:9F:6D:DA:E0:66
-```
+A match means the APK came through our Play listing and was not modified after Google signed
+it. Anything else does not.
 
-A match against either the current or the previous app signing key means the APK came through
-our Play listing. Anything else does not.
+> **We publish only fingerprints we have measured.** Google can upgrade or rotate the app
+> signing key, and Play additionally holds a post-quantum key that `apksigner` does not surface —
+> so there is nothing there for you to compare. If the certificate above ever changes, we
+> re-measure it from the artifact Play actually delivers and update this file as part of the
+> release. That is why exactly one value is listed: a fingerprint we have not measured ourselves
+> does not go in this document.
 
 **Upload certificate — for reference only.** This is the key our CI signs the build with
 before uploading to Play, and the value the CI drift guard enforces on every build. You will
@@ -233,8 +233,7 @@ keytool form:    AB:36:21:A4:49:40:5F:75:E9:4B:02:83:E5:A3:5F:0D:A8:61:27:40:99:
 ```
 
 (`apksigner verify --print-certs` prints lowercase hex with no colons; `keytool -list -v`
-prints it colon-separated — same value. `apksigner` reports the classical certificate, not
-the post-quantum one.)
+prints it colon-separated — same value.)
 
 > **Note on what this does and does not prove.** Because Google re-signs, the app signing
 > certificate proves the APK came through *our* Play listing and was not modified after
