@@ -237,9 +237,12 @@ certificate DN: CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=Calif
 key:            RSA 4096
 ```
 
-Measured on 2026-07-29, two independent ways: an APK pulled off a device with `adb`, and the
-universal APK that Play itself generates for the current release (1.1.0, versionCode 10100),
-fetched through the Play Developer API. Both report a single signer and no key-rotation lineage.
+Measured on **2026-07-30** against the current release — **1.2.0, versionCode 10200** — using
+the universal APK that Play itself generates, fetched through the Play Developer API. It
+reports a single signer and no key-rotation lineage. The same value was measured on 2026-07-29
+against versionCode 10100 two independent ways: an APK pulled off a device with `adb`, and the
+same generated-APK route. So this fingerprint has now been confirmed on two separate releases,
+and it did **not** change when 1.2.0 was published.
 
 A match means the APK came through our Play listing and was not modified after Google signed
 it. Anything else does not.
