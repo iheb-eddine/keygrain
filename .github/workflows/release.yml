@@ -36,3 +36,13 @@ jobs:
             extension/dist/keygrain-firefox-*.zip \
             extension/dist/SHA256SUMS.txt \
             --clobber --repo "${{ github.repository }}"
+
+      # Confirm the anchor VERIFY.md promises actually exists now, rather than
+      # assuming the upload above did what it looks like it did. Fails the release
+      # pipeline if the tag, the release, the checksum file or the zip is missing.
+      - name: Verify the public verification anchor
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          bash ci/check-release-anchors.sh \
+            "${{ github.repository }}" "${{ github.event.release.tag_name }}"

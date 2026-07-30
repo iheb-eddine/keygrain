@@ -6,15 +6,18 @@ minified/bundled code that can't realistically be audited.
 
 ## Why the extension is verifiable
 
-- **Reproducible build.** `extension/build.sh` zips a **sorted**, fixed-timestamp file
-  list as UTC with no extra metadata, and performs **no minification, bundling, or
-  transpilation** — the shipped files are the source (only the `manifest.json` version
-  string is substituted at build time). Because the entry order does not depend on your
-  filesystem, the same commit produces byte-identical zips with the same SHA-256 — provided
-  your `zip` matches ours. Compressed bytes depend on the deflate implementation and `zip`
-  bundles its own, so the build is pinned to **Info-ZIP `zip` 3.0**; check yours with
-  `zip --version` (it should print `This is Zip 3.0`). Beyond that you only need `bash` and
-  `sha256sum`. If your hash differs, check your `zip` before concluding anything is wrong.
+- **Reproducible build.** `extension/build.sh` zips a **sorted** file list with fixed
+  timestamps, a fixed timezone (UTC), normalised file modes (644) and no extra metadata, and
+  performs **no minification, bundling, or transpilation** — the shipped files are the source
+  (only the `manifest.json` version string is substituted at build time). Because neither the
+  entry order nor the recorded metadata depends on your filesystem, timezone or umask, the same
+  commit produces byte-identical zips with the same SHA-256 — provided your `zip` matches ours.
+  Compressed bytes depend on the deflate implementation and `zip` bundles its own, so the build
+  is pinned to **Info-ZIP `zip` 3.0**; check yours with `zip --version` (it should print
+  `This is Zip 3.0`). Beyond that you only need `bash` and `sha256sum`. If your hash differs,
+  check your `zip` before concluding anything is wrong.
+  *The timezone and file-mode normalisation landed after the 1.2.0 tags* — verifying 1.2.0
+  needs one extra step, described under Method A.
 - **Published checksums.** Each [GitHub Release](https://github.com/iheb-eddine/keygrain/releases)
   from extension 1.2.0 onward carries the exact `keygrain-chrome-<version>.zip` and
   `keygrain-firefox-<version>.zip` plus a `SHA256SUMS.txt`, built by GitHub Actions from the
@@ -33,22 +36,26 @@ minified/bundled code that can't realistically be audited.
 ```bash
 git clone https://github.com/iheb-eddine/keygrain.git
 cd keygrain
-git checkout firefox-v<version>   # the version you installed (see About/Help)
+
+# Check out the tag for the version you installed. Match your browser — Chrome and
+# Firefox have separate tags — and the version it reports (see About/Help):
+git checkout chrome-v1.2.0            # or firefox-v1.2.0
+
+# For 1.2.0 ONLY: take the fixed builder from main. Required — see the note below.
+git checkout origin/main -- extension/build.sh
+
 bash extension/build.sh
 cd extension/dist
 sha256sum keygrain-chrome-*.zip keygrain-firefox-*.zip
 ```
 
-> **Verifying 1.2.0 specifically:** `build.sh` at the 1.2.0 tag did not normalise the
-> builder's timezone or umask, so it only reproduced our hash on a UTC machine with a
-> `022` umask. That is fixed on `main`. To verify 1.2.0, take the fixed builder — it is a
-> ~40-line shell script you can read in full before running it:
-> ```bash
-> git checkout firefox-v1.2.0
-> git checkout main -- extension/build.sh
-> bash extension/build.sh
-> ```
-> From the next release onward, the plain instructions above are enough.
+> **Why that extra line, for 1.2.0 only.** `build.sh` as committed at the 1.2.0 tags did not
+> normalise the builder's timezone or file modes, so it only reproduced our hash on a UTC
+> machine with a `022` umask — on any other machine it produces a *different* hash from
+> identical source, which would look like a mismatch when nothing is wrong. That is fixed on
+> `main`, and the fixed builder is a ~40-line shell script you can read in full before you run
+> it. From the next release onward the extra line is unnecessary, and these instructions will
+> drop it.
 
 Compare the output against `SHA256SUMS.txt` on the matching
 [GitHub Release](https://github.com/iheb-eddine/keygrain/releases) — or download that
@@ -56,18 +63,37 @@ file into `extension/dist/` and run `sha256sum -c SHA256SUMS.txt`. If they match
 released zip was built from exactly this source. (You need `bash`, `zip`, and
 `sha256sum` — no other toolchain.)
 
-**What is covered today.** Hash verification is available for **Firefox 1.2.0 and later**.
-Chrome and Firefox carry independent versions and independent tags (`chrome-v<version>`,
-`firefox-v<version>`) because store review times differ, and tags are only created for
-versions that were published with checksums. Two gaps we would rather state than hide:
+**What is covered today.** Hash verification is available for **Chrome 1.2.0 and Firefox
+1.2.0, and later**. Chrome and Firefox carry independent versions and independent tags
+(`chrome-v<version>`, `firefox-v<version>`) because store review times differ, so each
+browser's build gets its own tag when that store actually ships it. Two tags may point at the
+same commit — `chrome-v1.2.0` and `firefox-v1.2.0` both do, because both stores shipped the
+same source.
 
-- **Chrome.** The version currently in the Chrome Web Store predates this and has no tag or
-  published checksums, so Method A cannot be completed for it. Tags and checksums will follow
-  with the next Chrome release. Until then, use Method B, or use Firefox.
-- **Extension 1.1.0** was published without a tag or checksum file. There is nothing to
-  compare it against. Update to 1.2.0 or later to verify by hash.
+Measured on 2026-07-30: the Chrome Web Store serves 1.2.0 (updated 2026-07-29) and Firefox
+Add-ons serves 1.2.0 (released 2026-07-28). Exactly what each store lists, per version:
 
-Releases before 1.2.0 used a single tag for all components (`v1.0.0`, `v0.11.0`).
+| Extension version | Reached a store? | Public tag | Published checksums |
+|---|---|---|---|
+| 1.2.0 | both | `chrome-v1.2.0`, `firefox-v1.2.0` | **yes** |
+| 1.1.0 | both | none | none |
+| 1.0.0 | no — never published to a store | `v1.0.0` | yes (but nothing shipped to compare) |
+| 0.11.0 and earlier | yes | `v0.11.0` and earlier | none |
+
+(Firefox Add-ons publishes a full version history, so the Firefox column is directly
+checkable: 1.2.0, 1.1.0, 0.11.0, 0.10.0, 0.9.1. The Chrome Web Store shows only the current
+version, so for Chrome we can only point you at what it serves today.)
+
+The gap we would rather state than hide: **1.1.0 has no tag and no checksums**, so Method A
+cannot be completed for it. Nothing was retained from that release, and a tag cut today would
+be us asserting after the fact which commit it came from rather than proving it — so we are
+not going to manufacture one. If you are still on 1.1.0 or earlier, use Method B, or update to
+1.2.0 and verify by hash. Both stores auto-update, but a pinned, sideloaded or
+enterprise-managed install may not have moved — check the version your browser reports before
+concluding anything.
+
+Releases before 1.2.0 used a single tag for all components (`v1.0.0`, `v0.11.0`), so those tags
+exist and can be checked out for Method B even where no checksum file was published.
 
 ### Method B — inspect what's actually installed
 
@@ -92,11 +118,13 @@ identical. Since nothing is minified, you can also just read the code.
 
 **Chrome:** go to `chrome://extensions`, enable **Developer mode**, and note the
 extension's ID and version. The unpacked files live under your Chrome profile at
-`Extensions/goeemlncopfbcnppjalfmgdalbhlgdha/<version>_0/` (Chrome appends `_0`). Diff
-that folder against the build:
+`Extensions/goeemlncopfbcnppjalfmgdalbhlgdha/<version>_<n>/`, where Chrome appends an
+install counter — usually `_0`, but higher if the version has been reinstalled. List the
+directory to see which one you have. Diff that folder against the build:
 
 ```bash
-diff -r "<chrome-profile>/Extensions/goeemlncopfbcnppjalfmgdalbhlgdha/<version>_0" \
+ls "<chrome-profile>/Extensions/goeemlncopfbcnppjalfmgdalbhlgdha/"
+diff -r "<chrome-profile>/Extensions/goeemlncopfbcnppjalfmgdalbhlgdha/1.2.0_0" \
         extension/dist/chrome
 ```
 

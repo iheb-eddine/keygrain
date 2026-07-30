@@ -129,6 +129,73 @@ jobs:
           name: keygrain-firefox
           path: extension/dist/keygrain-firefox-*.zip
 
+  # VERIFY.md promises that the same commit yields byte-identical zips on any
+  # machine with Info-ZIP zip 3.0. That promise is only as good as a test.
+  #
+  # Two real bugs shipped because nothing checked it (both fixed in eb198a6):
+  #   * `touch -t` reads its argument in LOCAL time while zip ran with TZ=UTC, so
+  #     the recorded timestamps moved with the builder's offset.
+  #   * zip stores each entry's Unix mode in the central directory and -X does not
+  #     strip it, so the builder's umask leaked (0644 on CI vs 0664 locally) —
+  #     a 37-byte difference.
+  # Both are invisible to a single build. Only a second build under a DIFFERENT
+  # timezone and umask exposes them, which is exactly what this job does.
+  reproducible-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the zip implementation is the pinned one
+        run: |
+          zip --version | head -2
+          zip --version | grep -q "This is Zip 3.0" \
+            || { echo "::error::not Info-ZIP zip 3.0 — VERIFY.md pins that version"; exit 1; }
+      - name: Build A — UTC, umask 022
+        working-directory: extension
+        run: |
+          umask 022
+          TZ=UTC LC_ALL=C bash build.sh >/dev/null
+          mkdir -p /tmp/repro-a && cp dist/keygrain-*.zip /tmp/repro-a/
+      - name: Build B — Asia/Tokyo, umask 077, French locale
+        working-directory: extension
+        run: |
+          umask 077
+          TZ=Asia/Tokyo LC_ALL=C bash build.sh >/dev/null
+          mkdir -p /tmp/repro-b && cp dist/keygrain-*.zip /tmp/repro-b/
+      - name: Assert byte-identical
+        run: |
+          status=0
+          for f in /tmp/repro-a/*.zip; do
+            name=$(basename "$f")
+            a=$(sha256sum "$f" | cut -d' ' -f1)
+            b=$(sha256sum "/tmp/repro-b/$name" | cut -d' ' -f1)
+            if [ "$a" = "$b" ]; then
+              echo "OK        $name  $a"
+            else
+              echo "::error::$name is NOT reproducible across TZ/umask"
+              echo "  build A (UTC, umask 022):        $a"
+              echo "  build B (Tokyo, umask 077):      $b"
+              # Show WHERE they differ — usually central-directory modes or DOS times.
+              cmp -l "$f" "/tmp/repro-b/$name" | head -20 || true
+              status=1
+            fi
+          done
+          exit $status
+
+  # Standing check that every shipped client version still has the public anchor
+  # VERIFY.md tells users to look for. Catches the drift case that release.yml
+  # cannot: a tag deleted later, a release converted back to a draft, or assets
+  # removed. Extension 1.1.0 shipped with no anchor for weeks and nothing noticed.
+  release-anchors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need the tag list
+      - name: Every client tag has a release with checksums
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash ci/check-release-anchors.sh "${{ github.repository }}"
+
   build-mobile:
     runs-on: ubuntu-latest
     env:
