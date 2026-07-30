@@ -37,6 +37,48 @@ function computeSyncStatus(syncInProgress, lastSyncError, lastSyncTime, retrySta
   return {visible: false, text: "", errorHtml: null};
 }
 
+// === Cross-context storage change helpers (pure) ===
+//
+// chrome.storage.onChanged fires in EVERY extension context, including the one that
+// performed the write. A page that reloads its state in response to its own write is not
+// merely doing wasted work: the popup holds `services` in memory and persists the whole
+// array, so a reload landing between an in-memory mutation and its save leaves the two
+// disagreeing. Every write therefore records a marker for the value it stored, and the
+// listener ignores events whose new value still carries that marker.
+
+// Absent values need a marker distinct from every real one, in both directions: a removal
+// by ANOTHER context must not be mistaken for "we have never written this key" (which is
+// `undefined`, and matches nothing), and a removal we performed ourselves must be
+// recognised as ours.
+const STORAGE_MARKER_ABSENT = "\u0000absent";
+
+// A stored value's identity for that comparison. The services blob is identified by its
+// ciphertext alone: encryptServices draws a fresh random IV per write, so two writes of
+// even byte-identical content produce different ciphertext and no marker can collide with
+// another context's. Everything else is compared by its JSON form, which is stable
+// because storage round-trips a structured clone and preserves key order.
+function storageMarker(value) {
+  if (value === undefined || value === null) return STORAGE_MARKER_ABSENT;
+  if (typeof value.ciphertext === "string") return value.ciphertext;
+  try { return JSON.stringify(value); } catch { return STORAGE_MARKER_ABSENT; }
+}
+
+// The watched keys this event changed that were NOT written by this context, in `watched`
+// order. `selfMarkers` maps key -> storageMarker(the value this context last wrote); a key
+// this context has never written has no entry, and `undefined` matches no marker, so an
+// event for it always counts as external.
+//
+// Only the `local` area is considered: the blob, the checklist and every other key this
+// extension keeps live there. A `sync`-area event is never about them.
+function externalChanges(changes, area, watched, selfMarkers) {
+  if (area !== "local" || !changes) return [];
+  return (watched || []).filter(key => {
+    const change = changes[key];
+    if (!change) return false;
+    return storageMarker(change.newValue) !== (selfMarkers || {})[key];
+  });
+}
+
 function openDialog(dialog, trigger) {
   const focusTrigger = trigger || document.activeElement;
   const handler = (e) => {

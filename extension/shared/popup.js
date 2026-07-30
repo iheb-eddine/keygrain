@@ -282,6 +282,12 @@
     if (syncIndicatorInterval) { clearInterval(syncIndicatorInterval); syncIndicatorInterval = null; }
     await clearSecret();
     await clearEmail();
+    // Removals are writes too, and this one clears `services`. The marker stops the popup
+    // reacting to its own wipe; `accountWiped` stops a refresh that was ALREADY reading from
+    // finishing afterwards and re-installing this account's arrays.
+    accountWiped = true;
+    selfWrites.services = STORAGE_MARKER_ABSENT;
+    blobWrites++;
     await chrome.storage.local.remove(ACCOUNT_SCOPED_KEYS);
     clearStrengthenCache();
     try { await navigator.clipboard.writeText(""); } catch (_) {}
@@ -555,14 +561,174 @@
     return false;
   }
 
+  // === Cross-context refresh ===
+  //
+  // The services blob has four writers: this popup, the migrate tab, the wallet page and
+  // the background sync alarm. Nothing told the popup about the other three.
+  //
+  // Be precise about what this does and does not buy, because it is easy to overstate: an
+  // action popup is destroyed the moment it loses focus, so the user cannot be looking at
+  // the popup while typing in another extension page, and background sync skips its run
+  // entirely while the popup lease is live (background.js). What is left is real but
+  // narrow — a background sync that began before the lease was taken and lands while the
+  // popup is open, a sync retry, and any future writer. The migrate tab is the context that
+  // genuinely needed this; see the listener at the bottom of migrate.js.
+  //
+  // Our own writes are filtered out by marker (storageMarker, popup-dialog.js). Reacting to
+  // them would be worse than wasteful: the reload reassigns `services`, so a reload that
+  // lands inside one of our own read-modify-write cycles replaces the array that cycle is
+  // about to persist.
+  const selfWrites = {};
+  let deferredRefresh = false;
+  let savesInFlight = 0;
+  let refreshInFlight = false;
+  // Set the moment an account wipe begins (Switch account, Delete server data's delete-local
+  // branch, Reset Keygrain) and never cleared — both paths end on the lock screen. A refresh
+  // may be mid-flight when the wipe starts, holding the previous account's five arrays and an
+  // Argon2id derive that takes about a second; without this it can finish afterwards and
+  // re-install them, and the next account's first save would then persist the previous
+  // account's wallets, tombstones and deletion-review entries and sync them to its server
+  // account. Checked both before and after every await in refreshFromStorage.
+  let accountWiped = false;
+  // Saves STARTED, not finished. A refresh reads across three awaits; if a save began in
+  // that window then the array the refresh is about to install predates the caller's
+  // mutation, and installing it would show the popup a list that storage no longer matches.
+  let blobWrites = 0;
+
+  // Only ONE marker is kept per key, so two saves in flight leave the first event unmatched
+  // and looking external. That costs one reload and re-render, and nothing more: a reload
+  // cannot lose a mutation (saveServices persists the snapshot it captured, see below) and
+  // cannot install a stale array (the blobWrites re-check below). A pending-marker set would
+  // buy only the wasted work.
+
+  // addDialog and deleteDialog identify their target by INDEX into `services` (`editIndex`,
+  // `deleteTarget`), so reloading the array under an open one would silently retarget it:
+  // the submit handler would edit, or delete, whatever now sits at that index.
+  //
+  // The DOM state is the signal, not `editIndex`: nothing resets `editIndex` when the dialog
+  // is cancelled, so it stays non-null for the rest of the popup's life.
+  function indexBoundDialogOpen() {
+    return !addDialog.classList.contains("hidden") || !deleteDialog.classList.contains("hidden");
+  }
+
+  // A revealed password or TOTP code exists only in the DOM — re-rendering the list destroys
+  // it while the user is still reading it.
+  function revealedOnScreen() {
+    return !!serviceList.querySelector(".password-display") ||
+           !!serviceList.querySelector('[data-totp-revealed="true"]');
+  }
+
+  // Close addDialog or deleteDialog. Every close path for those two goes through here so a
+  // deferred refresh is never dropped.
+  function closeIndexBoundDialog(dialog, state) {
+    closeDialog(dialog, state);
+    if (deferredRefresh) refreshFromStorage();
+  }
+
+  // Reload the blob another context wrote and re-render what depends on it.
+  //
+  // KNOWN LIMITATION, not changed by this: the popup persists its whole in-memory `services`
+  // array. A save that follows a deferred refresh therefore writes the pre-refresh list and
+  // reverts the other context's write locally. Sync repairs it on the next round — the other
+  // writer bumped `updated_at` and the merge is "newer wins" — but an offline profile does
+  // not. Closing that window means moving the popup to read-modify-write, which is a
+  // separate change.
+  async function refreshFromStorage() {
+    // The one blocker whose flush is the refresh itself, at the bottom of this function: a
+    // second event arriving mid-read may describe a write that landed after our read, which
+    // blobWrites cannot see because it counts only our own saves.
+    if (refreshInFlight) { deferredRefresh = true; return; }
+    try {
+      if (isDemoMode || accountWiped || !currentSecret || !currentEmail) return;
+      // Checked before the DOM tests below. Its real value is the unlock window: the secret
+      // is set a few statements before showMainScreen, and an event landing in there is
+      // DROPPED rather than deferred on purpose — unlock re-reads the blob itself. Explicit
+      // and automatic locks are already caught by the `!currentSecret` test above.
+      if (mainScreen.classList.contains("hidden")) return;
+      // Deferred rather than dropped. Flush points: this function on completion, saveServices
+      // when the save settles, performAutoSync when a failed sync settles,
+      // closeIndexBoundDialog on close, and the two hide paths for a revealed secret.
+      //
+      // syncInProgress is included because a sync ends with `services = result.services`
+      // followed by a save: rendering an external write in the middle of one would show it
+      // and then immediately flip back.
+      if (indexBoundDialogOpen() || revealedOnScreen() || savesInFlight > 0 || syncInProgress) {
+        deferredRefresh = true;
+        return;
+      }
+      refreshInFlight = true;
+      deferredRefresh = false;
+      const gen = blobWrites;
+      // loadServices is the only reader of the blob; opening a second decrypt path here would
+      // be the same duplication that let the two migration stores drift apart. It can itself
+      // write (the one-time pre-v2 payload upgrade), which is correct — the popup is the only
+      // context allowed to perform that — and the write is self-marked, so it does not
+      // re-enter here.
+      if (!await loadServices()) return;  // undecryptable: keep what we have rather than blanking the list
+      // Re-checked AFTER the awaits, not only before: an account wipe or a lock can happen
+      // while the decrypt runs, and loadServices has just installed the arrays it read.
+      if (accountWiped || !currentSecret || mainScreen.classList.contains("hidden")) return;
+      // Reload and re-render are inseparable, and this runs even when the generation check
+      // below fails. Rendered rows carry their index into `services` (`dataset.serviceIdx`,
+      // read by the TOTP tick, and the index closed over by Edit and Delete), so leaving the
+      // DOM in place over a reassigned array points those at the wrong service — Delete would
+      // remove a service the user did not pick. A briefly out-of-date list is fine; a list the
+      // DOM does not match is not.
+      renderServiceList();
+      updateMigrateBtn();
+      // loadServices reassigns deletionReview, so its banner is re-rendered too rather than
+      // left disagreeing with the state behind it.
+      renderDeletionReview();
+      // A save started while we were reading, so what we just installed predates its caller's
+      // mutation. The save persists its own snapshot, so storage is right and only this copy
+      // is behind; reload again once it settles.
+      if (gen !== blobWrites) deferredRefresh = true;
+    } catch { /* transient storage or decrypt failure: the next event, or a reopen, retries */
+    } finally {
+      refreshInFlight = false;
+      // Flush for both refreshInFlight and the generation check above. Cannot spin: a nested
+      // call clears the flag before it reads, and only a further event or save can set it
+      // again.
+      if (deferredRefresh) refreshFromStorage();
+    }
+  }
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    // Only `services` matters here. The migrate checklist is deliberately not watched: the
+    // popup does not read it — the menu count comes from the `migrating` flags alone.
+    if (externalChanges(changes, area, ["services"], selfWrites).length) refreshFromStorage();
+  });
+
   async function saveServices() {
     if (isDemoMode) return;
-    const key = await deriveStorageKey(currentSecret, currentEmail);
+    // Snapshot the arrays SYNCHRONOUSLY, before any await, and encrypt from the snapshot.
+    // Callers mutate in memory and then call this; a refresh that completes in between
+    // reassigns the globals, and encrypting from the globals would persist the reloaded list
+    // — dropping the caller's edit, and with it a deletion's tombstone, which is local-only
+    // and would not come back. Reassignment is exactly what the reload does, so this is not
+    // theoretical.
+    const snap = {services, wallets, walletAuditLog, tombstones, deletionReview};
+    // Both counters are raised before the first await: savesInFlight so a refresh does not
+    // start inside this save, blobWrites so a refresh already reading knows to discard.
+    savesInFlight++;
+    blobWrites++;
     try {
-      const encrypted = await encryptServices(key, currentEmail, services, wallets, walletAuditLog, tombstones, deletionReview);
-      await chrome.storage.local.set({services: encrypted});
+      const key = await deriveStorageKey(currentSecret, currentEmail);
+      try {
+        const encrypted = await encryptServices(key, currentEmail, snap.services, snap.wallets, snap.walletAuditLog, snap.tombstones, snap.deletionReview);
+        // Armed BEFORE the write, not after: the onChanged event may be dispatched before
+        // set() resolves, and a marker recorded afterwards would be too late to recognise
+        // our own event.
+        selfWrites.services = storageMarker(encrypted);
+        await chrome.storage.local.set({services: encrypted});
+      } finally {
+        key.fill(0);
+      }
     } finally {
-      key.fill(0);
+      savesInFlight--;
+      // In `finally`, so a write that threw still releases the deferral instead of pinning it
+      // until the next save. Storage is unchanged in that case and the reload is a no-op.
+      if (deferredRefresh && savesInFlight === 0) refreshFromStorage();
     }
     // Single choke point (RH2): notify the background to re-diff the inline
     // registration whenever the service list is persisted (incl. sync merges).
@@ -629,6 +795,11 @@
     } finally {
       syncInProgress = false;
       updateSyncIndicator();
+      // A refresh deferred because a sync was running is flushed by the sync's own save on
+      // the success path. The failure paths — a network error, or the generation bail above —
+      // never save, so without this the deferral sits until the next save or dialog close.
+      // Network errors are the common case.
+      if (deferredRefresh) refreshFromStorage();
     }
   }
 
@@ -994,6 +1165,9 @@
           } else {
             codeSpan.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022";
             revealBtn.setAttribute("aria-label", "Show TOTP code for " + svc.name);
+            // Same as hiding a password: a revealed code blocks the cross-context refresh, so
+            // hiding it again is what flushes the deferral.
+            if (deferredRefresh) refreshFromStorage();
           }
         });
         const codeSpan = document.createElement("span");
@@ -1639,6 +1813,12 @@
     if (syncIndicatorInterval) { clearInterval(syncIndicatorInterval); syncIndicatorInterval = null; }
     await clearSecret();
     await clearEmail();
+    // Same three reasons as in wipeLocalAccountData: clear() removes `services`, an unmarked
+    // removal reads as another context's write, and a refresh already in flight must not
+    // re-install this account's arrays after the wipe.
+    accountWiped = true;
+    selfWrites.services = STORAGE_MARKER_ABSENT;
+    blobWrites++;
     await chrome.storage.local.clear();
     clearStrengthenCache();
     currentSecret = null;
@@ -1808,7 +1988,7 @@
     addName.focus();
   });
 
-  addCancel.addEventListener("click", () => closeDialog(addDialog, addState));
+  addCancel.addEventListener("click", () => closeIndexBoundDialog(addDialog, addState));
 
   addTotpMode.addEventListener("change", () => {
     addTotpSeedGroup.classList.toggle("hidden", addTotpMode.value === "derived" || addTotpMode.value === "");
@@ -1885,7 +2065,7 @@
       services.push({name, site: normalizeSite(site), email, length, symbols, counter: 1, totp, ssh, id: crypto.randomUUID(), updated_at: nextTimestamp(services), synced: false});
     }
     await saveServices();
-    closeDialog(addDialog, addState);
+    closeIndexBoundDialog(addDialog, addState);
     renderServiceList();
   });
 
@@ -1900,7 +2080,7 @@
     delete services[editIndex].migrating;
     services[editIndex].updated_at = nextTimestamp(services);
     await saveServices();
-    closeDialog(addDialog, addState);
+    closeIndexBoundDialog(addDialog, addState);
     renderServiceList();
   });
 
@@ -1955,7 +2135,7 @@
   }
 
   deleteCancel.addEventListener("click", () => {
-    closeDialog(deleteDialog, deleteState);
+    closeIndexBoundDialog(deleteDialog, deleteState);
     deleteTarget = null;
   });
 
@@ -1974,7 +2154,7 @@
       await saveServices();
       renderServiceList();
     }
-    closeDialog(deleteDialog, deleteState);
+    closeIndexBoundDialog(deleteDialog, deleteState);
     deleteTarget = null;
   });
 
@@ -1986,6 +2166,9 @@
       pwSpan.remove();
       btn.innerHTML = '<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3C4.36 3 1.26 5.28 0 8.5c1.26 3.22 4.36 5.5 8 5.5s6.74-2.28 8-5.5C14.74 5.28 11.64 3 8 3zm0 9.17a3.67 3.67 0 1 1 0-7.34 3.67 3.67 0 0 1 0 7.34zM8 6a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>';
       btn.setAttribute("aria-label", "Show password for " + svc.name);
+      // A revealed secret blocks the refresh (re-rendering would destroy it), and nothing else
+      // flushes that deferral — hiding it again is the flush.
+      if (deferredRefresh) refreshFromStorage();
       return;
     }
     const pw = await deriveForService(svc);
@@ -2096,11 +2279,11 @@
       return;
     }
     if (!addDialog.classList.contains("hidden")) {
-      if (e.key === "Escape") { closeDialog(addDialog, addState); e.preventDefault(); }
+      if (e.key === "Escape") { closeIndexBoundDialog(addDialog, addState); e.preventDefault(); }
       return;
     }
     if (!deleteDialog.classList.contains("hidden")) {
-      if (e.key === "Escape") { closeDialog(deleteDialog, deleteState); deleteTarget = null; e.preventDefault(); }
+      if (e.key === "Escape") { closeIndexBoundDialog(deleteDialog, deleteState); deleteTarget = null; e.preventDefault(); }
       return;
     }
     if (!switchAccountDialog.classList.contains("hidden")) {

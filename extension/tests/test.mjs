@@ -2473,6 +2473,302 @@ await test('nextTimestamp: strictly exceeds every local updated_at', async () =>
 });
 
 // ============================================================
+// Cross-context storage change classification
+// ============================================================
+// chrome.storage.onChanged fires in every extension context, INCLUDING the one that
+// wrote. The popup persists its whole in-memory service list, so a reload triggered by
+// its own write can land inside its own read-modify-write cycle; the migrate tab would
+// re-render and re-decrypt for nothing. Both pages therefore record a marker per write
+// and ignore events that still carry it.
+
+const MARKER_ABSENT = runInContext('STORAGE_MARKER_ABSENT', ctx);
+
+function ext(changes, area, watched, selfMarkers) {
+  ctx._extArgs = [changes, area, watched, selfMarkers];
+  return runInContext(`JSON.parse(JSON.stringify(externalChanges(..._extArgs)))`, ctx);
+}
+
+const BLOB_A = {version: 2, iv: 'aXYx', ciphertext: 'Y3Rf9WFhYQ=='};
+const BLOB_B = {version: 2, iv: 'aXYy', ciphertext: 'Y3Rf9WJiYg=='};
+
+await test('storageMarker: a blob is identified by its ciphertext alone', async () => {
+  assert.equal(call('storageMarker', BLOB_A), BLOB_A.ciphertext);
+  // Same content re-encrypted draws a fresh IV, so the marker differs — which is exactly
+  // what makes it safe to treat "marker matches" as "this write was mine".
+  assert.notEqual(call('storageMarker', BLOB_A), call('storageMarker', BLOB_B));
+});
+
+await test('storageMarker: absent values get a marker distinct from every real one', async () => {
+  assert.equal(call('storageMarker', undefined), MARKER_ABSENT);
+  assert.equal(call('storageMarker', null), MARKER_ABSENT);
+  assert.notEqual(MARKER_ABSENT, call('storageMarker', BLOB_A));
+  assert.notEqual(MARKER_ABSENT, call('storageMarker', {}));
+});
+
+await test('storageMarker: non-blob values are compared by JSON form', async () => {
+  const cl = {version: 2, createdAt: 'x', items: [{id: 'a'}]};
+  assert.equal(call('storageMarker', cl), JSON.stringify(cl));
+  assert.notEqual(call('storageMarker', cl), call('storageMarker', {version: 2, createdAt: 'x', items: []}));
+});
+
+await test('storageMarker: an unstringifiable value does not throw', async () => {
+  const marker = runInContext(`(() => { const o = {}; o.self = o; return storageMarker(o); })()`, ctx);
+  assert.equal(marker, MARKER_ABSENT);
+});
+
+await test('externalChanges: another context writing the blob is external', async () => {
+  assert.deepEqual(ext({services: {newValue: BLOB_B}}, 'local', ['services'], {services: BLOB_A.ciphertext}), ['services']);
+});
+
+await test('externalChanges: our own write is filtered out', async () => {
+  assert.deepEqual(ext({services: {newValue: BLOB_A}}, 'local', ['services'], {services: BLOB_A.ciphertext}), []);
+});
+
+await test('externalChanges: a key we have never written is always external', async () => {
+  // `undefined` self-marker must not accidentally match anything, including a removal.
+  assert.deepEqual(ext({services: {newValue: BLOB_A}}, 'local', ['services'], {}), ['services']);
+  assert.deepEqual(ext({migrationChecklist: {oldValue: {}}}, 'local', ['migrationChecklist'], {}), ['migrationChecklist']);
+});
+
+await test('externalChanges: a removal by another context is external', async () => {
+  assert.deepEqual(
+    ext({migrationChecklist: {oldValue: {version: 2, items: []}}}, 'local', ['migrationChecklist'], {migrationChecklist: '{"version":2,"items":[]}'}),
+    ['migrationChecklist']);
+});
+
+await test('externalChanges: a removal we performed ourselves is filtered out', async () => {
+  assert.deepEqual(
+    ext({migrationChecklist: {oldValue: {version: 2, items: []}}}, 'local', ['migrationChecklist'], {migrationChecklist: MARKER_ABSENT}),
+    []);
+});
+
+await test('externalChanges: only the local area counts', async () => {
+  assert.deepEqual(ext({services: {newValue: BLOB_B}}, 'sync', ['services'], {}), []);
+  assert.deepEqual(ext({services: {newValue: BLOB_B}}, 'managed', ['services'], {}), []);
+});
+
+await test('externalChanges: unwatched keys are ignored', async () => {
+  // Every write of `lastSyncTime`, `breachFeed`, `popupActiveUntil` and the rest must not
+  // trigger a blob decrypt.
+  assert.deepEqual(ext({lastSyncTime: {newValue: 5}, popupActiveUntil: {newValue: 9}}, 'local', ['services'], {}), []);
+});
+
+await test('externalChanges: reports every external watched key, in watched order', async () => {
+  const changes = {migrationChecklist: {newValue: {version: 2, items: []}}, services: {newValue: BLOB_B}};
+  assert.deepEqual(ext(changes, 'local', ['services', 'migrationChecklist'], {}), ['services', 'migrationChecklist']);
+});
+
+await test('externalChanges: mixed event — our blob write plus their checklist write', async () => {
+  const changes = {services: {newValue: BLOB_A}, migrationChecklist: {newValue: {version: 2, items: [{id: 'x'}]}}};
+  assert.deepEqual(ext(changes, 'local', ['services', 'migrationChecklist'], {services: BLOB_A.ciphertext}), ['migrationChecklist']);
+});
+
+await test('externalChanges: tolerates a missing changes object and empty watch list', async () => {
+  assert.deepEqual(ext(null, 'local', ['services'], {}), []);
+  assert.deepEqual(ext({services: {newValue: BLOB_A}}, 'local', [], {}), []);
+  assert.deepEqual(ext({services: {newValue: BLOB_A}}, 'local', ['services'], null), ['services']);
+});
+
+// ============================================================
+// Page wiring the unit tests cannot exercise
+// ============================================================
+// There is no chrome.storage mock and no DOM for popup.js/migrate.js in this harness, so the
+// listeners cannot be driven end to end here — that is what the manual browser checklist in
+// HANDOVER-migration-bugs.md §4 is for. These are source-level guards: each one pins a
+// specific way the cross-context refresh silently stops working. They assert on the BODY of
+// the function concerned, so they cannot be satisfied by similar code elsewhere in the file.
+
+function sourceOf(file) { return readFileSync(resolve(shared, file), 'utf8'); }
+
+// The source of one function or listener, delimited by its closing brace at `indent`.
+function bodyOf(file, opening, indent) {
+  const src = sourceOf(file);
+  const start = src.indexOf(opening);
+  assert.ok(start > 0, 'not found in ' + file + ': ' + opening);
+  const close = '\n' + ' '.repeat(indent) + '}';
+  const end = src.indexOf(close, start);
+  assert.ok(end > start, 'could not delimit ' + opening + ' in ' + file);
+  return src.slice(start, end);
+}
+
+await test('popup.js reacts to external services writes', async () => {
+  const body = bodyOf('popup.js', 'chrome.storage.onChanged.addListener', 2);
+  // The exact condition, not just its pieces: inverting it, or dropping the `.length`, would
+  // otherwise leave every assertion green while the popup refreshed on nothing.
+  assert.match(body, /if \(externalChanges\(changes, area, \["services"\], selfWrites\)\.length\) refreshFromStorage\(\);/,
+    'the listener condition changed');
+});
+
+await test('popup.js refresh reloads AND re-renders everything it invalidates', async () => {
+  const body = bodyOf('popup.js', 'async function refreshFromStorage()', 2);
+  assert.match(body, /await loadServices\(\)/, 'does not reload the blob');
+  // Reload without re-render leaves rows indexed into a replaced array; the menu count and the
+  // deletion-review banner both read state loadServices reassigns.
+  assert.match(body, /renderServiceList\(\)/, 'does not re-render the service list');
+  assert.match(body, /updateMigrateBtn\(\)/, 'does not refresh the migrate button count');
+  assert.match(body, /renderDeletionReview\(\)/, 'does not refresh the deletion-review banner');
+  // The generation check must not be able to skip the re-render: bailing out after
+  // loadServices has installed new arrays is what points Delete at the wrong service.
+  assert.match(body, /renderServiceList\(\)[\s\S]*?if \(gen !== blobWrites\) deferredRefresh = true;/,
+    'the generation check returns before re-rendering');
+  // Re-checked after the awaits, or a wipe that lands during the decrypt is re-installed.
+  assert.match(body, /await loadServices\(\)[\s\S]{0,400}?if \(accountWiped \|\| !currentSecret \|\| mainScreen\.classList\.contains\("hidden"\)\) return;/,
+    'does not re-verify the account after its awaits');
+});
+
+await test('popup.js defers a blocked refresh instead of dropping it', async () => {
+  const body = bodyOf('popup.js', 'async function refreshFromStorage()', 2);
+  // Each guard covers a distinct hazard: an index-bound dialog would be retargeted, a revealed
+  // secret would be destroyed, an in-flight save would race the reload, and a sync in progress
+  // is about to overwrite whatever was rendered.
+  assert.match(body, /if \(indexBoundDialogOpen\(\) \|\| revealedOnScreen\(\) \|\| savesInFlight > 0 \|\| syncInProgress\) \{\s*\n\s*deferredRefresh = true;\s*\n\s*return;/,
+    'a blocked refresh is dropped rather than deferred');
+  assert.match(body, /if \(refreshInFlight\) \{ deferredRefresh = true; return; \}/,
+    'concurrent refreshes are not serialised, or the second one is dropped');
+  assert.match(body, /if \(isDemoMode \|\| accountWiped \|\| !currentSecret \|\| !currentEmail\) return;/,
+    'the entry guard changed');
+  assert.match(body, /const gen = blobWrites;/, 'does not record the write generation before reading');
+  // The two DOM guards must actually consult the DOM — stubbing either to false is invisible
+  // to every other assertion here.
+  assert.match(bodyOf('popup.js', 'function indexBoundDialogOpen()', 2),
+    /!addDialog\.classList\.contains\("hidden"\) \|\| !deleteDialog\.classList\.contains\("hidden"\)/,
+    'indexBoundDialogOpen no longer reads the dialogs');
+  assert.match(bodyOf('popup.js', 'function revealedOnScreen()', 2),
+    /serviceList\.querySelector\(["'].password-display["']\)[\s\S]*?totp-revealed/,
+    'revealedOnScreen no longer reads the DOM, or ignores a revealed TOTP code');
+});
+
+await test('popup.js flushes a deferred refresh from every blocker', async () => {
+  const src = sourceOf('popup.js');
+  // A deferral with no flush pins the popup stale until it is reopened. One flush per blocker,
+  // asserted at its own site rather than only by count, so a flush cannot be moved somewhere
+  // unreachable while the total stays right.
+  assert.equal([...src.matchAll(/if \(deferredRefresh[^)]*\) refreshFromStorage\(\);/g)].length, 6,
+    'the number of flush points changed — check every blocker still has one');
+  assert.match(bodyOf('popup.js', 'async function refreshFromStorage()', 2),
+    /refreshInFlight = false;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(deferredRefresh\) refreshFromStorage\(\);/,
+    'a refresh that blocked another one does not flush it');
+  assert.match(bodyOf('popup.js', 'async function saveServices()', 2),
+    /savesInFlight--;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(deferredRefresh && savesInFlight === 0\) refreshFromStorage\(\);/,
+    'a settled save does not flush the deferral it caused');
+  assert.match(bodyOf('popup.js', 'async function performAutoSync()', 2),
+    /syncInProgress = false;[\s\S]{0,400}?if \(deferredRefresh\) refreshFromStorage\(\);/,
+    'a failed sync does not flush the deferral it caused');
+  assert.match(bodyOf('popup.js', 'function closeIndexBoundDialog(dialog, state)', 2),
+    /closeDialog\(dialog, state\);\s*\n\s*if \(deferredRefresh\) refreshFromStorage\(\);/,
+    'closing an index-bound dialog does not flush');
+  // Both hide paths for a revealed secret: password and TOTP code.
+  assert.equal([...src.matchAll(/"Show (?:password|TOTP code) for " \+ svc\.name\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(deferredRefresh\) refreshFromStorage\(\);/g)].length, 2,
+    'hiding a revealed password or TOTP code does not flush the deferral it caused');
+});
+
+await test('popup.js encrypts from a snapshot taken before its first await', async () => {
+  const body = bodyOf('popup.js', 'async function saveServices()', 2);
+  // Encrypting from the globals loses the caller's mutation — and a deletion's tombstone, which
+  // is local-only and does not come back — whenever a refresh completes mid-save.
+  assert.match(body, /encryptServices\(key, currentEmail, snap\.services, snap\.wallets, snap\.walletAuditLog, snap\.tombstones, snap\.deletionReview\)/,
+    'saveServices encrypts from the globals rather than the snapshot');
+  // Contiguous, with no await between: the snapshot and both counters must be in the same
+  // synchronous run as the caller's mutation.
+  assert.match(body, /const snap = \{services, wallets, walletAuditLog, tombstones, deletionReview\};\s*\n(?:\s*\/\/[^\n]*\n)*\s*savesInFlight\+\+;\s*\n\s*blobWrites\+\+;\s*\n\s*try \{\s*\n\s*const key = await deriveStorageKey/,
+    'the snapshot and the counters must be contiguous and precede the first await');
+  // Released in a finally, or one throwing write pins every later refresh forever.
+  assert.match(body, /\} finally \{\s*\n\s*savesInFlight--;/, 'savesInFlight is not released in a finally');
+});
+
+await test('popup.js arms a self-write marker and a generation bump on every blob write', async () => {
+  const src = sourceOf('popup.js');
+  // An unarmed write makes the popup reload in response to itself; an unbumped generation makes
+  // an in-flight refresh blind to it. Removals count: ACCOUNT_SCOPED_KEYS includes "services",
+  // and clear() takes everything. Whitespace-tolerant, so a second writer cannot hide behind
+  // different formatting.
+  const writes = [...src.matchAll(/chrome\.storage\.local\.set\(\{\s*services/g)].length
+    + [...src.matchAll(/chrome\.storage\.local\.remove\(ACCOUNT_SCOPED_KEYS\)/g)].length
+    + [...src.matchAll(/chrome\.storage\.local\.clear\(\)/g)].length;
+  assert.equal(writes, 3, 'the set of writes touching the blob changed — re-check each is armed');
+  assert.equal([...src.matchAll(/selfWrites\.services = /g)].length, writes, 'a write is not marked');
+  assert.equal([...src.matchAll(/blobWrites\+\+;/g)].length, writes, 'a write does not bump the generation');
+  // Both wipes must also stop an in-flight refresh from re-installing the old account.
+  assert.equal([...src.matchAll(/accountWiped = true;/g)].length, 2, 'an account wipe is not flagged');
+});
+
+await test('popup.js persists the blob from exactly one place', async () => {
+  // The refresh reasoning depends on it: savesInFlight and blobWrites are what keep a reload
+  // out of a read-modify-write cycle, and only saveServices maintains them.
+  assert.equal([...sourceOf('popup.js').matchAll(/chrome\.storage\.local\.set\(\{\s*services/g)].length, 1);
+});
+
+await test('popup.js closes the index-bound dialogs through the refresh flush', async () => {
+  const src = sourceOf('popup.js');
+  // addDialog and deleteDialog carry an index into `services` (editIndex, deleteTarget), so a
+  // refresh is deferred while either is open. A close that bypasses the wrapper drops that
+  // deferred refresh and the popup stays stale until it is reopened.
+  assert.equal([...src.matchAll(/closeDialog\((?:addDialog|deleteDialog)/g)].length, 0,
+    'an add/delete dialog close bypasses closeIndexBoundDialog');
+  assert.equal([...src.matchAll(/closeIndexBoundDialog\((?:addDialog|deleteDialog)/g)].length, 7,
+    'the number of add/delete close paths changed — check the new one flushes the deferral');
+  // The wrapper is only reachable if nothing hides those dialogs directly.
+  assert.equal([...src.matchAll(/(?:addDialog|deleteDialog)\.classList\.add\("hidden"\)/g)].length, 0,
+    'a dialog is hidden without going through closeDialog, so the flush is skipped');
+});
+
+await test('migrate.js reacts to external services and checklist writes', async () => {
+  const body = bodyOf('migrate.js', 'chrome.storage.onChanged.addListener((changes, area) => {\n    if (!externalChanges', 2);
+  assert.match(body, /"services", "migrationChecklist"/, 'listener does not watch both keys');
+  assert.match(body, /selfWrites/, 'listener does not filter its own writes');
+  // Serialised with every other blob access, or a refresh can interleave with a write and
+  // render a stale row set — the concurrency defect cycle 1 fixed.
+  assert.match(body, /serialize\(refreshChecklist\)/, 'the refresh is not serialised');
+  // A removal means the account was wiped under this tab; it must stop, not re-render — and it
+  // must be checked BEFORE the step-4 early return, or a tab sitting on the wizard keeps its
+  // stale secret and can still import under a dead key.
+  assert.match(body, /newValue === undefined/, 'listener does not detect the blob being removed');
+  assert.match(body, /blobGone = true/, 'listener does not stop the page when the blob is gone');
+  assert.ok(body.indexOf('newValue === undefined') < body.indexOf('steps[3]'),
+    'the blob-removed branch runs after the step-4 early return, so a wizard tab keeps a dead secret');
+});
+
+await test('migrate.js refresh re-reads both stores and re-renders', async () => {
+  const body = bodyOf('migrate.js', 'async function refreshChecklist()', 2);
+  assert.match(body, /await readBlob\(\)/, 'does not re-read the blob');
+  assert.match(body, /await loadChecklist\(allServices\)/, 'does not reconcile membership');
+  assert.match(body, /renderChecklist\(\)/, 'does not re-render the checklist');
+});
+
+await test('migrate.js refuses every blob read and write once the blob is gone', async () => {
+  // Read: an absent key otherwise reads as an empty store (readBlob's own default), which would
+  // show a clean, inviting checklist. Write: every path here is read-modify-write, so a wipe
+  // landing after the read would let the write re-create the blob under a dead secret.
+  assert.match(bodyOf('migrate.js', 'async function readBlob()', 2), /if \(blobGone\) return null;/,
+    'readBlob does not check blobGone');
+  assert.match(bodyOf('migrate.js', 'async function writeBlob(blob)', 2), /if \(blobGone\) return false;/,
+    'writeBlob does not check blobGone');
+  // And the callers must act on that refusal rather than reporting success.
+  const src = sourceOf('migrate.js');
+  assert.equal([...src.matchAll(/await writeBlob\(blob\)/g)].length,
+    [...src.matchAll(/if \(!await writeBlob\(blob\)\)/g)].length, 'a writeBlob result is ignored');
+});
+
+await test('migrate.js arms a self-write marker before every write it makes', async () => {
+  const src = sourceOf('migrate.js');
+  assert.equal([...src.matchAll(/chrome\.storage\.local\.set\(\{ services/g)].length,
+    [...src.matchAll(/selfWrites\.services = storageMarker\(/g)].length, 'unarmed blob write');
+  assert.equal([...src.matchAll(/chrome\.storage\.local\.set\(\{ migrationChecklist/g)].length,
+    [...src.matchAll(/selfWrites\.migrationChecklist = storageMarker\(/g)].length, 'unarmed checklist write');
+  assert.equal([...src.matchAll(/chrome\.storage\.local\.remove\("migrationChecklist"\)/g)].length,
+    [...src.matchAll(/selfWrites\.migrationChecklist = STORAGE_MARKER_ABSENT/g)].length, 'unarmed checklist removal');
+});
+
+await test('migrate.js recovers a tab parked on either bail-out screen', async () => {
+  const src = sourceOf('migrate.js');
+  // Both screens tell the user to visit the popup; neither can act on the return without this.
+  assert.equal([...src.matchAll(/recoverOnBlobChange\(\);/g)].length, 2,
+    'a bail-out screen has no recovery listener');
+  assert.match(bodyOf('migrate.js', 'function recoverOnBlobChange()', 2), /location\.reload\(\)/,
+    'the recovery listener does not reload');
+});
+
+// ============================================================
 // Page script manifests
 // ============================================================
 // A missing <script> tag is invisible to unit tests but breaks the page at runtime:
