@@ -102,4 +102,31 @@ h2 { font-size: 1.1rem; margin-top: 0; }
 #all-done { text-align: center; margin-top: 24px; }
 #all-done p { font-size: 1.1rem; }
 
+/* Stop migration row. Deliberately declares NO `display`: an id selector (1,0,0) beats
+   `.hidden` (0,1,0) whatever the source order, so any display here would pin the row visible
+   and renderChecklist could never hide it. Layout comes from text-align instead. */
+#stop-row { text-align: center; margin-top: 16px; }
+
+/* Modal confirm dialog.
+   These rules are this page's own: migrate.html does not load popup.css, and pulling the whole
+   popup stylesheet in for one dialog would drag along ~300 rules written for a 360px popup.
+   The popup's .dialog is a full-viewport panel, which reads as a sheet there but would leave
+   the text flush against the left edge of a maximised browser window, so this is a centred
+   card over a dimmed backdrop instead. openDialog/closeDialog (popup-dialog.js) only toggle
+   .hidden and manage focus, so the presentation is free.
+   .dialog.hidden is REQUIRED: `.hidden { display: none }` and `.dialog { display: flex }` have
+   equal specificity, and .dialog comes later, so without it every dialog on this page would be
+   permanently visible. */
+.dialog { position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; padding: 20px; overflow-y: auto; }
+.dialog.hidden { display: none; }
+.dialog-box { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-top: 4px solid var(--accent); border-radius: 8px; padding: 24px; max-width: 480px; width: 100%; }
+.dialog-box h2 { margin-top: 0; }
+.dialog-box p { font-size: 0.9rem; }
+.dialog-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
+
+/* Destructive confirm. Same colours as the popup's .btn-danger, with this page's button
+   metrics rather than the popup's full-width ones. */
+.btn-danger { padding: 8px 16px; background: #dc3545; color: #fff; border: 1px solid #dc3545; border-radius: 4px; cursor: pointer; }
+.btn-danger:hover { background: #c82333; }
+
 .pw-toggle { background: none; border: none; cursor: pointer; font-size: 0.9rem; padding: 2px 4px; }

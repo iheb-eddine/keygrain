@@ -2362,6 +2362,30 @@ await test('ensureMembership: an empty v2 checklist with no flags is deleted', a
   assert.equal(r.changed, true);
 });
 
+// Stop migration removes the checklist key, and it MUST clear the flags in the same operation.
+// A flag left behind puts this reconciliation in exactly the state it exists to repair — flags
+// with no checklist — so the next external blob write materialises a fresh checklist and the
+// Stop un-does itself. Dismiss got away with removing the key alone only because it was
+// unreachable while any flag was set; a Stop control reachable with rows pending makes the
+// defect real.
+await test('ensureMembership: a leftover flag resurrects a removed checklist', async () => {
+  const batch = [SVC('a', {migrating: true}), SVC('b', {migrating: true})];
+
+  // The wrong implementation: key removed, one flag missed.
+  const halfCleared = kmig('applyMigrating', batch, ['a'], false, 5000).services;
+  const resurrected = kmig('ensureMembership', null, halfCleared, 'T1');
+  assert.equal(resurrected.changed, true);
+  assert.deepEqual(resurrected.checklist.items, [{id: 'b'}], 'a leftover flag failed to resurrect the checklist');
+
+  // What Stop does: every flag cleared, then the key removed.
+  const allCleared = kmig('applyMigrating', batch, kmig('migratingIds', batch), false, 5000).services;
+  const stopped = kmig('ensureMembership', null, allCleared, 'T1');
+  assert.equal(stopped.checklist, null, 'a fresh checklist was materialised after Stop');
+  assert.equal(stopped.changed, false, 'the absent checklist would be written back');
+  // And nothing projects a row, so no later render brings the stopped batch back either.
+  assert.equal(kmig('project', null, allCleared).length, 0);
+});
+
 // Storage can be corrupt. Every services[] path is null-guarded, so the checklist paths
 // must be too: one null item used to throw out of the init path and leave a blank page.
 await test('itemIds: malformed items are ignored rather than thrown on', async () => {
@@ -2724,6 +2748,10 @@ await test('migrate.js reacts to external services and checklist writes', async 
   // stale secret and can still import under a dead key.
   assert.match(body, /newValue === undefined/, 'listener does not detect the blob being removed');
   assert.match(body, /blobGone = true/, 'listener does not stop the page when the blob is gone');
+  // A Stop confirm left open would sit on top of the error screen — it is not one of `steps`, so
+  // hiding those does not reach it — and confirming it would run a write path that is refused.
+  assert.match(body, /blobGone = true;[\s\S]{0,400}?closeStopDialog\(\);/,
+    'an open stop dialog survives the account being wiped under the tab');
   assert.ok(body.indexOf('newValue === undefined') < body.indexOf('steps[3]'),
     'the blob-removed branch runs after the step-4 early return, so a wizard tab keeps a dead secret');
 });
@@ -2768,6 +2796,91 @@ await test('migrate.js recovers a tab parked on either bail-out screen', async (
     'the recovery listener does not reload');
 });
 
+await test('migrate.js Stop clears every flag before it forgets the batch', async () => {
+  const body = bodyOf('migrate.js', 'function stopMigration(ids)', 2);
+  // Removing the key alone leaves the flags behind, and ensureMembership then materialises a
+  // fresh checklist from them on the next external write — the Stop un-does itself.
+  assert.match(body, /setMigrating\(ids, false\)/, 'Stop does not clear the migrating flags');
+  const removal = 'chrome.storage.local.remove("migrationChecklist")';
+  assert.ok(body.includes(removal), 'Stop does not remove the checklist');
+  assert.ok(body.indexOf('setMigrating(ids, false)') < body.indexOf(removal),
+    'the checklist is removed before the flags are cleared');
+  // A failed read or write must not fall through to the removal and report success: nothing was
+  // written, so the flags survive and would resurrect the checklist anyway.
+  assert.match(body, /if \(ids\.length && !await setMigrating\(ids, false\)\) \{[\s\S]{0,240}?return;/,
+    'Stop ignores a failed flag write');
+  // ...and the plain dismiss must not be routed through it at all: it needs no blob, so
+  // requiring one would make it fail whenever the blob cannot be read.
+  assert.match(body, /if \(ids\.length && /, 'a dismiss with nothing pending still requires the blob');
+  // The destroyed set is the PARAMETER, never re-derived here. Recomputing it would clear flags
+  // that arrived after the confirm and were never named in it.
+  assert.doesNotMatch(body, /const ids = /, 'stopMigration re-derives the id set instead of using the confirmed one');
+  // The truthful re-render: a batch that arrived after the confirm survives and must stay on
+  // screen rather than be replaced by a success message.
+  assert.match(body, /renderChecklist\(\);\s*\n\s*if \(!KeygrainMigration\.migratingIds\(allServices\)\.length\) \{/,
+    'Stop reports success without checking whether anything survived');
+});
+
+await test('migrate.js Stop destroys exactly the set it confirmed', async () => {
+  const body = bodyOf('migrate.js', 'stopBtn.addEventListener("click"', 2);
+  // The count in the message and the ids that get cleared must be one and the same read. Two
+  // reads let an external write land between them: the dialog says N and Stop forgets N+M, or
+  // worse, the count still reads zero and the confirm is skipped altogether.
+  assert.match(body, /const ids = KeygrainMigration\.migratingIds\(allServices\);/,
+    'the id set is not captured at click time');
+  assert.match(body, /stopDialogCount\.textContent = "Keygrain will forget the " \+ ids\.length/,
+    'the message count is not taken from the captured id set');
+  assert.match(body, /stopDialogState = Object\.assign\(openDialog\(stopDialog, stopBtn\), \{ids\}\)/,
+    'the confirmed id set is not carried on the dialog state');
+  assert.match(sourceOf('migrate.js'),
+    /stopConfirm\.addEventListener\("click", \(\) => \{[\s\S]{0,200}?const ids = stopDialogState\.ids;[\s\S]{0,120}?stopMigration\(ids\);/,
+    'confirm does not pass the confirmed id set to stopMigration');
+  // The pending count comes from the flags, not from membership: a batch that reached this
+  // device through sync has flags and no checklist, and would otherwise count as zero and skip
+  // the confirm while silently discarding real work.
+  assert.match(body, /migratingIds\(allServices\)/, 'the pending count does not come from the flags');
+  // Nothing pending means nothing is forgotten, so that path stays the one-click Dismiss.
+  assert.match(body, /if \(!ids\.length\) \{ stopMigration\(ids\); return; \}/,
+    'the nothing-pending path no longer skips the confirm');
+});
+
+await test('migrate.js Stop opens a usable modal, and cancel only closes', async () => {
+  const body = bodyOf('migrate.js', 'stopBtn.addEventListener("click"', 2);
+  // A real dialog, not window.confirm: openDialog gives the focus trap and focus restore.
+  assert.match(body, /openDialog\(stopDialog, stopBtn\)/, 'Stop does not open the confirm dialog');
+  assert.doesNotMatch(sourceOf('migrate.js'), /window\.confirm\(/, 'Stop uses window.confirm');
+  // openDialog does not move focus. Left on stopBtn, focus sits behind the overlay, the Tab trap
+  // (bound to the dialog, not an ancestor of stopBtn) never fires, and the dialog is never
+  // announced. Cancel takes it, not the destructive button.
+  assert.match(body, /stopCancel\.focus\(\)/, 'focus is never moved into the dialog');
+  // Re-entrancy: a second open would bind a second trap listener to the same element and orphan
+  // the first, and would overwrite the confirmed id set.
+  assert.match(body, /if \(stopDialogState\) return;/, 'the dialog can be opened twice over itself');
+  // Cancel must do nothing but close.
+  const cancel = bodyOf('migrate.js', 'function closeStopDialog()', 2);
+  assert.match(cancel, /closeDialog\(stopDialog, stopDialogState\)/, 'cancel does not close the dialog');
+  assert.match(cancel, /stopDialogState = null;/, 'the dialog state is not cleared, so the confirmed set outlives the dialog');
+  assert.doesNotMatch(cancel, /setMigrating|storage\.local/, 'cancel touches storage');
+  assert.match(sourceOf('migrate.js'), /stopCancel\.addEventListener\("click", closeStopDialog\);/,
+    'cancel is not wired to a close-only handler');
+});
+
+await test('migrate.js shows Stop independently of the all-done panel', async () => {
+  const src = sourceOf('migrate.js');
+  const body = bodyOf('migrate.js', 'function renderChecklist()', 2);
+  // The literal bug 3: the only control lived inside #all-done, which is unhidden only when
+  // doneCount === total, so a migration could not be abandoned part-way through. Anything other
+  // than "no rows at all" as the hide condition reintroduces that.
+  assert.match(body, /stopRow\.classList\.toggle\("hidden", total === 0\)/,
+    'the Stop row is hidden by something other than "there is no batch"');
+  // Exactly one place decides it, file-wide. A second `stopRow.classList` call anywhere — even
+  // after this one — can re-hide the row while the assertion above still passes.
+  assert.equal([...src.matchAll(/stopRow\.classList/g)].length, 1,
+    'the Stop row visibility is decided in more than one place');
+  assert.match(body, /stopBtn\.textContent = pendingCount > 0 \? "Stop migration" : "Dismiss checklist"/,
+    'the Stop label no longer adapts to whether anything is pending');
+});
+
 // ============================================================
 // Page script manifests
 // ============================================================
@@ -2796,6 +2909,53 @@ await test('migrate.html loads every module migrate.js depends on, in order', as
     assert.ok(scripts.indexOf(dep) < scripts.indexOf('migrate.js'), dep + ' loaded after migrate.js');
   }
   assert.ok(scripts.indexOf('sync.js') < scripts.indexOf('popup-crypto.js'), 'popup-crypto.js needs sync.js first');
+});
+
+await test('migrate.html puts the Stop control outside #all-done and gives it a modal confirm', async () => {
+  const html = sourceOf('migrate.html');
+  // #all-done is unhidden only when every service is rotated, so a control inside it cannot be
+  // used to abandon a migration — that was bug 3.
+  assert.ok(!html.includes('id="dismiss-btn"'),
+    '#dismiss-btn is back, and it is unreachable while rows are pending');
+  const stopBtnAt = html.indexOf('id="stop-btn"');
+  assert.ok(stopBtnAt > 0, '#stop-btn is missing');
+  // Walk the div depth from #all-done to find where it actually closes. Taking the first
+  // </div> instead would be fooled by any wrapper inside the panel.
+  const allDoneAt = html.indexOf('<div id="all-done"');
+  assert.ok(allDoneAt > 0, '#all-done is missing');
+  let depth = 0, allDoneEnd = -1;
+  for (const m of html.slice(allDoneAt).matchAll(/<div\b|<\/div>/g)) {
+    depth += m[0] === '</div>' ? -1 : 1;
+    if (depth === 0) { allDoneEnd = allDoneAt + m.index; break; }
+  }
+  assert.ok(allDoneEnd > 0, '#all-done is never closed');
+  assert.ok(stopBtnAt > allDoneEnd, '#stop-btn is nested inside #all-done');
+  // openDialog only toggles .hidden and traps Tab, so the modal semantics must be in the markup.
+  assert.match(html, /id="stop-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="stop-dialog-title"/,
+    'the stop dialog is missing its modal attributes');
+  assert.ok(html.includes('id="stop-dialog-title"'), 'aria-labelledby points at no element');
+  assert.ok(html.includes('id="stop-dialog-count"'), 'the dialog cannot state how many services are affected');
+  // Cancel first, destructive action last — the order popup.html's #delete-dialog uses.
+  assert.match(html, /id="stop-cancel"[\s\S]*?id="stop-confirm"/, 'the destructive button comes first');
+  assert.match(html, /id="stop-confirm" class="btn-danger"/, 'the destructive button is not marked as such');
+});
+
+await test('migrate.css styles the dialog it now owns, and can still hide it', async () => {
+  const css = sourceOf('migrate.css');
+  // migrate.html does not load popup.css, so none of these can be inherited from it.
+  for (const rule of ['.dialog {', '.dialog-box {', '.dialog-actions {', '.btn-danger {']) {
+    assert.ok(css.includes(rule), rule + ' missing from migrate.css');
+  }
+  // .hidden (0,1,0) and .dialog (0,1,0) have equal specificity and .dialog sets display later in
+  // the file, so without this rule the confirm dialog is permanently on screen.
+  assert.match(css, /\.dialog\.hidden \{ display: none; \}/, '.dialog.hidden is missing');
+  // The same trap through an id selector, which beats .dialog.hidden (1,0,0 vs 0,2,0) whatever
+  // the order: no id rule for a hideable element may declare display. Covers #stop-row too, so
+  // both directions of the trap are pinned by one check.
+  for (const m of css.matchAll(/#(stop-row|stop-dialog|all-done)[^{]*\{([^}]*)\}/g)) {
+    assert.ok(!m[2].includes('display'), '#' + m[1] + ' declares display, which defeats .hidden');
+  }
+  assert.ok(/#stop-row \{/.test(css), 'the #stop-row rule is missing');
 });
 
 // ============================================================

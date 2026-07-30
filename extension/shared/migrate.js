@@ -197,6 +197,12 @@
   const progressText = document.getElementById("progress-text");
   const checklistEl = document.getElementById("checklist");
   const allDone = document.getElementById("all-done");
+  const stopRow = document.getElementById("stop-row");
+  const stopBtn = document.getElementById("stop-btn");
+  const stopDialog = document.getElementById("stop-dialog");
+  const stopDialogCount = document.getElementById("stop-dialog-count");
+  const stopCancel = document.getElementById("stop-cancel");
+  const stopConfirm = document.getElementById("stop-confirm");
 
   // State
   let parsedEntries = null;
@@ -817,6 +823,20 @@
     });
 
     allDone.classList.toggle("hidden", !(doneCount === total && total > 0));
+
+    // Stop is reachable whenever there is a batch to end, pending rows or not. The literal
+    // bug 3 was that the only control lived inside #all-done, which is unhidden only when
+    // every row is done, so a migration could not be abandoned part-way through.
+    //
+    // `total === 0` means there is no batch: no membership and no flags. Rows, not `checklist`,
+    // decide it — a flagged service with no checklist alongside (an import that reached this
+    // device through sync) still projects a pending row, and that is a batch the user must be
+    // able to stop.
+    const pendingCount = total - doneCount;
+    stopRow.classList.toggle("hidden", total === 0);
+    // With nothing pending there is nothing to forget, so this is the plain dismiss it
+    // replaces — same label, and the handler skips the confirm.
+    stopBtn.textContent = pendingCount > 0 ? "Stop migration" : "Dismiss checklist";
   }
 
   // Filter buttons
@@ -829,29 +849,100 @@
     });
   });
 
-  // Dismiss checklist
+  // === Stop migration ===
   //
-  // Removes membership only, and deliberately does not touch the flags — it cannot need to.
-  // The button lives inside #all-done, which renderChecklist unhides only when every row is
-  // done, and project() lists EVERY flagged service as a pending row, so reaching this button
-  // means no service carries `migrating`. ensureMembership with no flags and no stored
-  // checklist returns `changed: false`, so the cross-context refresh below cannot resurrect
-  // what this removes.
+  // Replaces the former Dismiss button, which lived inside #all-done and was therefore
+  // unreachable while anything was still pending — bug 3: there was no way to abandon a
+  // migration part-way through. One control now covers both cases, and because it always
+  // clears the flags the reachability argument below disappears rather than being reasoned
+  // about again by the next reader.
   //
-  // CYCLE 3 (Stop migration) BREAKS THAT PRECONDITION: a Stop control is visible while rows
-  // are still pending, so it MUST clear the flags — setMigrating(migratingIds(...), false) —
-  // before removing the key. Removing the key alone would leave flags behind, and the next
-  // external blob write would materialise a fresh checklist from them and un-dismiss itself.
-  document.getElementById("dismiss-btn").addEventListener("click", () => {
+  // CLEARING THE FLAGS IS NOT OPTIONAL. Dismiss could remove membership alone only because it
+  // was unreachable while any flag was set: project() lists EVERY flagged service as a pending
+  // row, so #all-done being visible proved no service carried `migrating`. Stop IS reachable
+  // with rows pending, so removing the key alone would leave flags behind, and the next
+  // external blob write would run ensureMembership, materialise a fresh checklist from those
+  // flags, and un-do the Stop.
+  //
+  // Semantics (agreed with the user): the services not yet rotated are forgotten — the sites
+  // keep their old passwords, and Keygrain's generated password will not work there until the
+  // user changes it on the site. Per-service granularity stays available through Mark as
+  // rotated. The confirm dialog states that consequence.
+  //
+  // THE CONFIRMED SET IS THE DESTROYED SET. The id list is captured when the button is clicked,
+  // travels with the dialog, and is not recomputed when the write finally runs. Recomputing it
+  // would mean a flag that arrived in between — a sync from another device, another tab's
+  // import — is cleared without ever appearing in the sentence the user agreed to; and a click
+  // taken while the count still read zero would skip the confirm entirely and destroy it
+  // silently. That window is not narrow: a refresh triggered by an external write spends an
+  // Argon2id derivation re-reading the blob before it can update the count. Flags that arrive
+  // after the click therefore survive, and ensureMembership re-materialises a checklist for
+  // them — a batch this Stop never saw is a batch the user still needs to see.
+
+  let stopDialogState = null;
+
+  function closeStopDialog() {
+    if (!stopDialogState) return;
+    closeDialog(stopDialog, stopDialogState);
+    stopDialogState = null;
+  }
+
+  function stopMigration(ids) {
     serialize(async () => {
+      // Skipped entirely when there is nothing to clear: the plain dismiss needs no blob, so
+      // going through setMigrating would make it fail whenever the blob cannot be read — a
+      // regression against the button this replaces — and would derive a key for nothing.
+      //
+      // False means nothing was written (blobGone, a failed decrypt). Report that rather than
+      // removing the checklist and claiming success: the flags would survive and resurrect it
+      // on the next external write anyway.
+      if (ids.length && !await setMigrating(ids, false)) {
+        progressText.textContent = "Nothing was changed. " + BLOB_READ_FAILED;
+        return;
+      }
       selfWrites.migrationChecklist = STORAGE_MARKER_ABSENT;
       await chrome.storage.local.remove("migrationChecklist");
       checklist = null;
-      allDone.classList.add("hidden");
-      checklistEl.textContent = "";
-      progressText.textContent = "Checklist dismissed.";
-      progressBar.style.width = "0%";
+      // Re-render rather than clearing the DOM by hand. With membership gone every remaining row
+      // is a still-flagged service, so an empty list is proof the batch is really gone, and a
+      // non-empty one is a batch that arrived after the confirm — which must stay on screen
+      // instead of being replaced by a success message that would be a lie.
+      renderChecklist();
+      if (!KeygrainMigration.migratingIds(allServices).length) {
+        progressText.textContent = ids.length
+          ? "Migration stopped. The services you had not rotated have been forgotten."
+          : "Checklist dismissed.";
+      }
     });
+  }
+
+  stopBtn.addEventListener("click", () => {
+    // Focus moves into the dialog below, but a stray second activation would open it again, add
+    // a second Tab-trap listener to the same element and orphan the first.
+    if (stopDialogState) return;
+    const ids = KeygrainMigration.migratingIds(allServices);
+    // Nothing pending means nothing is forgotten, so there is no consequence to confirm and
+    // this is the plain Dismiss it replaces — one click, as before.
+    if (!ids.length) { stopMigration(ids); return; }
+    stopDialogCount.textContent = "Keygrain will forget the " + ids.length +
+      (ids.length === 1 ? " service" : " services") + " you have not rotated yet.";
+    // openDialog, not window.confirm: it gives the focus trap and restores focus on close.
+    // `ids` rides on the dialog state so the set the user confirms cannot be separated from the
+    // sentence that describes it, and cannot outlive the dialog.
+    stopDialogState = Object.assign(openDialog(stopDialog, stopBtn), {ids});
+    // openDialog does not move focus. Without this, focus stays on stopBtn behind the overlay:
+    // the trap is bound to the dialog, which is not stopBtn's ancestor, so it never sees a
+    // keystroke, and a screen reader is never taken into the dialog at all. Cancel takes focus
+    // rather than the destructive button, matching the popup's own destructive dialogs.
+    stopCancel.focus();
+  });
+
+  stopCancel.addEventListener("click", closeStopDialog);
+  stopConfirm.addEventListener("click", () => {
+    if (!stopDialogState) return;
+    const ids = stopDialogState.ids;
+    closeStopDialog();
+    stopMigration(ids);
   });
 
   // === Cross-context refresh ===
@@ -874,6 +965,10 @@
     // checklist and accept an import under a dead key.
     if (changes.services && changes.services.newValue === undefined) {
       blobGone = true;
+      // A Stop confirm left open would otherwise sit on top of the error screen — it is not
+      // one of `steps`, so hiding those does not reach it — and confirming it would run a
+      // write path that is now refused.
+      closeStopDialog();
       steps.forEach(s => s.classList.add("hidden"));
       errorScreen.textContent = "Keygrain data was removed on this device. Open the Keygrain popup, unlock, then reload this page.";
       errorScreen.classList.remove("hidden");
