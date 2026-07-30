@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Components are 
 
 ## Chrome extension
 
-### [1.2.0] - 2026-07-28
+### [1.2.0] - 2026-07-29
 
 Deletions now sync properly across your devices, and importing from another password
 manager shows you exactly what it is about to use.
@@ -125,6 +125,15 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 (SPEC v4).
 
 ## Android app
+
+### [1.2.0] - 2026-07-30
+
+- Deleting a service now sticks. Remove an entry on one device and it stays removed everywhere, instead of reappearing when another syncs.
+- Delete-versus-edit conflicts are kept, not guessed: delete on one device while editing on another and Keygrain shows you both.
+- Fewer failed syncs when several devices write at once.
+- Update your other devices too — deletions only propagate between updated ones.
+
+No algorithm changes — every password, code, key and seed is byte-identical (SPEC v4).
 
 ### [1.1.0] - 2026-07-26
 

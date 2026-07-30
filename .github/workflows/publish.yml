@@ -19,6 +19,33 @@ jobs:
       id-token: write   # REQUIRED: mint the OIDC token for PyPI Trusted Publishing
       contents: read    # checkout
     steps:
+      # Belt-and-braces, and deliberately the FIRST step so nothing is checked out
+      # or built before the tag is vetted.
+      #
+      # The job-level `if` above is the primary guard, but it is not sufficient on
+      # its own: a `release` event runs each workflow file AS IT EXISTS AT THE
+      # TAGGED COMMIT, not as it exists on main. So when a store finally ships a
+      # build from an older commit and you tag it, the workflow that runs is the
+      # one from back then — guard included, or not. (Cutting chrome-v1.2.0 at
+      # 55a8934 on 2026-07-30 hit exactly this; the workflow had to be disabled by
+      # hand for the duration.) This step cannot fix an old tag either, but it does
+      # fail closed if the `if:` is ever edited, inverted, or sidestepped by a new
+      # trigger, and it states the reason in the log instead of silently uploading.
+      - name: Refuse to publish unless this is a CLI release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "$TAG" in
+            cli-v*)
+              echo "Tag '$TAG' is a CLI release — proceeding to PyPI." ;;
+            *)
+              echo "::error::Refusing to publish to PyPI: tag '$TAG' is not 'cli-v*'."
+              echo "Component tags are chrome-v*, firefox-v*, android-v*, cli-v*."
+              echo "Legacy 'vX.Y.Z' tags are also refused on purpose — CLI 1.0.0"
+              echo "shipped from v1.0.0 and must not be re-published."
+              exit 1 ;;
+          esac
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
