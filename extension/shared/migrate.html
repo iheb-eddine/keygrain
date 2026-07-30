@@ -91,6 +91,13 @@
   <script src="lib/hash-wasm-argon2.js"></script>
   <script src="keygrain.js"></script>
   <script src="sync.js"></script>
+  <!-- popup-crypto.js needs the base64 helpers from sync.js, so it loads after it.
+       Both are shared with the popup on purpose: this page reads and writes the same
+       encrypted services blob, and a second private copy of that logic is what let it
+       write version-1 payloads that dropped tombstones and deletion_review. -->
+  <script src="popup-crypto.js"></script>
+  <script src="popup-dialog.js"></script>
+  <script src="migration-state.js"></script>
   <script src="migrate.js"></script>
 </body>
 </html>

@@ -67,7 +67,7 @@ function buildContext() {
   runInContext(`var module = {exports:{}}; var exports = module.exports;\n${tweetnaclSrc}\nvar nacl = module.exports;`, ctx);
 
   // Load source files in order
-  for (const file of ['keygrain.js', 'bip39-wordlist.js', 'wallet.js', 'bip85.js', 'totp.js', 'ssh.js', 'sync.js', 'autofill.js', 'inline-autofill.js', 'migrate.js']) {
+  for (const file of ['keygrain.js', 'bip39-wordlist.js', 'wallet.js', 'bip85.js', 'totp.js', 'ssh.js', 'sync.js', 'popup-crypto.js', 'popup-dialog.js', 'autofill.js', 'inline-autofill.js', 'migration-state.js', 'migrate.js']) {
     const src = readFileSync(resolve(shared, file), 'utf8');
     runInContext(src, ctx);
   }
@@ -99,6 +99,14 @@ function ki(method, ...args) {
 function km(method, ...args) {
   ctx._kmArgs = args;
   return runInContext(`KeygrainMigrate.${method}(..._kmArgs)`, ctx);
+}
+
+// Helper to call KeygrainMigration.* pure helpers (migration-state.js) in the VM
+// context. Results are round-tripped through JSON so assertions compare plain data
+// rather than VM-realm objects.
+function kmig(method, ...args) {
+  ctx._kmigArgs = args;
+  return runInContext(`JSON.parse(JSON.stringify(KeygrainMigration.${method}(..._kmigArgs) ?? null))`, ctx);
 }
 
 // --- Load test vectors ---
@@ -2040,6 +2048,458 @@ await test('resolveSiteFields: extractDomain === resolveSiteFields(...).site for
   for (const [url, name] of inputs) {
     assert.equal(km('extractDomain', url, name), km('resolveSiteFields', url, name).site, `mismatch for [${url}, ${name}]`);
   }
+});
+
+// ============================================================
+// migration-state.js — single source of truth for migration status
+// ============================================================
+// Migration progress used to live in two places at once: services[].migrating
+// (synced) and migrationChecklist[].status (not synced). Nothing kept them in
+// agreement and both directions drifted, so the checklist now stores MEMBERSHIP
+// only and every status is DERIVED from the flag. These tests pin that property
+// and each of the drift paths that motivated it.
+
+const SVC = (id, over = {}) => ({
+  id, name: id + '.com', site: id + '.com', email: 'a@b.c',
+  length: 20, symbols: '!@#$%&*-_=+?', counter: 1,
+  updated_at: 1000, synced: true, ...over
+});
+const CL2 = (...ids) => ({version: 2, createdAt: 'T0', items: ids.map(id => ({id}))});
+
+await test('project: status is derived from services[].migrating', async () => {
+  const services = [SVC('a', {migrating: true}), SVC('b')];
+  const rows = kmig('project', CL2('a', 'b'), services);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].status, 'pending');
+  assert.equal(rows[1].status, 'done');
+});
+
+// The bug behind "the menu still says migration in progress": rotating from the popup
+// deletes svc.migrating but cannot touch the checklist, so a stored status stayed
+// "pending" forever. The count now reads the flag and reports it as done.
+await test('countPending: popup rotation (flag cleared) counts as done', async () => {
+  assert.equal(kmig('countPending', [SVC('a')]), 0);
+});
+
+await test('countPending: counts exactly the flagged services', async () => {
+  assert.equal(kmig('countPending', [SVC('a', {migrating: true}), SVC('b', {migrating: true}), SVC('c')]), 2);
+  assert.equal(kmig('countPending', []), 0);
+  assert.equal(kmig('countPending', null), 0);
+});
+
+// The count must not consult the checklist. It is local-only, while `migrating` is in
+// the sync blob, so a device that received an import through sync has the flags and no
+// checklist — consulting membership would show N badges and a count of zero.
+await test('countPending: independent of the checklist', async () => {
+  assert.equal(kmig('countPending', [SVC('a', {migrating: true})]), 1);
+  assert.deepEqual(kmig('migratingIds', [SVC('a'), SVC('b', {migrating: true})]), ['b']);
+});
+
+// Same reason, from the render side: a flagged service the checklist forgot (renamed
+// before the v1 upgrade could resolve it) must still be listed as pending, because the
+// popup is still badging it and still warning on copy/fill.
+await test('project: a flagged non-member is still listed as pending', async () => {
+  const rows = kmig('project', CL2('a'), [SVC('a'), SVC('b', {migrating: true})]);
+  assert.deepEqual(rows.map(r => [r.id, r.status]), [['a', 'done'], ['b', 'pending']]);
+});
+
+await test('project: flagged non-members are not duplicated', async () => {
+  const rows = kmig('project', CL2('a', 'a'), [SVC('a', {migrating: true})]);
+  assert.equal(rows.length, 1);
+});
+
+await test('project: members come first in checklist order, then flagged strangers', async () => {
+  const services = [SVC('x', {migrating: true}), SVC('b'), SVC('a', {migrating: true})];
+  assert.deepEqual(kmig('project', CL2('a', 'b'), services).map(r => r.id), ['a', 'b', 'x']);
+});
+
+// The other stuck-counter path: a service deleted in the popup left an item that
+// nothing could ever mark done.
+await test('project: items whose service no longer exists are dropped', async () => {
+  const rows = kmig('project', CL2('a', 'gone'), [SVC('a', {migrating: true})]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'a');
+});
+
+await test('project: name and email come from the service, so renames show through', async () => {
+  const rows = kmig('project', CL2('a'), [SVC('a', {name: 'Renamed', email: 'new@b.c', migrating: true})]);
+  assert.equal(rows[0].name, 'Renamed');
+  assert.equal(rows[0].email, 'new@b.c');
+});
+
+await test('project: no checklist and no flags yields no rows', async () => {
+  assert.equal(kmig('project', null, [SVC('a')]).length, 0);
+  assert.equal(kmig('project', CL2(), [SVC('a')]).length, 0);
+  assert.equal(kmig('project', null, []).length, 0);
+});
+
+// Membership is only needed to remember DONE rows. A pending row needs nothing but
+// the flag, so the checklist being absent must not hide it.
+await test('project: a flag with no checklist at all still yields a pending row', async () => {
+  const rows = kmig('project', null, [SVC('a', {migrating: true})]);
+  assert.deepEqual(rows.map(r => [r.id, r.status]), [['a', 'pending']]);
+});
+
+await test('project: services without an id are not addressable', async () => {
+  const legacy = {name: 'a.com', email: 'a@b.c', migrating: true};
+  assert.equal(kmig('project', {version: 2, createdAt: 'T0', items: [{}]}, [legacy]).length, 0);
+});
+
+// ---- v1 -> v2 upgrade ----
+
+await test('upgradeChecklist: v1 items resolve to service ids, case-insensitively', async () => {
+  const services = [SVC('a', {name: 'GitHub', email: 'Me@B.C'}), SVC('b', {name: 'Google'})];
+  const up = kmig('upgradeChecklist', {version: 1, createdAt: 'T0', items: [
+    {name: 'github', email: 'me@b.c', status: 'done'},
+    {name: 'Google', email: 'a@b.c', status: 'pending'}
+  ]}, services);
+  assert.equal(up.version, 2);
+  assert.equal(up.createdAt, 'T0');
+  assert.deepEqual(up.items, [{id: 'a'}, {id: 'b'}]);
+});
+
+await test('upgradeChecklist: unmatched v1 items are dropped', async () => {
+  const up = kmig('upgradeChecklist', {version: 1, items: [{name: 'ghost', email: 'x@y.z'}]}, [SVC('a')]);
+  assert.deepEqual(up.items, []);
+});
+
+await test('upgradeChecklist: two items with the same name map to distinct services', async () => {
+  const services = [SVC('a', {name: 'dup'}), SVC('b', {name: 'dup'})];
+  const up = kmig('upgradeChecklist', {version: 1, items: [
+    {name: 'dup', email: 'a@b.c'}, {name: 'dup', email: 'a@b.c'}
+  ]}, services);
+  assert.deepEqual(up.items, [{id: 'a'}, {id: 'b'}]);
+});
+
+// A v1 "done" whose flag survived (rename defeated the old name match, or the sync
+// tie-break restored it) must read as pending: the popup is still warning about it.
+await test('upgradeChecklist: discards stored status, so a surviving flag reads pending', async () => {
+  const services = [SVC('a', {migrating: true})];
+  const v1 = {version: 1, items: [{name: 'a.com', email: 'a@b.c', status: 'done'}]};
+  assert.equal(kmig('project', v1, services)[0].status, 'pending');
+});
+
+await test('upgradeChecklist: a null checklist upgrades to an empty v2 one', async () => {
+  const up = kmig('upgradeChecklist', null, [SVC('a')]);
+  assert.equal(up.version, 2);
+  assert.equal(up.createdAt, null);
+  assert.deepEqual(up.items, []);
+});
+
+await test('normalize: absent checklist stays null and is never invented', async () => {
+  assert.equal(kmig('normalize', null, []).checklist, null);
+  assert.equal(kmig('normalize', undefined, []).changed, false);
+  assert.equal(kmig('normalize', {version: 1}, []).checklist, null); // no items array
+});
+
+await test('normalize: v2 is returned unchanged, v1 is flagged as changed', async () => {
+  assert.equal(kmig('normalize', CL2('a'), [SVC('a')]).changed, false);
+  const r = kmig('normalize', {version: 1, items: [{name: 'a.com', email: 'a@b.c'}]}, [SVC('a')]);
+  assert.equal(r.changed, true);
+  assert.equal(r.checklist.version, 2);
+});
+
+// ---- membership ----
+
+await test('newChecklist: version 2, ids deduped, blanks dropped', async () => {
+  const cl = kmig('newChecklist', ['a', 'b', 'a', null, ''], 'T1');
+  assert.equal(cl.version, 2);
+  assert.equal(cl.createdAt, 'T1');
+  assert.deepEqual(cl.items, [{id: 'a'}, {id: 'b'}]);
+});
+
+await test('addIds: appends new ids and keeps the original createdAt', async () => {
+  const cl = kmig('addIds', CL2('a'), ['b', 'a', 'c'], 'T9');
+  assert.equal(cl.createdAt, 'T0');
+  assert.deepEqual(cl.items, [{id: 'a'}, {id: 'b'}, {id: 'c'}]);
+});
+
+await test('addIds: a v1 or absent checklist is replaced by a fresh v2 one', async () => {
+  assert.deepEqual(kmig('addIds', null, ['a'], 'T1').items, [{id: 'a'}]);
+  const fromV1 = kmig('addIds', {version: 1, items: [{name: 'x'}]}, ['a'], 'T1');
+  assert.equal(fromV1.version, 2);
+  assert.deepEqual(fromV1.items, [{id: 'a'}]);
+});
+
+// ---- flag writes ----
+
+// Without the updated_at bump the sync merge ("newer wins, remote wins ties" —
+// sync.js mergeServices) resolved in favour of the server's still-flagged copy, so
+// clearing the flag was silently undone on this device and never reached others.
+await test('applyMigrating: clearing bumps updated_at', async () => {
+  const r = kmig('applyMigrating', [SVC('a', {migrating: true})], ['a'], false, 5000);
+  assert.equal(r.changed, 1);
+  assert.equal(r.services[0].migrating, undefined);
+  assert.equal(r.services[0].updated_at, 5000);
+});
+
+await test('applyMigrating: setting adds the flag and bumps updated_at', async () => {
+  const r = kmig('applyMigrating', [SVC('a')], ['a'], true, 5000);
+  assert.equal(r.changed, 1);
+  assert.equal(r.services[0].migrating, true);
+  assert.equal(r.services[0].updated_at, 5000);
+});
+
+// reconcileServices documents `synced === true` as a property of IDENTITY, not of
+// content: "editing a service MUST NOT clear it, or rule 6 becomes unreachable for
+// edited records and deleted services resurrect". Clearing it here would mean a
+// service deleted on another device is re-created by rule 4 instead of being reported.
+// The updated_at bump alone wins the tie-break, and `migrating` is part of
+// canonicalBlobPayload so the PUT-skip cannot swallow the change.
+await test('applyMigrating: leaves `synced` alone in both directions', async () => {
+  assert.equal(kmig('applyMigrating', [SVC('a', {migrating: true, synced: true})], ['a'], false, 5000).services[0].synced, true);
+  assert.equal(kmig('applyMigrating', [SVC('a', {synced: true})], ['a'], true, 5000).services[0].synced, true);
+  assert.equal(kmig('applyMigrating', [SVC('a', {migrating: true, synced: false})], ['a'], false, 5000).services[0].synced, false);
+});
+
+await test('applyMigrating: null entries in the list are skipped, not thrown on', async () => {
+  ctx._nullArgs = [[null, SVC('a', {migrating: true})]];
+  const ok = runInContext(
+    `(() => { const r = KeygrainMigration.applyMigrating(_nullArgs[0], ['a'], false, 5000);
+       return r.changed === 1 && r.services[0] === null && r.services[1].migrating === undefined; })()`, ctx);
+  assert.equal(ok, true);
+});
+
+await test('applyMigrating: untargeted services are left exactly as they were', async () => {
+  const r = kmig('applyMigrating', [SVC('a', {migrating: true}), SVC('b', {migrating: true})], ['a'], false, 5000);
+  assert.equal(r.changed, 1);
+  assert.equal(r.services[1].migrating, true);
+  assert.equal(r.services[1].updated_at, 1000);
+  assert.equal(r.services[1].synced, true);
+});
+
+await test('applyMigrating: a no-op write reports no change and stamps nothing', async () => {
+  const already = kmig('applyMigrating', [SVC('a')], ['a'], false, 5000);
+  assert.equal(already.changed, 0);
+  assert.equal(already.services[0].updated_at, 1000);
+  assert.equal(kmig('applyMigrating', [SVC('a', {migrating: true})], ['a'], true, 5000).changed, 0);
+});
+
+await test('applyMigrating: unknown ids and an empty id list change nothing', async () => {
+  assert.equal(kmig('applyMigrating', [SVC('a', {migrating: true})], ['nope'], false, 5000).changed, 0);
+  assert.equal(kmig('applyMigrating', [SVC('a', {migrating: true})], [], false, 5000).changed, 0);
+});
+
+await test('applyMigrating: input list is not mutated', async () => {
+  ctx._mutArgs = [[SVC('a', {migrating: true})]];
+  const stillFlagged = runInContext(
+    `(() => { const input = _mutArgs[0];
+       KeygrainMigration.applyMigrating(input, ['a'], false, 5000);
+       return input[0].migrating === true && input[0].updated_at === 1000; })()`, ctx);
+  assert.equal(stillFlagged, true);
+});
+
+// ---- membership catch-up ----
+
+await test('ensureMembership: records flagged services the checklist does not know', async () => {
+  const r = kmig('ensureMembership', CL2('a'), [SVC('a'), SVC('b', {migrating: true})], 'T1');
+  assert.equal(r.changed, true);
+  assert.deepEqual(r.checklist.items, [{id: 'a'}, {id: 'b'}]);
+  assert.equal(r.checklist.createdAt, 'T0');
+});
+
+// The second-device case: flags arrived through sync with no checklist alongside.
+await test('ensureMembership: materialises a checklist from flags alone', async () => {
+  const r = kmig('ensureMembership', null, [SVC('a', {migrating: true})], 'T1');
+  assert.equal(r.changed, true);
+  assert.equal(r.checklist.createdAt, 'T1');
+  assert.deepEqual(r.checklist.items, [{id: 'a'}]);
+});
+
+await test('ensureMembership: no flags and no checklist stays null', async () => {
+  const r = kmig('ensureMembership', null, [SVC('a')], 'T1');
+  assert.equal(r.checklist, null);
+  assert.equal(r.changed, false);
+});
+
+await test('ensureMembership: nothing to add reports no change', async () => {
+  const r = kmig('ensureMembership', CL2('a', 'b'), [SVC('a', {migrating: true}), SVC('b')], 'T1');
+  assert.equal(r.changed, false);
+  assert.deepEqual(r.checklist.items, [{id: 'a'}, {id: 'b'}]);
+});
+
+await test('ensureMembership: a v1 checklist is upgraded and reported as changed', async () => {
+  const v1 = {version: 1, createdAt: 'T0', items: [{name: 'a.com', email: 'a@b.c', status: 'pending'}]};
+  const r = kmig('ensureMembership', v1, [SVC('a', {migrating: true})], 'T1');
+  assert.equal(r.changed, true);
+  assert.equal(r.checklist.version, 2);
+  assert.deepEqual(r.checklist.items, [{id: 'a'}]);
+});
+
+// A rename defeats the v1 (name, email) match, so the item is dropped by the upgrade —
+// but the service is still flagged, so membership must pick it up again rather than
+// leaving it unreported.
+await test('ensureMembership: a renamed v1 service is recovered via its flag', async () => {
+  const v1 = {version: 1, createdAt: 'T0', items: [{name: 'old-name', email: 'a@b.c', status: 'pending'}]};
+  const r = kmig('ensureMembership', v1, [SVC('a', {name: 'new-name', migrating: true})], 'T1');
+  assert.deepEqual(r.checklist.items, [{id: 'a'}]);
+  assert.equal(kmig('project', r.checklist, [SVC('a', {name: 'new-name', migrating: true})])[0].status, 'pending');
+});
+
+await test('ensureMembership: prunes ids whose service is gone', async () => {
+  const r = kmig('ensureMembership', CL2('a', 'gone'), [SVC('a')], 'T1');
+  assert.equal(r.changed, true);
+  assert.deepEqual(r.checklist.items, [{id: 'a'}]);
+});
+
+// Without pruning, migrationChecklist grows for the life of the profile: every deleted
+// service leaves an id behind forever.
+await test('ensureMembership: pruning to empty deletes the checklist', async () => {
+  const r = kmig('ensureMembership', CL2('gone'), [SVC('a')], 'T1');
+  assert.equal(r.checklist, null);
+  assert.equal(r.changed, true);
+});
+
+await test('ensureMembership: prune and add in one pass', async () => {
+  const r = kmig('ensureMembership', CL2('gone', 'a'), [SVC('a'), SVC('b', {migrating: true})], 'T1');
+  assert.deepEqual(r.checklist.items, [{id: 'a'}, {id: 'b'}]);
+  assert.equal(r.changed, true);
+});
+
+await test('ensureMembership: an empty v2 checklist with no flags is deleted', async () => {
+  const r = kmig('ensureMembership', CL2(), [SVC('a')], 'T1');
+  assert.equal(r.checklist, null);
+  assert.equal(r.changed, true);
+});
+
+// Storage can be corrupt. Every services[] path is null-guarded, so the checklist paths
+// must be too: one null item used to throw out of the init path and leave a blank page.
+await test('itemIds: malformed items are ignored rather than thrown on', async () => {
+  assert.deepEqual(kmig('itemIds', {version: 2, items: [null, {id: 'a'}, {}, {id: 'b'}]}), ['a', 'b']);
+  assert.deepEqual(kmig('itemIds', {version: 2}), []);
+  assert.deepEqual(kmig('itemIds', null), []);
+});
+
+await test('project, addIds and ensureMembership survive a null item', async () => {
+  const cl = {version: 2, createdAt: 'T0', items: [null, {id: 'a'}]};
+  assert.deepEqual(kmig('project', cl, [SVC('a', {migrating: true})]).map(r => r.id), ['a']);
+  assert.deepEqual(kmig('addIds', cl, ['b'], 'T1').items, [{id: 'a'}, {id: 'b'}]);
+  assert.deepEqual(kmig('ensureMembership', cl, [SVC('a', {migrating: true})], 'T1').checklist.items, [{id: 'a'}]);
+});
+
+await test('upgradeChecklist survives a null item', async () => {
+  const v1 = {version: 1, items: [null, {name: 'a.com', email: 'a@b.c'}]};
+  assert.deepEqual(kmig('upgradeChecklist', v1, [SVC('a')]).items, [{id: 'a'}]);
+});
+
+await test('project: two services sharing one id yield a single row', async () => {
+  const rows = kmig('project', CL2('a'), [SVC('a', {migrating: true}), SVC('a', {name: 'shadow'})]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'a.com');
+});
+
+await test('newChecklist: an absent createdAt is preserved as undefined, not invented', async () => {
+  assert.equal(kmig('newChecklist', ['a']).createdAt, undefined);
+});
+
+await test('addIds: a malformed v2 checklist is replaced rather than thrown on', async () => {
+  assert.deepEqual(kmig('addIds', {version: 2}, ['a'], 'T1').items, [{id: 'a'}]);
+});
+
+// ============================================================
+// Local encrypted payload — what the migrate page must preserve
+// ============================================================
+// The migrate page writes the whole blob. Its own inlined crypto used to emit
+// `version: 1` with no `tombstones` and no `deletion_review`, so every import and every
+// "Mark as rotated" discarded pending deletions — resurrecting deleted services from
+// the server — and dropped the deletion-review queue. It now uses these shared helpers.
+
+const BLOB_SECRET = 'my-master-secret';
+const BLOB_EMAIL = 'test@gmail.com';
+
+async function roundTripBlob(services, wallets, auditLog, tombstones, review) {
+  ctx._blobArgs = [BLOB_SECRET, BLOB_EMAIL, services, wallets, auditLog, tombstones, review];
+  return runInContext(`(async () => {
+    const [sec, em, svcs, w, log, tomb, rev] = _blobArgs;
+    const key = await deriveStorageKey(sec, em);
+    const stored = await encryptServices(key, em, svcs, w, log, tomb, rev);
+    const key2 = await deriveStorageKey(sec, em);
+    const out = await decryptServices(key2, em, stored);
+    return JSON.parse(JSON.stringify({stored: {version: stored.version}, out}));
+  })()`, ctx);
+}
+
+await test('blob round-trip: tombstones and deletion_review survive a write', async () => {
+  const r = await roundTripBlob(
+    [{id: 'a', name: 'a.com', email: 'a@b.c', updated_at: 1, synced: true}],
+    [{wallet_name: 'w', chain: 'btc'}],
+    [{timestamp: 1, wallet_name: 'w', chain: 'btc', action: 'derive'}],
+    [{id: 'dead', deleted_at: 42}],
+    [{service: {id: 'gone'}, deleted_at: 43, seen: false}]
+  );
+  assert.equal(r.out.payloadVersion, 2);
+  assert.deepEqual(r.out.tombstones, [{id: 'dead', deleted_at: 42}]);
+  assert.equal(r.out.deletionReview.length, 1);
+  assert.equal(r.out.deletionReview[0].deleted_at, 43);
+  assert.equal(r.out.wallets.length, 1);
+  assert.equal(r.out.walletAuditLog.length, 1);
+});
+
+await test('blob round-trip: the migrating flag survives a write', async () => {
+  const r = await roundTripBlob(
+    [{id: 'a', name: 'a.com', email: 'a@b.c', updated_at: 1, migrating: true}], [], [], [], []);
+  assert.equal(r.out.services[0].migrating, true);
+});
+
+// Why the migrate page refuses to write a pre-v2 payload rather than upgrading it: the
+// tombstones it would need are not in there, and only the popup has syncKnownUUIDs.
+await test('decryptServices: a v1 payload reports payloadVersion 1 and no tombstones', async () => {
+  ctx._v1Args = [BLOB_SECRET, BLOB_EMAIL];
+  const out = await runInContext(`(async () => {
+    const [sec, em] = _v1Args;
+    const key = await deriveStorageKey(sec, em);
+    const enc = new TextEncoder();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const aad = enc.encode(em.toLowerCase());
+    const pt = enc.encode(JSON.stringify({version: 1, services: [{id: 'a', updated_at: 1}], wallets: [], wallet_audit_log: []}));
+    const ck = await crypto.subtle.importKey("raw", key, {name: "AES-GCM"}, false, ["encrypt"]);
+    const ct = await crypto.subtle.encrypt({name: "AES-GCM", iv, additionalData: aad}, ck, pt);
+    const stored = {version: 2, iv: arrayBufferToBase64(iv), ciphertext: arrayBufferToBase64(ct)};
+    const key2 = await deriveStorageKey(sec, em);
+    const r = await decryptServices(key2, em, stored);
+    return JSON.parse(JSON.stringify(r));
+  })()`, ctx);
+  assert.equal(out.payloadVersion, 1);
+  assert.deepEqual(out.tombstones, []);
+  assert.deepEqual(out.deletionReview, []);
+});
+
+// nextTimestamp is what makes a cleared `migrating` flag win the merge tie-break in
+// reconcileServices, where equal timestamps resolve to the REMOTE copy.
+await test('nextTimestamp: strictly exceeds every local updated_at', async () => {
+  assert.equal(call('nextTimestamp', [{updated_at: 1}, {updated_at: 2}]) > 2, true);
+  const future = Date.now() + 600000;
+  assert.equal(call('nextTimestamp', [{updated_at: future}]), future + 1);
+});
+
+// ============================================================
+// Page script manifests
+// ============================================================
+// A missing <script> tag is invisible to unit tests but breaks the page at runtime:
+// KeygrainMigration is a top-level const, so a document that calls it without loading
+// migration-state.js throws on first use. These assertions pin the dependency.
+
+function scriptsOf(htmlFile) {
+  const html = readFileSync(resolve(shared, htmlFile), 'utf8');
+  return [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map(m => m[1]);
+}
+
+await test('popup.html loads migration-state.js before popup.js', async () => {
+  const scripts = scriptsOf('popup.html');
+  assert.ok(scripts.includes('migration-state.js'), 'migration-state.js missing');
+  assert.ok(scripts.indexOf('migration-state.js') < scripts.indexOf('popup.js'), 'wrong order');
+});
+
+await test('migrate.html loads every module migrate.js depends on, in order', async () => {
+  const scripts = scriptsOf('migrate.html');
+  // sync.js provides the base64 helpers popup-crypto.js needs; popup-crypto.js provides
+  // deriveStorageKey/encryptServices/decryptServices; popup-dialog.js provides
+  // nextTimestamp; migration-state.js provides KeygrainMigration.
+  for (const dep of ['sync.js', 'popup-crypto.js', 'popup-dialog.js', 'migration-state.js']) {
+    assert.ok(scripts.includes(dep), dep + ' missing from migrate.html');
+    assert.ok(scripts.indexOf(dep) < scripts.indexOf('migrate.js'), dep + ' loaded after migrate.js');
+  }
+  assert.ok(scripts.indexOf('sync.js') < scripts.indexOf('popup-crypto.js'), 'popup-crypto.js needs sync.js first');
 });
 
 // ============================================================
