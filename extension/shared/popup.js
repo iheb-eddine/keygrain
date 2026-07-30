@@ -567,6 +567,11 @@
     // Single choke point (RH2): notify the background to re-diff the inline
     // registration whenever the service list is persisted (incl. sync merges).
     sendMsg({action: "reregisterInlineAutofill"}).catch(() => {});
+    // Same choke point for the migrate button: its label counts services still
+    // carrying `migrating`, so every persisted mutation can change it — rotating
+    // from the edit dialog, bumping the password version, deleting a service, or a
+    // sync merge that clears or restores the flag.
+    updateMigrateBtn();
     syncGeneration++;
     if (skipNextDebounce) { skipNextDebounce = false; return; }
     if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
@@ -852,6 +857,10 @@
     renderConflictBanner();
     renderDeletionReview();
     updateOfflineBtn();
+    // Single choke point for the migrate button label: it depends on the in-memory
+    // service list, so it must be refreshed by anything that re-renders the main
+    // screen (unlock, sync merge, rotation) rather than only on unlock.
+    updateMigrateBtn();
     if (!syncIndicatorInterval) {
       syncIndicatorInterval = setInterval(updateSyncIndicator, 1000);
     }
@@ -1154,15 +1163,19 @@
   }
 
   // === Auto-detect site ===
-  async function updateMigrateBtn() {
-    const data = await chrome.storage.local.get("migrationChecklist");
-    const cl = data.migrationChecklist;
+  // The label counts services that STILL CARRY `migrating`, read from the service
+  // list itself rather than from a status stored on the checklist. The stored status
+  // never saw rotations done from here (Mark as rotated, or a password-version bump),
+  // so the button went on reporting services as pending after every one of them had
+  // been rotated. The checklist is not consulted at all: it is local-only, while the
+  // flag syncs, so a device that received an import through sync would otherwise show
+  // badges with a count of zero.
+  function updateMigrateBtn() {
     const btn = document.getElementById("migrate-btn");
-    if (cl) {
-      const pending = cl.items.filter(i => i.status === "pending").length;
-      if (pending > 0) { btn.textContent = "Migration progress (" + pending + " remaining)"; return; }
-    }
-    btn.textContent = "Migrate from another manager";
+    const pending = KeygrainMigration.countPending(services);
+    btn.textContent = pending > 0
+      ? "Migration progress (" + pending + " remaining)"
+      : "Migrate from another manager";
   }
 
   async function autoDetectSite() {
@@ -1346,7 +1359,6 @@
     await loadSiteRules();
     loadBreaches();
     autoDetectSite();
-    updateMigrateBtn();
     // Offer PIN setup if not already set
     const pinCheck = await chrome.storage.local.get("pinData");
     if (!pinCheck.pinData) {
@@ -1400,8 +1412,7 @@
       await loadSiteRules();
       loadBreaches();
       autoDetectSite();
-      updateMigrateBtn();
-    } catch {
+      } catch {
       const fails = (data.pinFailCount || 0) + 1;
       if (fails >= 5) {
         await chrome.storage.local.remove(["pinData", "pinFailCount"]);
@@ -2163,9 +2174,7 @@
 
   document.getElementById("migrate-btn").addEventListener("click", async () => {
     menuDropdown.classList.add("hidden");
-    const data = await chrome.storage.local.get("migrationChecklist");
-    const cl = data.migrationChecklist;
-    const pending = cl ? cl.items.filter(i => i.status === "pending").length : 0;
+    const pending = KeygrainMigration.countPending(services);
     chrome.tabs.create({url: pending > 0 ? "migrate.html#checklist" : "migrate.html"});
   });
 
@@ -2244,8 +2253,7 @@
       await loadSiteRules();
       loadBreaches();
       autoDetectSite();
-      updateMigrateBtn();
-    } else {
+      } else {
       currentSecret = null;
       currentEmail = null;
       await clearSecret();

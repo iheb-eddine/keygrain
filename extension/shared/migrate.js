@@ -192,6 +192,7 @@
   const toggleAll = document.getElementById("toggle-all");
   const confirmSummary = document.getElementById("confirm-summary");
   const confirmSkip = document.getElementById("confirm-skip");
+  const importBtn = document.getElementById("import-btn");
   const progressBar = document.getElementById("progress-bar");
   const progressText = document.getElementById("progress-text");
   const checklistEl = document.getElementById("checklist");
@@ -204,6 +205,13 @@
   let settings = { defaultLength: 20, defaultSymbols: "!@#$%&*-_=+?" };
   let currentFilter = "all";
 
+  // Rendering state, replaced only once an operation has finished. `allServices` is the
+  // decrypted service list and is the single source of truth for rotation status —
+  // every checklist row's status is derived from its service's `migrating` flag (see
+  // migration-state.js). `checklist` holds batch membership only.
+  let allServices = [];
+  let checklist = null;
+
   async function sendMsg(msg) {
     try { return await chrome.runtime.sendMessage(msg); } catch { await new Promise(r => setTimeout(r, 100)); return chrome.runtime.sendMessage(msg); }
   }
@@ -211,6 +219,113 @@
   function showStep(n) {
     errorScreen.classList.add("hidden");
     steps.forEach((s, i) => s.classList.toggle("hidden", i !== n - 1));
+  }
+
+  // Shown whenever the blob cannot be read. Opening the popup is the actionable step,
+  // not unlocking: a pre-v2 payload is upgraded by the popup's own load path, which
+  // runs on unlock and is the only place that can do it.
+  const BLOB_READ_FAILED = "Could not read your Keygrain data. Open the Keygrain popup once, then reload this page. If it still fails, unlock again with your master secret.";
+
+  // === Encrypted services blob ===
+  //
+  // Reads and writes go through the same popup-crypto.js helpers the popup uses.
+  // This file used to inline its own copy which wrote `version: 1` payloads and
+  // omitted `tombstones` / `deletion_review`, so every import and every "Mark as
+  // rotated" silently discarded pending deletions — resurrecting deleted services
+  // from the server on the next sync — dropped the deletion-review queue, and
+  // downgraded the payload so the popup re-ran its one-time v1->v2 upgrade.
+  //
+  // readBlob returns a self-contained object and writeBlob takes one. Neither reads
+  // module state, so a read that lands in the middle of another operation's
+  // read-modify-write cannot change what that operation is about to persist. The
+  // rendering state below is only ever replaced once an operation has finished.
+
+  // Returns the decrypted blob, or null meaning DO NOT WRITE — either it could not be
+  // decrypted or it predates local payload v2. Callers must respect null: the old code
+  // treated a decryption failure as "no existing services" and the import then
+  // overwrote the blob with only the imported rows, destroying everything.
+  async function readBlob() {
+    const stored = (await chrome.storage.local.get("services")).services;
+    if (!stored) return { services: [], wallets: [], auditLog: [], tombstones: [], deletionReview: [] };
+    if (stored.version !== 2) return null;
+    const key = await deriveStorageKey(secret, email);
+    try {
+      const r = await decryptServices(key, email, stored);
+      // A pre-v2 payload means the popup has not run its one-time v1->v2 upgrade yet;
+      // only it can, because only it has syncKnownUUIDs. Writing from here would
+      // destroy that chance, so refuse.
+      if (r.payloadVersion < 2) return null;
+      return {
+        services: r.services,
+        wallets: r.wallets,
+        auditLog: r.walletAuditLog,
+        tombstones: r.tombstones,
+        deletionReview: r.deletionReview
+      };
+    } catch {
+      return null;
+    } finally {
+      key.fill(0);
+    }
+  }
+
+  async function writeBlob(blob) {
+    const key = await deriveStorageKey(secret, email);
+    try {
+      const encrypted = await encryptServices(key, email, blob.services, blob.wallets, blob.auditLog, blob.tombstones, blob.deletionReview);
+      await chrome.storage.local.set({ services: encrypted });
+    } finally {
+      key.fill(0);
+    }
+  }
+
+  // Serialises every operation that reads or writes the blob. Without it, two quick
+  // clicks on different rows interleave their read-modify-write cycles and the second
+  // write discards the first row's change — reproducing the very bug this file exists
+  // to fix. Per-button `disabled` only guards repeat clicks on the same button, so
+  // EVERY handler that touches the blob must go through here, including the ones that
+  // only read (a re-render mid-write would otherwise show a stale row set).
+  let writeChain = Promise.resolve();
+  function serialize(fn) {
+    const done = writeChain.then(fn, fn);
+    writeChain = done.catch(() => {});
+    return done;
+  }
+
+  // Read the stored checklist, upgrade it to v2 if needed, and reconcile its membership
+  // with the flags — recording flagged services it does not know about, dropping ids
+  // whose service is gone, and materialising one when flags arrived through sync with
+  // no checklist alongside. Persisted only when something actually moved.
+  async function loadChecklist(services) {
+    const stored = (await chrome.storage.local.get("migrationChecklist")).migrationChecklist;
+    const { checklist: next, changed } = KeygrainMigration.ensureMembership(stored, services, new Date().toISOString());
+    checklist = next;
+    if (changed) {
+      if (checklist) await chrome.storage.local.set({ migrationChecklist: checklist });
+      else await chrome.storage.local.remove("migrationChecklist");
+    }
+    return checklist;
+  }
+
+  // Flip `migrating` on the given service ids and persist. `updated_at` is bumped by
+  // applyMigrating, without which the sync merge ("newer wins, remote wins ties")
+  // reverts the change from the server's still-flagged copy. Returns false if the blob
+  // could not be read, in which case nothing was written.
+  async function setMigrating(ids, value) {
+    if (!secret || !email) return false;
+    const blob = await readBlob();
+    if (!blob) return false;
+    const r = KeygrainMigration.applyMigrating(blob.services, ids, value, nextTimestamp(blob.services));
+    if (r.changed) {
+      blob.services = r.services;
+      await writeBlob(blob);
+      // Push the change out reasonably promptly rather than waiting for the next
+      // periodic alarm, so other devices stop warning about a rotated service. Chrome
+      // clamps short alarm delays, so this is prompt-ish rather than immediate.
+      chrome.alarms.create("syncAlarm", { delayInMinutes: 0.1 });
+    }
+    allServices = blob.services;
+    return true;
   }
 
   // === Init ===
@@ -223,18 +338,31 @@
   if (settingsData.settings) Object.assign(settings, settingsData.settings);
 
   if (!secret || !email) {
+    // Rotation status is DERIVED from the encrypted services blob, so it cannot be
+    // shown while locked. A stored per-item status used to make a read-only view
+    // possible here, but that stored status is precisely what drifted out of agreement
+    // with the flag, so it is gone and the honest answer is "unlock".
     steps.forEach(s => s.classList.add("hidden"));
     errorScreen.classList.remove("hidden");
-    // Checklist is still viewable when locked (read-only progress)
-    if (location.hash === "#checklist") {
-      const cl = (await chrome.storage.local.get("migrationChecklist")).migrationChecklist;
-      if (cl) { errorScreen.classList.add("hidden"); showStep(4); renderChecklist(cl); }
-    }
-    // Early return only if no checklist to show
-    if (errorScreen.classList.contains("hidden")) { /* checklist shown */ } else return;
-  } else if (location.hash === "#checklist") {
-    const cl = (await chrome.storage.local.get("migrationChecklist")).migrationChecklist;
-    if (cl) { showStep(4); renderChecklist(cl); } else showStep(1);
+    return;
+  }
+
+  const initialBlob = await readBlob();
+  if (!initialBlob) {
+    // Never fall through to the wizard on a failed read: the import writes the whole
+    // blob, so continuing with an empty in-memory list would erase every existing
+    // service and wallet.
+    steps.forEach(s => s.classList.add("hidden"));
+    errorScreen.textContent = BLOB_READ_FAILED;
+    errorScreen.classList.remove("hidden");
+    return;
+  }
+  allServices = initialBlob.services;
+  await loadChecklist(allServices);
+
+  if (location.hash === "#checklist" && checklist) {
+    showStep(4);
+    renderChecklist();
   } else {
     showStep(1);
   }
@@ -441,34 +569,26 @@
   });
 
   // === Step 3: Confirm ===
-  let existingServices = [];
-  let existingWallets = [];
-  let existingAuditLog = [];
   let skipCount = 0;
   let selectedEntries = [];
 
+  // Preview-only: mirrors the check the import performs against its own working list.
+  function alreadyExists(entry) {
+    return allServices.some(s => normalizeSite(s.site) === normalizeSite(entry.serviceName) && s.email.toLowerCase() === entry.email.toLowerCase());
+  }
+
   async function prepareConfirm() {
-    // Load existing services
-    const data = await chrome.storage.local.get("services");
-    existingServices = [];
-    existingWallets = [];
-    existingAuditLog = [];
-    if (data.services && data.services.version === 2) {
-      const enc = new TextEncoder();
-      const strengthened = await strengthenSecret(secret, email);
-      const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
-      try {
-        const iv = base64ToArrayBuffer(data.services.iv);
-        const ct = base64ToArrayBuffer(data.services.ciphertext);
-        const aad = enc.encode(email.toLowerCase());
-        const cryptoKey = await crypto.subtle.importKey("raw", storageKey, { name: "AES-GCM" }, false, ["decrypt"]);
-        const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: aad }, cryptoKey, ct);
-        const parsed = JSON.parse(new TextDecoder().decode(decrypted));
-        existingServices = parsed.services || parsed;
-        existingWallets = parsed.wallets || [];
-        existingAuditLog = parsed.wallet_audit_log || [];
-      } catch { existingServices = []; } finally { storageKey.fill(0); }
+    // Re-read: the popup may have added or removed services since this page loaded. A
+    // failed read must NOT be treated as "no existing services" — see readBlob.
+    const blob = await readBlob();
+    if (!blob) {
+      confirmSummary.textContent = BLOB_READ_FAILED;
+      confirmSkip.classList.add("hidden");
+      importBtn.disabled = true;
+      return;
     }
+    allServices = blob.services;
+    importBtn.disabled = false;
 
     // Get selected entries
     const checkboxes = previewBody.querySelectorAll("input[type=checkbox]");
@@ -477,10 +597,7 @@
 
     // Count skips
     skipCount = 0;
-    selectedEntries.forEach(e => {
-      const exists = existingServices.some(s => normalizeSite(s.site) === normalizeSite(e.serviceName) && s.email.toLowerCase() === e.email.toLowerCase());
-      if (exists) skipCount++;
-    });
+    selectedEntries.forEach(e => { if (alreadyExists(e)) skipCount++; });
 
     confirmSummary.textContent = "Import " + (selectedEntries.length - skipCount) + " services into Keygrain?";
     if (skipCount > 0) {
@@ -491,145 +608,131 @@
     }
   }
 
-  function base64ToArrayBuffer(b64) {
-    const binary = atob(b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-  }
-
-  function arrayBufferToBase64(buf) {
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary);
-  }
-
   document.getElementById("back-to-2").addEventListener("click", () => showStep(2));
-  document.getElementById("import-btn").addEventListener("click", async () => {
-    // Merge: add new services that don't already exist
-    const newServices = [];
-    selectedEntries.forEach(e => {
-      const exists = existingServices.some(s => normalizeSite(s.site) === normalizeSite(e.serviceName) && s.email.toLowerCase() === e.email.toLowerCase());
-      if (!exists) {
-        newServices.push({ name: e.serviceName, site: normalizeSite(e.serviceName), email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, counter: 1, migrating: true, id: crypto.randomUUID(), updated_at: Date.now(), synced: false });
+  importBtn.addEventListener("click", () => {
+    // Disabled for the whole operation and serialised like every other blob write, so a
+    // double click cannot import the same CSV twice under two sets of UUIDs.
+    importBtn.disabled = true;
+    serialize(async () => {
+      // Re-read immediately before writing so a concurrent popup edit is not clobbered.
+      const blob = await readBlob();
+      if (!blob) {
+        confirmSummary.textContent = "Nothing was imported. " + BLOB_READ_FAILED;
+        return;
       }
+
+      // Add the services that don't already exist. Each gets its own timestamp: one
+      // shared value would make an id-order tie-break certain rather than merely
+      // possible where two rows collapse to the same (site, email). Newly added rows go
+      // into the working list as we go, so the existence check dedupes within the batch
+      // as well — normalizeSite is idempotent, so comparing an already-normalised
+      // stored site against a freshly normalised one is sound.
+      let now = nextTimestamp(blob.services);
+      const exists = (entry) => blob.services.some(s => normalizeSite(s.site) === normalizeSite(entry.serviceName) && s.email.toLowerCase() === entry.email.toLowerCase());
+      selectedEntries.forEach(e => {
+        if (exists(e)) return;
+        blob.services.push({ name: e.serviceName, site: normalizeSite(e.serviceName), email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, counter: 1, migrating: true, id: crypto.randomUUID(), updated_at: now++, synced: false });
+      });
+      await writeBlob(blob);
+      allServices = blob.services;
+
+      // Record the imported services as this migration batch. Membership only — each
+      // row's status is derived from its service's `migrating` flag at render time.
+      // loadChecklist re-reads the stored checklist and records every flagged service,
+      // so this both picks up the rows just imported and avoids overwriting a batch that
+      // a second migrate tab may have created since this one loaded.
+      await loadChecklist(allServices);
+
+      // Null old passwords — security requirement
+      parsedEntries = null;
+      selectedEntries = [];
+
+      // Trigger near-immediate background sync so imported services reach the server
+      chrome.alarms.create("syncAlarm", {delayInMinutes: 0.1});
+
+      showStep(4);
+      renderChecklist();
     });
-    const merged = existingServices.concat(newServices);
-
-    // Encrypt and save
-    const enc = new TextEncoder();
-    const strengthened = await strengthenSecret(secret, email);
-    const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const aad = enc.encode(email.toLowerCase());
-    const plaintext = enc.encode(JSON.stringify({ version: 1, services: merged, wallets: existingWallets, wallet_audit_log: existingAuditLog }));
-    const cryptoKey = await crypto.subtle.importKey("raw", storageKey, { name: "AES-GCM" }, false, ["encrypt"]);
-    const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: aad }, cryptoKey, plaintext);
-    storageKey.fill(0);
-    await chrome.storage.local.set({ services: { version: 2, iv: arrayBufferToBase64(iv), ciphertext: arrayBufferToBase64(ciphertext) } });
-
-    // Create/append migration checklist
-    const clData = await chrome.storage.local.get("migrationChecklist");
-    let checklist = clData.migrationChecklist || { version: 1, createdAt: new Date().toISOString(), items: [] };
-    newServices.forEach(svc => {
-      const exists = checklist.items.some(item => item.name.toLowerCase() === svc.name.toLowerCase() && item.email.toLowerCase() === svc.email.toLowerCase());
-      if (!exists) checklist.items.push({ name: svc.name, email: svc.email, status: "pending" });
-    });
-    await chrome.storage.local.set({ migrationChecklist: checklist });
-
-    // Null old passwords — security requirement
-    parsedEntries = null;
-    selectedEntries = [];
-
-    // Trigger near-immediate background sync so imported services reach the server
-    chrome.alarms.create("syncAlarm", {delayInMinutes: 0.1});
-
-    showStep(4);
-    renderChecklist(checklist);
   });
 
   // === Step 4: Checklist ===
-  async function clearMigratingFlag(name, svcEmail) {
-    if (!secret || !email) return;
-    const data = await chrome.storage.local.get("services");
-    if (!data.services || data.services.version !== 2) return;
-    const enc = new TextEncoder();
-    const strengthened = await strengthenSecret(secret, email);
-    const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
-    try {
-      const iv = base64ToArrayBuffer(data.services.iv);
-      const ct = base64ToArrayBuffer(data.services.ciphertext);
-      const aad = enc.encode(email.toLowerCase());
-      const cryptoKey = await crypto.subtle.importKey("raw", storageKey, { name: "AES-GCM" }, false, ["decrypt"]);
-      const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: aad }, cryptoKey, ct);
-      const parsed = JSON.parse(new TextDecoder().decode(decrypted));
-      const svcs = parsed.services || parsed;
-      const match = svcs.find(s => s.name.toLowerCase() === name.toLowerCase() && s.email.toLowerCase() === svcEmail.toLowerCase());
-      if (match && match.migrating) {
-        delete match.migrating;
-        const wallets = parsed.wallets || [];
-        const walletAuditLog = parsed.wallet_audit_log || [];
-        const newIv = crypto.getRandomValues(new Uint8Array(12));
-        const plaintext = enc.encode(JSON.stringify({ version: 1, services: svcs, wallets, wallet_audit_log: walletAuditLog }));
-        const encKey = await crypto.subtle.importKey("raw", storageKey, { name: "AES-GCM" }, false, ["encrypt"]);
-        const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: newIv, additionalData: aad }, encKey, plaintext);
-        await chrome.storage.local.set({ services: { version: 2, iv: arrayBufferToBase64(newIv), ciphertext: arrayBufferToBase64(ciphertext) } });
-      }
-    } finally { storageKey.fill(0); }
+
+  // Re-read both stores and re-render. Callers must wrap this in serialize(): a
+  // re-render landing in the middle of a write would show a stale row set.
+  async function refreshChecklist() {
+    const blob = await readBlob();
+    if (!blob) {
+      // Re-render from what is already in hand so the row buttons come back enabled,
+      // and say what happened rather than leaving a dead, greyed-out list.
+      renderChecklist();
+      progressText.textContent = BLOB_READ_FAILED;
+      return false;
+    }
+    allServices = blob.services;
+    await loadChecklist(allServices);
+    renderChecklist();
+    return true;
   }
 
-  function renderChecklist(checklist) {
-    const items = checklist.items;
-    const doneCount = items.filter(i => i.status === "done").length;
-    const total = items.length;
+  function renderChecklist() {
+    // Rows are projected from the live service list: pending status comes from each
+    // service's `migrating` flag alone, names come from the service (so a rename in the
+    // popup shows through), items whose service was deleted disappear, and a flagged
+    // service the checklist does not know about is still listed. Progress is computed
+    // over the full row set before filtering, so switching filters cannot distort it.
+    const rows = KeygrainMigration.project(checklist, allServices);
+    const doneCount = rows.filter(r => r.status === "done").length;
+    const total = rows.length;
     const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
     progressBar.style.width = pct + "%";
     progressText.textContent = doneCount + " of " + total + " services rotated";
 
     checklistEl.textContent = "";
-    const filtered = currentFilter === "all" ? items : items.filter(i => i.status === currentFilter);
-    filtered.forEach((item, idx) => {
-      const realIdx = items.indexOf(item);
+    const filtered = currentFilter === "all" ? rows : rows.filter(r => r.status === currentFilter);
+    filtered.forEach((row) => {
       const div = document.createElement("div");
-      div.className = "checklist-item" + (item.status === "done" ? " done" : "");
+      div.className = "checklist-item" + (row.status === "done" ? " done" : "");
       div.setAttribute("role", "listitem");
 
       const info = document.createElement("div");
       info.className = "svc-info";
       const nameEl = document.createElement("div");
       nameEl.className = "svc-name";
-      nameEl.textContent = item.name;
+      nameEl.textContent = row.name;
       const emailEl = document.createElement("div");
       emailEl.className = "svc-email";
-      emailEl.textContent = item.email;
+      emailEl.textContent = row.email;
       info.appendChild(nameEl);
       info.appendChild(emailEl);
 
       const actions = document.createElement("div");
       actions.className = "svc-actions";
 
-      if (item.status === "pending") {
+      if (row.status === "pending") {
         const markBtn = document.createElement("button");
         markBtn.className = "btn-primary";
         markBtn.textContent = "Mark as rotated";
-        markBtn.addEventListener("click", async () => {
-          item.status = "done";
-          item.doneAt = new Date().toISOString();
-          await chrome.storage.local.set({ migrationChecklist: checklist });
-          await clearMigratingFlag(item.name, item.email);
-          renderChecklist(checklist);
+        markBtn.addEventListener("click", () => {
+          markBtn.disabled = true;
+          serialize(async () => {
+            await setMigrating([row.id], false);
+            await refreshChecklist();
+          });
         });
         actions.appendChild(markBtn);
       } else {
         const undoBtn = document.createElement("button");
         undoBtn.className = "btn-secondary";
         undoBtn.textContent = "Undo";
-        undoBtn.addEventListener("click", async () => {
-          item.status = "pending";
-          delete item.doneAt;
-          await chrome.storage.local.set({ migrationChecklist: checklist });
-          renderChecklist(checklist);
+        undoBtn.addEventListener("click", () => {
+          undoBtn.disabled = true;
+          // Undo now restores the service's `migrating` flag, so the popup badge and
+          // the copy/fill warning come back too. Previously it only rewrote the
+          // checklist's own status, leaving the two disagreeing.
+          serialize(async () => {
+            await setMigrating([row.id], true);
+            await refreshChecklist();
+          });
         });
         actions.appendChild(undoBtn);
       }
@@ -637,41 +740,26 @@
       const copyBtn = document.createElement("button");
       copyBtn.className = "btn-secondary";
       copyBtn.textContent = "Copy new password";
-      if (!secret) {
-        copyBtn.disabled = true;
-        copyBtn.title = "Unlock Keygrain first";
-      } else {
-        copyBtn.addEventListener("click", async () => {
-          // Look up actual service params from storage
-          let svcLength = settings.defaultLength;
-          let svcSymbols = settings.defaultSymbols;
-          let svcSite = item.name;
-          let svcCounter = 1;
-          try {
-            const data = await chrome.storage.local.get("services");
-            if (data.services && data.services.version === 2) {
-              const enc = new TextEncoder();
-              const strengthened = await strengthenSecret(secret, email);
-              const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
-              try {
-                const iv = base64ToArrayBuffer(data.services.iv);
-                const ct = base64ToArrayBuffer(data.services.ciphertext);
-                const aad = enc.encode(email.toLowerCase());
-                const cryptoKey = await crypto.subtle.importKey("raw", storageKey, { name: "AES-GCM" }, false, ["decrypt"]);
-                const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: aad }, cryptoKey, ct);
-                const parsed = JSON.parse(new TextDecoder().decode(decrypted));
-                const svcs = parsed.services || parsed;
-                const match = svcs.find(s => s.name.toLowerCase() === item.name.toLowerCase() && s.email.toLowerCase() === item.email.toLowerCase());
-                if (match) { svcLength = match.length || svcLength; svcSymbols = match.symbols || svcSymbols; svcSite = match.site || match.name; svcCounter = match.counter || 1; }
-              } finally { storageKey.fill(0); }
-            }
-          } catch { /* use defaults */ }
-          const pw = await derivePassword(secret, item.email, {site: svcSite, length: svcLength, symbols: svcSymbols, counter: svcCounter});
+      copyBtn.addEventListener("click", async () => {
+        // Derived from the service's own parameters, which the projection already
+        // carries — no second decrypt of the blob per click.
+        const svc = row.service;
+        try {
+          const pw = await derivePassword(secret, svc.email, {
+            site: svc.site || svc.name,
+            length: svc.length || settings.defaultLength,
+            symbols: svc.symbols || settings.defaultSymbols,
+            counter: svc.counter || 1
+          });
           await navigator.clipboard.writeText(pw);
           copyBtn.textContent = "Copied!";
-          setTimeout(() => { copyBtn.textContent = "Copy new password"; }, 2000);
-        });
-      }
+        } catch {
+          // Argon2id can fail on a memory-starved tab, and clipboard writes fail
+          // when the document is not focused. Say so rather than failing silently.
+          copyBtn.textContent = "Copy failed";
+        }
+        setTimeout(() => { copyBtn.textContent = "Copy new password"; }, 2000);
+      });
       actions.appendChild(copyBtn);
 
       div.appendChild(info);
@@ -679,11 +767,7 @@
       checklistEl.appendChild(div);
     });
 
-    if (doneCount === total && total > 0) {
-      allDone.classList.remove("hidden");
-    } else {
-      allDone.classList.add("hidden");
-    }
+    allDone.classList.toggle("hidden", !(doneCount === total && total > 0));
   }
 
   // Filter buttons
@@ -692,17 +776,19 @@
       document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       currentFilter = btn.dataset.filter;
-      const cl = (await chrome.storage.local.get("migrationChecklist")).migrationChecklist;
-      if (cl) renderChecklist(cl);
+      serialize(refreshChecklist);
     });
   });
 
   // Dismiss checklist
-  document.getElementById("dismiss-btn").addEventListener("click", async () => {
-    await chrome.storage.local.remove("migrationChecklist");
-    allDone.classList.add("hidden");
-    checklistEl.textContent = "";
-    progressText.textContent = "Checklist dismissed.";
-    progressBar.style.width = "0%";
+  document.getElementById("dismiss-btn").addEventListener("click", () => {
+    serialize(async () => {
+      await chrome.storage.local.remove("migrationChecklist");
+      checklist = null;
+      allDone.classList.add("hidden");
+      checklistEl.textContent = "";
+      progressText.textContent = "Checklist dismissed.";
+      progressBar.style.width = "0%";
+    });
   });
 })();
