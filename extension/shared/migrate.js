@@ -212,6 +212,14 @@
   let allServices = [];
   let checklist = null;
 
+  // Markers for the values this page last wrote, so the storage listener at the bottom of
+  // this file can tell its own writes apart from the popup's. See storageMarker in
+  // popup-dialog.js.
+  const selfWrites = {};
+
+  // Set once the blob is removed from under this tab; readBlob then refuses every read.
+  let blobGone = false;
+
   async function sendMsg(msg) {
     try { return await chrome.runtime.sendMessage(msg); } catch { await new Promise(r => setTimeout(r, 100)); return chrome.runtime.sendMessage(msg); }
   }
@@ -245,6 +253,12 @@
   // treated a decryption failure as "no existing services" and the import then
   // overwrote the blob with only the imported rows, destroying everything.
   async function readBlob() {
+    // Set when another context removes the blob (Switch account, Reset Keygrain, the
+    // delete-local branch of Delete server data). `secret` and `email` in this tab are then
+    // stale, so every read is refused rather than allowed to report an empty store — which
+    // is what an absent key looks like below, and which would let an import write a fresh
+    // blob under a secret that no longer belongs to this profile.
+    if (blobGone) return null;
     const stored = (await chrome.storage.local.get("services")).services;
     if (!stored) return { services: [], wallets: [], auditLog: [], tombstones: [], deletionReview: [] };
     if (stored.version !== 2) return null;
@@ -269,14 +283,24 @@
     }
   }
 
+  // Returns false, having written nothing, once the blob is gone. Guarding readBlob alone is
+  // not enough: every path here is read-modify-write, so a wipe landing after the read would
+  // still let the write re-create the blob under a secret that no longer belongs to this
+  // profile. Callers already treat a failed read as "abort", so they treat this the same way.
   async function writeBlob(blob) {
+    if (blobGone) return false;
     const key = await deriveStorageKey(secret, email);
     try {
       const encrypted = await encryptServices(key, email, blob.services, blob.wallets, blob.auditLog, blob.tombstones, blob.deletionReview);
+      // Armed BEFORE the write: the onChanged event may be dispatched before set()
+      // resolves, and a marker recorded afterwards would be too late to recognise our own
+      // event.
+      selfWrites.services = storageMarker(encrypted);
       await chrome.storage.local.set({ services: encrypted });
     } finally {
       key.fill(0);
     }
+    return true;
   }
 
   // Serialises every operation that reads or writes the blob. Without it, two quick
@@ -301,8 +325,13 @@
     const { checklist: next, changed } = KeygrainMigration.ensureMembership(stored, services, new Date().toISOString());
     checklist = next;
     if (changed) {
-      if (checklist) await chrome.storage.local.set({ migrationChecklist: checklist });
-      else await chrome.storage.local.remove("migrationChecklist");
+      if (checklist) {
+        selfWrites.migrationChecklist = storageMarker(checklist);
+        await chrome.storage.local.set({ migrationChecklist: checklist });
+      } else {
+        selfWrites.migrationChecklist = STORAGE_MARKER_ABSENT;
+        await chrome.storage.local.remove("migrationChecklist");
+      }
     }
     return checklist;
   }
@@ -318,7 +347,7 @@
     const r = KeygrainMigration.applyMigrating(blob.services, ids, value, nextTimestamp(blob.services));
     if (r.changed) {
       blob.services = r.services;
-      await writeBlob(blob);
+      if (!await writeBlob(blob)) return false;
       // Push the change out reasonably promptly rather than waiting for the next
       // periodic alarm, so other devices stop warning about a rotated service. Chrome
       // clamps short alarm delays, so this is prompt-ish rather than immediate.
@@ -337,6 +366,19 @@
   const settingsData = await chrome.storage.local.get("settings");
   if (settingsData.settings) Object.assign(settings, settingsData.settings);
 
+  // Both bail-outs below tell the user to go to the popup and come back, and neither can act
+  // on the return: this page reads the secret once, at load. Reload when the blob changes so
+  // at least the case that produces a write — the popup's one-time pre-v2 payload upgrade,
+  // which runs on unlock and is what the read-failure message is about — brings the page back
+  // by itself. A plain unlock writes nothing, so that still needs a manual reload.
+  //
+  // Safe to reload from here: neither screen holds user input.
+  function recoverOnBlobChange() {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (externalChanges(changes, area, ["services"], selfWrites).length) location.reload();
+    });
+  }
+
   if (!secret || !email) {
     // Rotation status is DERIVED from the encrypted services blob, so it cannot be
     // shown while locked. A stored per-item status used to make a read-only view
@@ -344,6 +386,7 @@
     // with the flag, so it is gone and the honest answer is "unlock".
     steps.forEach(s => s.classList.add("hidden"));
     errorScreen.classList.remove("hidden");
+    recoverOnBlobChange();
     return;
   }
 
@@ -355,6 +398,7 @@
     steps.forEach(s => s.classList.add("hidden"));
     errorScreen.textContent = BLOB_READ_FAILED;
     errorScreen.classList.remove("hidden");
+    recoverOnBlobChange();
     return;
   }
   allServices = initialBlob.services;
@@ -633,7 +677,12 @@
         if (exists(e)) return;
         blob.services.push({ name: e.serviceName, site: normalizeSite(e.serviceName), email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, counter: 1, migrating: true, id: crypto.randomUUID(), updated_at: now++, synced: false });
       });
-      await writeBlob(blob);
+      // Same handling as a failed read above: say nothing was imported and leave the button
+      // disabled, because the only way forward is reopening the popup.
+      if (!await writeBlob(blob)) {
+        confirmSummary.textContent = "Nothing was imported. " + BLOB_READ_FAILED;
+        return;
+      }
       allServices = blob.services;
 
       // Record the imported services as this migration batch. Membership only — each
@@ -781,8 +830,21 @@
   });
 
   // Dismiss checklist
+  //
+  // Removes membership only, and deliberately does not touch the flags — it cannot need to.
+  // The button lives inside #all-done, which renderChecklist unhides only when every row is
+  // done, and project() lists EVERY flagged service as a pending row, so reaching this button
+  // means no service carries `migrating`. ensureMembership with no flags and no stored
+  // checklist returns `changed: false`, so the cross-context refresh below cannot resurrect
+  // what this removes.
+  //
+  // CYCLE 3 (Stop migration) BREAKS THAT PRECONDITION: a Stop control is visible while rows
+  // are still pending, so it MUST clear the flags — setMigrating(migratingIds(...), false) —
+  // before removing the key. Removing the key alone would leave flags behind, and the next
+  // external blob write would materialise a fresh checklist from them and un-dismiss itself.
   document.getElementById("dismiss-btn").addEventListener("click", () => {
     serialize(async () => {
+      selfWrites.migrationChecklist = STORAGE_MARKER_ABSENT;
       await chrome.storage.local.remove("migrationChecklist");
       checklist = null;
       allDone.classList.add("hidden");
@@ -790,5 +852,38 @@
       progressText.textContent = "Checklist dismissed.";
       progressBar.style.width = "0%";
     });
+  });
+
+  // === Cross-context refresh ===
+  //
+  // The popup, the wallet page and the background sync alarm all write the services blob,
+  // and the popup can clear the checklist key (Switch account, Delete server data). Without
+  // this listener the tab went on showing rows the popup had already rotated, renamed or
+  // deleted until it was reloaded by hand — the half of "the browser full window is not
+  // synced with the migration" that the shared state model alone does not fix.
+  //
+  // The refresh is serialised like every other access to the blob, so it cannot land inside
+  // a read-modify-write and show a stale row set. Our own writes are filtered by marker:
+  // they could not corrupt anything here — every handler re-reads — but re-rendering on
+  // each of our own writes would reset row button labels and decrypt the blob for nothing.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (!externalChanges(changes, area, ["services", "migrationChecklist"], selfWrites).length) return;
+    // The blob being REMOVED by another context means the account was wiped on this device.
+    // Stop the page rather than re-render: this tab still holds the old secret in memory, and
+    // an absent key reads as an empty store, so it would otherwise show a clean, inviting
+    // checklist and accept an import under a dead key.
+    if (changes.services && changes.services.newValue === undefined) {
+      blobGone = true;
+      steps.forEach(s => s.classList.add("hidden"));
+      errorScreen.textContent = "Keygrain data was removed on this device. Open the Keygrain popup, unlock, then reload this page.";
+      errorScreen.classList.remove("hidden");
+      return;
+    }
+    // Only the checklist step renders from these. During wizard steps 1-3 the blob is re-read
+    // by each step that needs it (prepareConfirm, and the import itself immediately before
+    // writing), so refreshing here would rewrite a hidden step-4 DOM for nothing — and would
+    // replace `allServices` under the preview the user is editing.
+    if (steps[3].classList.contains("hidden")) return;
+    serialize(refreshChecklist);
   });
 })();
