@@ -83,7 +83,38 @@
     <div id="checklist" role="list"></div>
     <div id="all-done" class="hidden">
       <p>🎉 All services rotated!</p>
-      <button id="dismiss-btn" class="btn-primary">Dismiss checklist</button>
+    </div>
+    <!-- Stop migration. This REPLACES the former #dismiss-btn, which lived inside #all-done
+         and was therefore unreachable while anything was still pending — so there was no way
+         to abandon a migration part-way through. One control, shown whenever there is a batch
+         to end, with wording that adapts: "Stop migration" while services are pending (the
+         destructive case, behind the confirm below), "Dismiss checklist" once everything is
+         rotated (nothing to forget, so it acts immediately, exactly as Dismiss did). -->
+    <div id="stop-row" class="hidden">
+      <button id="stop-btn" class="btn-secondary">Stop migration</button>
+    </div>
+  </div>
+
+  <!-- Stop migration confirmation.
+       Confirming clears `migrating` on every remaining service AND removes the checklist key
+       (see the handler in migrate.js). The consequence is spelled out because it is not
+       recoverable from inside Keygrain: those sites keep their old passwords, and the password
+       Keygrain generates will not work there until the user changes it on the site itself. -->
+  <div id="stop-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="stop-dialog-title">
+    <div class="dialog-box">
+      <h2 id="stop-dialog-title">Stop the migration?</h2>
+      <p id="stop-dialog-count"></p>
+      <p>Those sites keep their old passwords. The password Keygrain generates will not work
+        on them until you change it on the site itself.</p>
+      <!-- Deliberately NOT "you can import the same export again": the import skips entries
+           whose (site, email) already exists, so re-importing the same CSV adds nothing, sets
+           no flags, and produces no checklist. There is no way back to this list. -->
+      <p>Services you have already rotated are not affected. This checklist cannot be brought
+        back afterwards.</p>
+      <div class="dialog-actions">
+        <button id="stop-cancel" class="btn-secondary">Cancel</button>
+        <button id="stop-confirm" class="btn-danger">Stop migration</button>
+      </div>
     </div>
   </div>
 
