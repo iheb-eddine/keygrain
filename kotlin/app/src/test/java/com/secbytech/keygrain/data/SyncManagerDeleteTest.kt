@@ -10,7 +10,7 @@ import java.util.Base64
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Unit tests for the DELETE HTTP layer of [SyncManager.doDelete].
+ * Unit tests for the DELETE HTTP layer of [SyncTransport.doDelete].
  *
  * These drive the FULL status-code -> DeleteResult mapping (the Invariant #1
  * critical logic) and the request shape (method + Authorization pass-through)
@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicReference
  *    than com.sun.net.httpserver.HttpServer, because on this module's Android
  *    unit-test compile classpath (android.jar) com.sun.net.httpserver is not
  *    available. java.net is.
- *  - The tests call the internal [SyncManager.doDelete] directly rather than the
+ *  - The tests call the internal [SyncTransport.doDelete] directly rather than the
  *    public suspend [SyncManager.deleteServerData]: on the plain-JVM unit test
  *    runtime (no Robolectric / returnDefaultValues) android.util.Base64 — used by
  *    deleteServerData to build the auth header — throws "not mocked". This is the
@@ -83,26 +83,26 @@ class SyncManagerDeleteTest {
         }
     }
 
-    private fun managerFor(port: Int) = SyncManager(baseUrl = "http://127.0.0.1:$port")
+    private fun transportFor(port: Int) = SyncTransport(baseUrl = "http://127.0.0.1:$port")
 
     @Test
     fun testDeleteReturns200MapsToSuccess() {
         MiniServer(200, "OK", """{"status":"deleted"}""").use { s ->
-            assertEquals(DeleteResult.Success, managerFor(s.port).doDelete(lookupId, authHeader))
+            assertEquals(DeleteResult.Success, transportFor(s.port).doDelete(lookupId, authHeader))
         }
     }
 
     @Test
     fun testDeleteReturns404MapsToNotFound() {
         MiniServer(404, "Not Found", """{"error":"not found"}""").use { s ->
-            assertEquals(DeleteResult.NotFound, managerFor(s.port).doDelete(lookupId, authHeader))
+            assertEquals(DeleteResult.NotFound, transportFor(s.port).doDelete(lookupId, authHeader))
         }
     }
 
     @Test
     fun testDeleteReturns401MapsToAuthError() {
         MiniServer(401, "Unauthorized", """{"error":"unauthorized"}""").use { s ->
-            val result = managerFor(s.port).doDelete(lookupId, authHeader)
+            val result = transportFor(s.port).doDelete(lookupId, authHeader)
             assertTrue(result is DeleteResult.AuthError)
             assertEquals(401, (result as DeleteResult.AuthError).httpCode)
         }
@@ -111,7 +111,7 @@ class SyncManagerDeleteTest {
     @Test
     fun testDeleteReturns403MapsToAuthError() {
         MiniServer(403, "Forbidden", """{"error":"forbidden"}""").use { s ->
-            val result = managerFor(s.port).doDelete(lookupId, authHeader)
+            val result = transportFor(s.port).doDelete(lookupId, authHeader)
             assertTrue(result is DeleteResult.AuthError)
             assertEquals(403, (result as DeleteResult.AuthError).httpCode)
         }
@@ -120,14 +120,14 @@ class SyncManagerDeleteTest {
     @Test
     fun testDeleteReturns429MapsToRateLimited() {
         MiniServer(429, "Too Many Requests", """{"error":"rate limit exceeded","retry_after":30}""").use { s ->
-            assertEquals(DeleteResult.RateLimited, managerFor(s.port).doDelete(lookupId, authHeader))
+            assertEquals(DeleteResult.RateLimited, transportFor(s.port).doDelete(lookupId, authHeader))
         }
     }
 
     @Test
     fun testDeleteReturns500MapsToServerError() {
         MiniServer(500, "Internal Server Error", """{"error":"internal error"}""").use { s ->
-            val result = managerFor(s.port).doDelete(lookupId, authHeader)
+            val result = transportFor(s.port).doDelete(lookupId, authHeader)
             assertTrue(result is DeleteResult.ServerError)
             assertEquals(500, (result as DeleteResult.ServerError).httpCode)
         }
@@ -136,7 +136,7 @@ class SyncManagerDeleteTest {
     @Test
     fun testDeleteRequestShapeMethodAndAuthHeader() {
         MiniServer(200, "OK", """{"status":"deleted"}""").use { s ->
-            managerFor(s.port).doDelete(lookupId, authHeader)
+            transportFor(s.port).doDelete(lookupId, authHeader)
             assertEquals("DELETE", s.method.get())
             assertEquals(authHeader, s.auth.get())
         }
@@ -147,7 +147,7 @@ class SyncManagerDeleteTest {
         // A 200 with a non-JSON / unexpected body must still map to Success:
         // doDelete must never parse the body.
         MiniServer(200, "OK", "not json at all <<<").use { s ->
-            assertEquals(DeleteResult.Success, managerFor(s.port).doDelete(lookupId, authHeader))
+            assertEquals(DeleteResult.Success, transportFor(s.port).doDelete(lookupId, authHeader))
         }
     }
 
@@ -155,7 +155,7 @@ class SyncManagerDeleteTest {
     fun testDeleteNetworkErrorOnUnreachable() {
         // Reserve a port then release it so nothing is listening -> connection refused.
         val port = ServerSocket(0).use { it.localPort }
-        val result = managerFor(port).doDelete(lookupId, authHeader)
+        val result = transportFor(port).doDelete(lookupId, authHeader)
         assertTrue("expected NetworkError, got $result", result is DeleteResult.NetworkError)
     }
 }
