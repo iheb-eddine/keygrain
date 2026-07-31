@@ -42,7 +42,19 @@ data class ServiceEntry(
     // id has been confirmed present on the server at least once. A property of IDENTITY,
     // not of content — editing MUST NOT clear it, or a remote deletion of an edited
     // record becomes undetectable and the service resurrects. Local-only: never synced.
-    val synced: Boolean = false
+    val synced: Boolean = false,
+    // Set by the browser extension's migration import: this service was brought over from
+    // another password manager and the SITE STILL HOLDS THE OLD PASSWORD until the user
+    // changes it there. Content, and synced — the extension drives its ⚠ badge, its
+    // "Mark as rotated" action and its old-password warnings from this flag.
+    //
+    // Android has no migration UI and never sets it. It must still be carried through
+    // every parse and every write: this class is the only shape a service takes here, so a
+    // field missing from toJsonContent is ERASED FOR EVERY DEVICE on the next sync push
+    // from this app — silently marking a half-finished migration complete and taking the
+    // extension's old-password warnings with it. That was the behaviour until this field
+    // existed.
+    val migrating: Boolean = false
 ) {
     /** Serialize all content fields (everything except sync metadata id/updated_at). */
     fun toJsonContent(): JSONObject = JSONObject().apply {
@@ -55,6 +67,11 @@ data class ServiceEntry(
         if (totp != null) put("totp", totp)
         if (ssh != null) put("ssh", ssh)
         if (frecency != 0.0) put("frecency", frecency)
+        // Omitted when false, matching the extension, which deletes the property rather
+        // than storing `false` (migration-state.js applyMigrating). An explicit `false`
+        // would be honest but would change the canonical payload for every service and
+        // make this app's first push look like an edit to all of them.
+        if (migrating) put("migrating", true)
     }
 }
 
@@ -124,7 +141,8 @@ class ServiceManager(context: Context) {
                     // Absent (v1 store) => false. Defaulting to false is the safe
                     // direction: a false `false` only causes a harmless idempotent
                     // re-push under the same UUID, whereas a false `true` risks deletion.
-                    synced = obj.optBoolean("synced", false)
+                    synced = obj.optBoolean("synced", false),
+                    migrating = obj.optBoolean("migrating", false)
                 )
             } catch (_: Exception) {
                 null
@@ -339,7 +357,11 @@ class ServiceManager(context: Context) {
                     updatedAt = obj.optLong("updated_at", System.currentTimeMillis()),
                     totp = if (obj.has("totp") && !obj.isNull("totp")) obj.getJSONObject("totp") else null,
                     ssh = if (obj.has("ssh") && !obj.isNull("ssh")) obj.getJSONObject("ssh") else null,
-                    frecency = obj.optDouble("frecency", 0.0)
+                    frecency = obj.optDouble("frecency", 0.0),
+                    // Carried through from the remote blob. Dropping it here erased it for
+                    // every device on the next push from this app: the merge builds records
+                    // from this parse, and toJsonContent writes them straight back.
+                    migrating = obj.optBoolean("migrating", false)
                 )
             } catch (_: Exception) {
                 null

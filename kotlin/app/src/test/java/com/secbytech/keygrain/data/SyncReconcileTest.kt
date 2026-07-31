@@ -15,7 +15,7 @@ import java.io.File
  * extension/tests/test.mjs — the two platforms share one algorithm and any divergence is
  * a cross-platform correctness bug.
  *
- * [SyncManager.reconcileServices] is pure (no Context, no android.util.Base64, no
+ * [SyncReconciler.reconcileServices] is pure (no Context, no android.util.Base64, no
  * org.json construction on the paths exercised here), so it runs on the plain JVM unit
  * test runtime. Cases that would build a SyncConflict are deliberately shaped so the
  * material-difference check is false, because SyncConflict serialization needs org.json,
@@ -41,7 +41,7 @@ class SyncReconcileTest {
     // Rule 3: both sides have it, local newer wins.
     @Test
     fun rule3_localNewerWins() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(svc("a", site = "local.com", updatedAt = 200, synced = true)),
             emptyList(),
             listOf(svc("a", site = "remote.com", updatedAt = 100, synced = true)),
@@ -55,7 +55,7 @@ class SyncReconcileTest {
     // Rules 1+2: remote wins ties.
     @Test
     fun rules1and2_remoteWinsTies() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(svc("a", site = "local.com", updatedAt = 100, synced = true)),
             emptyList(),
             listOf(svc("a", site = "remote.com", updatedAt = 100, synced = true)),
@@ -67,7 +67,7 @@ class SyncReconcileTest {
     // Rule 5: remote-only is created locally.
     @Test
     fun rule5_remoteOnlyCreatesLocally() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             emptyList(), emptyList(),
             listOf(svc("b", site = "new.com", updatedAt = 50, synced = false)),
             meta("b" to 50L), 0L, true
@@ -80,7 +80,7 @@ class SyncReconcileTest {
     // Rule 4: local-only and never synced is pushed, NEVER deleted.
     @Test
     fun rule4_unsyncedLocalOnlyIsPushedNotDeleted() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(svc("local-1", site = "brand-new.com", updatedAt = 300, synced = false)),
             emptyList(), emptyList(), emptyList(), 0L, true
         )
@@ -92,7 +92,7 @@ class SyncReconcileTest {
     // Rule 6: synced local-only was deleted elsewhere.
     @Test
     fun rule6_syncedLocalOnlyIsDeleted() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(svc("d", site = "gone.com", updatedAt = 100, synced = true)),
             emptyList(), emptyList(), emptyList(), 500L, true
         )
@@ -102,7 +102,7 @@ class SyncReconcileTest {
     // Frozen Req 7 negative: no unsynced change -> silent, nothing retained.
     @Test
     fun routineRemoteDeletionRetainsNothing() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(svc("d", site = "gone.com", updatedAt = 100, synced = true)),
             emptyList(), emptyList(), emptyList(), 500L, true
         )
@@ -112,7 +112,7 @@ class SyncReconcileTest {
     // Frozen Req 7: an unsynced local change destroyed by a remote deletion is retained.
     @Test
     fun remoteDeletionOfLocallyEditedServiceIsRetained() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(svc("d", site = "edited.com", updatedAt = 900, synced = true)),
             emptyList(), emptyList(), emptyList(), 500L, true
         )
@@ -124,7 +124,7 @@ class SyncReconcileTest {
     // Rule 7: a newer remote edit supersedes a pending local deletion.
     @Test
     fun rule7_newerRemoteEditResurrectsOverTombstone() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             emptyList(), listOf(Tombstone("x", 100L)),
             listOf(svc("x", site = "edited-elsewhere.com", updatedAt = 200, synced = true)),
             meta("x" to 200L), 0L, true
@@ -139,7 +139,7 @@ class SyncReconcileTest {
     // Rule 7 negative: the deletion is newer -> stays deleted and is declared.
     @Test
     fun rule7_olderRemoteRecordStaysDeletedAndIsDeclared() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             emptyList(), listOf(Tombstone("x", 300L)),
             listOf(svc("x", site = "stale.com", updatedAt = 200, synced = true)),
             meta("x" to 200L), 0L, true
@@ -152,7 +152,7 @@ class SyncReconcileTest {
     // Frozen Req 5: a tombstone for an id the server no longer holds clears without a PUT.
     @Test
     fun tombstoneForAlreadyAbsentIdClearsWithoutPut() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             emptyList(), listOf(Tombstone("x", 300L)), emptyList(), emptyList(), 0L, true
         )
         assertEquals(0, r.merged.size)
@@ -164,7 +164,7 @@ class SyncReconcileTest {
     // matches by id — no duplicate, and the flag flips to synced.
     @Test
     fun lostPutResponseRepairsByIdWithoutDuplicating() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(svc("same", updatedAt = 100, synced = false)),
             emptyList(),
             listOf(svc("same", updatedAt = 100, synced = false)),
@@ -179,7 +179,7 @@ class SyncReconcileTest {
     // is written regardless of `synced`.
     @Test
     fun deletionInLostResponseWindowStillPropagates() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             emptyList(), listOf(Tombstone("inflight", 500L)),
             listOf(svc("inflight", updatedAt = 100, synced = true)),
             meta("inflight" to 100L), 0L, true
@@ -192,7 +192,7 @@ class SyncReconcileTest {
     // server blob would wipe every device.
     @Test
     fun absentRemoteRecordNeverInfersDeletions() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(
                 svc("a", site = "x.com", updatedAt = 100, synced = true),
                 svc("b", site = "y.com", updatedAt = 200, synced = true)
@@ -209,7 +209,7 @@ class SyncReconcileTest {
     // A 200 with zero services IS a legitimate delete-all (unlike a 404).
     @Test
     fun emptyRemoteRecordDeletesSyncedLocalRecords() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(svc("a", site = "x.com", updatedAt = 100, synced = true)),
             emptyList(), emptyList(), emptyList(), 500L, true
         )
@@ -220,7 +220,7 @@ class SyncReconcileTest {
     // server-side. Shaped with identical material fields so no SyncConflict is built.
     @Test
     fun duplicateCollapseTombstonesAndDeclaresSyncedLoser() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             emptyList(), emptyList(),
             listOf(
                 svc("y1", updatedAt = 100, synced = true),
@@ -237,7 +237,7 @@ class SyncReconcileTest {
     // An unsynced duplicate loser must NOT be declared (the server never had it).
     @Test
     fun unsyncedDuplicateLoserIsNotDeclared() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(
                 svc("z1", updatedAt = 100, synced = false),
                 svc("z2", updatedAt = 200, synced = false)
@@ -252,7 +252,7 @@ class SyncReconcileTest {
     // and deleted services resurrect. Guards the central invariant directly.
     @Test
     fun editedSyncedRecordIsStillSubjectToRemoteDeletion() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(svc("e", site = "edited.com", updatedAt = 900, synced = true)),
             emptyList(), emptyList(), emptyList(), 1000L, true
         )
@@ -263,7 +263,7 @@ class SyncReconcileTest {
     // Empty-normalizing sites fall back to the id as dedup key, so they do not collide.
     @Test
     fun emptyNormalizingSitesUseIdAsDedupKey() {
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(
                 svc("x1", site = "www.", updatedAt = 100, synced = false),
                 svc("x2", site = "https://", updatedAt = 200, synced = false)
@@ -321,7 +321,7 @@ class SyncReconcileTest {
             "example.com",
             900L
         )
-        val r = sm.reconcileServices(
+        val r = SyncReconciler.reconcileServices(
             listOf(edited), emptyList(), emptyList(), emptyList(), 500L, true
         )
         assertEquals("must not be re-created server-side", 0, r.merged.size)
@@ -333,11 +333,11 @@ class SyncReconcileTest {
 
     @Test
     fun canonical_isOrderIndependentForServices() {
-        val a = sm.canonicalBlobPayload(
+        val a = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 1, synced = true), svc("i2", site = "b.com", updatedAt = 2, synced = true)),
             emptyList(), emptyList(), emptyList()
         )
-        val b = sm.canonicalBlobPayload(
+        val b = SyncBlob.canonicalBlobPayload(
             listOf(svc("i2", site = "b.com", updatedAt = 2, synced = true), svc("i1", updatedAt = 1, synced = true)),
             emptyList(), emptyList(), emptyList()
         )
@@ -346,10 +346,10 @@ class SyncReconcileTest {
 
     @Test
     fun canonical_differsWhenAFieldChanges() {
-        val a = sm.canonicalBlobPayload(
+        val a = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList(), emptyList()
         )
-        val b = sm.canonicalBlobPayload(
+        val b = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 1, synced = true).copy(counter = 2)),
             emptyList(), emptyList(), emptyList()
         )
@@ -360,10 +360,10 @@ class SyncReconcileTest {
     // force a pointless push.
     @Test
     fun canonical_excludesLocalOnlySyncedFlag() {
-        val a = sm.canonicalBlobPayload(
+        val a = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList(), emptyList()
         )
-        val b = sm.canonicalBlobPayload(
+        val b = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 1, synced = false)), emptyList(), emptyList(), emptyList()
         )
         assertEquals(a, b)
@@ -371,10 +371,10 @@ class SyncReconcileTest {
 
     @Test
     fun canonical_differsWhenUpdatedAtChanges() {
-        val a = sm.canonicalBlobPayload(
+        val a = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList(), emptyList()
         )
-        val b = sm.canonicalBlobPayload(
+        val b = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 2, synced = true)), emptyList(), emptyList(), emptyList()
         )
         assertFalse(a == b)
@@ -430,7 +430,7 @@ class SyncReconcileTest {
                 o.getString("id") to o.getLong("updated_at")
             }
 
-            val r = sm.reconcileServices(
+            val r = SyncReconciler.reconcileServices(
                 local, tombstones, remote, meta,
                 v.getLong("lastSuccessfulSyncAt"), v.getBoolean("remoteExists")
             )
