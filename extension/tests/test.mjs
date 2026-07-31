@@ -2362,28 +2362,116 @@ await test('ensureMembership: an empty v2 checklist with no flags is deleted', a
   assert.equal(r.changed, true);
 });
 
-// Stop migration removes the checklist key, and it MUST clear the flags in the same operation.
-// A flag left behind puts this reconciliation in exactly the state it exists to repair — flags
-// with no checklist — so the next external blob write materialises a fresh checklist and the
-// Stop un-does itself. Dismiss got away with removing the key alone only because it was
-// unreachable while any flag was set; a Stop control reachable with rows pending makes the
-// defect real.
+// Stop migration removes the checklist and MUST NOT clear the flags: `migrating` is the only mark
+// on a service whose site still holds the old password, and the popup's badge, its copy/fill
+// warnings and Mark as rotated all read it. Leaving the flags behind means this reconciliation
+// would rebuild the checklist out of them on the next load — Stop undoing itself — which is why
+// the abandoned ids are recorded and excluded. The first two assertions below show the failure
+// mode the exclusion prevents; `stopped` tests further down show it prevented.
 await test('ensureMembership: a leftover flag resurrects a removed checklist', async () => {
   const batch = [SVC('a', {migrating: true}), SVC('b', {migrating: true})];
 
-  // The wrong implementation: key removed, one flag missed.
-  const halfCleared = kmig('applyMigrating', batch, ['a'], false, 5000).services;
-  const resurrected = kmig('ensureMembership', null, halfCleared, 'T1');
+  // Key removed, flags left, nothing recorded as abandoned.
+  const resurrected = kmig('ensureMembership', null, batch, 'T1');
   assert.equal(resurrected.changed, true);
-  assert.deepEqual(resurrected.checklist.items, [{id: 'b'}], 'a leftover flag failed to resurrect the checklist');
+  assert.deepEqual(resurrected.checklist.items, [{id: 'a'}, {id: 'b'}],
+    'leftover flags failed to resurrect the checklist');
 
-  // What Stop does: every flag cleared, then the key removed.
-  const allCleared = kmig('applyMigrating', batch, kmig('migratingIds', batch), false, 5000).services;
-  const stopped = kmig('ensureMembership', null, allCleared, 'T1');
-  assert.equal(stopped.checklist, null, 'a fresh checklist was materialised after Stop');
-  assert.equal(stopped.changed, false, 'the absent checklist would be written back');
-  // And nothing projects a row, so no later render brings the stopped batch back either.
-  assert.equal(kmig('project', null, allCleared).length, 0);
+  // Clearing the flags would also stop it — that was the first implementation, and it is what
+  // destroyed the old-password warning. Kept as a property of the pure layer, not as the design.
+  const cleared = kmig('applyMigrating', batch, kmig('migratingIds', batch), false, 5000).services;
+  const stopped = kmig('ensureMembership', null, cleared, 'T1');
+  assert.equal(stopped.checklist, null);
+  assert.equal(stopped.changed, false);
+  assert.equal(kmig('project', null, cleared).length, 0);
+});
+
+// ---- abandoned services (Stop migration) ----
+
+await test('pendingIds/countPending: abandoned services are not counted', async () => {
+  const svcs = [SVC('a', {migrating: true}), SVC('b', {migrating: true}), SVC('c')];
+  assert.deepEqual(kmig('pendingIds', svcs, ['a']), ['b']);
+  assert.equal(kmig('countPending', svcs, ['a']), 1);
+  assert.equal(kmig('countPending', svcs, ['a', 'b']), 0);
+  // The raw flag set is unchanged — it is what still warns the user, and what reconcileStopped
+  // prunes against.
+  assert.deepEqual(kmig('migratingIds', svcs), ['a', 'b']);
+  // Absent/empty abandoned set behaves exactly as before this cycle.
+  assert.equal(kmig('countPending', svcs), 2);
+  assert.equal(kmig('countPending', svcs, []), 2);
+});
+
+await test('project: abandoned services are in no batch, member or not', async () => {
+  const svcs = [SVC('a', {migrating: true}), SVC('b', {migrating: true})];
+  // As a flagged non-member: without this, a LATER import's checklist would list every previously
+  // abandoned service alongside its own rows.
+  assert.deepEqual(kmig('project', CL2('b'), svcs, ['a']).map(r => r.id), ['b']);
+  // And as a member, so a stale checklist cannot resurrect one either.
+  assert.deepEqual(kmig('project', CL2('a', 'b'), svcs, ['a']).map(r => r.id), ['b']);
+  assert.equal(kmig('project', CL2('a'), svcs, ['a', 'b']).length, 0);
+});
+
+// The property that makes Stop stick, given that it deliberately leaves the flags set.
+await test('ensureMembership: abandoned flags do not rebuild a checklist', async () => {
+  const batch = [SVC('a', {migrating: true}), SVC('b', {migrating: true})];
+  const r = kmig('ensureMembership', null, batch, 'T1', ['a', 'b']);
+  assert.equal(r.checklist, null, 'a checklist was rebuilt from abandoned flags');
+  assert.equal(r.changed, false, 'the absent checklist would be written back');
+  // A partial Stop keeps the rest of the batch: only the abandoned ids drop out.
+  const partial = kmig('ensureMembership', null, batch, 'T1', ['a']);
+  assert.deepEqual(partial.checklist.items, [{id: 'b'}]);
+  // A member that has been abandoned is pruned from membership too.
+  const pruned = kmig('ensureMembership', CL2('a', 'b'), batch, 'T1', ['a']);
+  assert.deepEqual(pruned.checklist.items, [{id: 'b'}]);
+  assert.equal(pruned.changed, true);
+});
+
+await test('reconcileStopped: keeps only ids that still name a flagged live service', async () => {
+  const svcs = [SVC('a', {migrating: true}), SVC('b')];
+  // 'b' was rotated after being abandoned (Mark as rotated stays available), 'gone' was deleted.
+  // Both must drop, or the key grows for the life of the profile and a service that a later import
+  // flags again would be silently excluded from its batch.
+  const r = kmig('reconcileStopped', ['a', 'b', 'gone'], svcs);
+  assert.deepEqual(r.ids, ['a']);
+  assert.equal(r.changed, true);
+  // Nothing to prune reports no change, so the key is not rewritten on every load.
+  assert.equal(kmig('reconcileStopped', ['a'], svcs).changed, false);
+  assert.deepEqual(kmig('reconcileStopped', [], svcs).ids, []);
+  assert.deepEqual(kmig('reconcileStopped', null, svcs).ids, []);
+});
+
+await test('storedStoppedIds: tolerates anything storage can hold', async () => {
+  assert.deepEqual(kmig('storedStoppedIds', {version: 1, ids: ['a', 'a', null, '', 'b']}), ['a', 'b']);
+  assert.deepEqual(kmig('storedStoppedIds', null), []);
+  assert.deepEqual(kmig('storedStoppedIds', {version: 1}), []);
+  assert.deepEqual(kmig('storedStoppedIds', {version: 1, ids: 'nope'}), []);
+  // The version is a gate, not a decoration. A future format whose ids held objects would
+  // otherwise parse as a list of ids matching no service, which reconcile prunes to nothing —
+  // quietly un-abandoning everything. Failing closed shows the batch again instead.
+  assert.deepEqual(kmig('storedStoppedIds', {version: 2, ids: ['a']}), []);
+  assert.deepEqual(kmig('storedStoppedIds', {ids: ['a']}), []);
+  assert.equal(kmig('newStopped', ['a', 'a', 'b']).version, 1);
+  assert.deepEqual(kmig('newStopped', ['a', 'a', 'b']).ids, ['a', 'b']);
+  // The writer's version must be the one the reader accepts, or every Stop is forgotten on reload.
+  assert.deepEqual(kmig('storedStoppedIds', kmig('newStopped', ['a'])), ['a']);
+});
+
+// End to end through the pure layer: import, rotate one, stop the rest, then import again.
+await test('stopping a batch does not leak into a later import', async () => {
+  const svcs = [SVC('a'), SVC('b', {migrating: true}), SVC('c', {migrating: true})];
+  const abandoned = kmig('pendingIds', svcs, []);          // b, c — what Stop records
+  assert.deepEqual(abandoned, ['b', 'c']);
+  // The stopped page: no rows, no count, no checklist rebuilt.
+  assert.equal(kmig('project', null, svcs, abandoned).length, 0);
+  assert.equal(kmig('countPending', svcs, abandoned), 0);
+  assert.equal(kmig('ensureMembership', null, svcs, 'T1', abandoned).checklist, null);
+  // A later import adds 'd'. Its batch is 'd' alone — b and c stay abandoned and stay flagged.
+  const later = [...svcs, SVC('d', {migrating: true})];
+  const fresh = kmig('ensureMembership', null, later, 'T2', abandoned);
+  assert.deepEqual(fresh.checklist.items, [{id: 'd'}]);
+  assert.deepEqual(kmig('project', fresh.checklist, later, abandoned).map(r => r.id), ['d']);
+  // ...and they are still flagged, so the popup still warns about them.
+  assert.deepEqual(kmig('migratingIds', later), ['b', 'c', 'd']);
 });
 
 // Storage can be corrupt. Every services[] path is null-guarded, so the checklist paths
@@ -2619,8 +2707,35 @@ await test('popup.js reacts to external services writes', async () => {
   const body = bodyOf('popup.js', 'chrome.storage.onChanged.addListener', 2);
   // The exact condition, not just its pieces: inverting it, or dropping the `.length`, would
   // otherwise leave every assertion green while the popup refreshed on nothing.
-  assert.match(body, /if \(externalChanges\(changes, area, \["services"\], selfWrites\)\.length\) refreshFromStorage\(\);/,
+  assert.match(body, /const changed = externalChanges\(changes, area, \["services", "migrationStopped"\], selfWrites\);\s*\n\s*if \(!changed\.length\) return;/,
     'the listener condition changed');
+  // Stop migration writes only migrationStopped, so without that key watched the menu count stays
+  // stale until the popup is reopened. And it must NOT drag the blob reload along with it: that
+  // costs an Argon2id derivation for a button label, and refreshFromStorage's deferral guards
+  // would drop it besides.
+  assert.match(body, /if \(changed\.includes\("services"\)\) refreshFromStorage\(\);\s*\n\s*else updateMigrateBtn\(\);/,
+    'a migrationStopped-only change does not take the cheap path');
+});
+
+await test('popup.js counts migration work excluding what the user stopped', async () => {
+  const body = bodyOf('popup.js', 'async function updateMigrateBtn()', 2);
+  // Stop abandons services WITHOUT clearing `migrating` (the flag is the old-password warning), so
+  // a count taken from the flags alone would go on reporting work the user has given up on.
+  assert.match(body, /KeygrainMigration\.storedStoppedIds\(\s*\n?\s*\(await chrome\.storage\.local\.get\("migrationStopped"\)\)\.migrationStopped\)/,
+    'the menu count does not read the abandoned set');
+  assert.match(body, /KeygrainMigration\.countPending\(services, stopped\)/,
+    'the menu count does not exclude abandoned services');
+  // Fire-and-forget at every call site now that it is async, so a rejected get (invalidated
+  // extension context) would otherwise be an unhandled rejection leaving the label stale.
+  assert.match(body, /let stopped = \[\];\s*\n\s*try \{[\s\S]*?\} catch \(_\) \{[^}]*\}/,
+    'a rejected storage read is not contained');
+  // Switch account must not leave one account's abandoned set applying to the next. Matched
+  // against the array's own contents: `[\s\S]*?` across the whole file would run past the closing
+  // bracket and find the key in updateMigrateBtn instead.
+  const scoped = /const ACCOUNT_SCOPED_KEYS = \[([\s\S]*?)\];/.exec(sourceOf('popup.js'));
+  assert.ok(scoped, 'ACCOUNT_SCOPED_KEYS not found');
+  assert.ok(scoped[1].includes('"migrationStopped"'),
+    'migrationStopped is not wiped with the rest of the account data');
 });
 
 await test('popup.js refresh reloads AND re-renders everything it invalidates', async () => {
@@ -2714,6 +2829,12 @@ await test('popup.js arms a self-write marker and a generation bump on every blo
   assert.equal([...src.matchAll(/blobWrites\+\+;/g)].length, writes, 'a write does not bump the generation');
   // Both wipes must also stop an in-flight refresh from re-installing the old account.
   assert.equal([...src.matchAll(/accountWiped = true;/g)].length, 2, 'an account wipe is not flagged');
+  // Both wipes remove `migrationStopped` too (it is account-scoped, and clear() takes everything),
+  // and it is watched. Unmarked, the wipe's own removal reads as external and the listener takes
+  // the label-only path, which has none of refreshFromStorage's guards — so it can relabel the
+  // menu from the wiped account's `services`, which is reset only after the removal resolves.
+  assert.equal([...src.matchAll(/selfWrites\.migrationStopped = STORAGE_MARKER_ABSENT;/g)].length, 2,
+    'a wipe does not mark its removal of migrationStopped');
 });
 
 await test('popup.js persists the blob from exactly one place', async () => {
@@ -2785,6 +2906,12 @@ await test('migrate.js arms a self-write marker before every write it makes', as
     [...src.matchAll(/selfWrites\.migrationChecklist = storageMarker\(/g)].length, 'unarmed checklist write');
   assert.equal([...src.matchAll(/chrome\.storage\.local\.remove\("migrationChecklist"\)/g)].length,
     [...src.matchAll(/selfWrites\.migrationChecklist = STORAGE_MARKER_ABSENT/g)].length, 'unarmed checklist removal');
+  // The abandoned set is written by Stop and by the reconciliation on load; an unarmed write makes
+  // the tab refresh in response to itself, and the popup is watching this key too.
+  assert.equal([...src.matchAll(/chrome\.storage\.local\.set\(\{ migrationStopped/g)].length,
+    [...src.matchAll(/selfWrites\.migrationStopped = storageMarker\(/g)].length, 'unarmed abandoned-set write');
+  assert.equal([...src.matchAll(/chrome\.storage\.local\.remove\("migrationStopped"\)/g)].length,
+    [...src.matchAll(/selfWrites\.migrationStopped = STORAGE_MARKER_ABSENT/g)].length, 'unarmed abandoned-set removal');
 });
 
 await test('migrate.js recovers a tab parked on either bail-out screen', async () => {
@@ -2796,52 +2923,71 @@ await test('migrate.js recovers a tab parked on either bail-out screen', async (
     'the recovery listener does not reload');
 });
 
-await test('migrate.js Stop clears every flag before it forgets the batch', async () => {
+await test('migrate.js Stop keeps the flags and records the abandoned ids instead', async () => {
   const body = bodyOf('migrate.js', 'function stopMigration(ids)', 2);
-  // Removing the key alone leaves the flags behind, and ensureMembership then materialises a
-  // fresh checklist from them on the next external write — the Stop un-does itself.
-  assert.match(body, /setMigrating\(ids, false\)/, 'Stop does not clear the migrating flags');
+  const src = sourceOf('migrate.js');
+  // THE point of this cycle. `migrating` is the only mark on a service whose site still holds the
+  // old password: it drives the popup's badge, its Mark as rotated button, and the "⚠ Old
+  // password" warning on copy and on fill. Clearing it here made an abandoned service look
+  // rotated, so copying its password produced no warning and the paste failed on the site.
+  assert.doesNotMatch(body, /setMigrating/, 'Stop clears the migrating flags again');
+  assert.doesNotMatch(body, /writeBlob|applyMigrating/, 'Stop writes the blob, which it has no reason to touch');
+  assert.match(body, /await writeStopped\(KeygrainMigration\.dedupeIds\(\[\.\.\.onDisk, \.\.\.ids\]\)\)/,
+    'Stop does not record the abandoned ids');
+  // Unioned against DISK, not against the module's `stopped`. serialize() orders operations within
+  // one tab and nothing orders them across tabs, so a second migrate tab that stopped its own
+  // batch moments ago may not have reached this tab yet — a union built from stale in-memory state
+  // drops the ids it just recorded and those services become pending again.
+  assert.match(body, /const onDisk = KeygrainMigration\.storedStoppedIds\(\s*\n?\s*\(await chrome\.storage\.local\.get\("migrationStopped"\)\)\.migrationStopped\);/,
+    'the union is built from in-memory state rather than from disk');
+  // Recorded before the removal: the other order leaves flags unabandoned with no checklist, and
+  // the next load rebuilds the checklist from them — Stop silently undone.
   const removal = 'chrome.storage.local.remove("migrationChecklist")';
   assert.ok(body.includes(removal), 'Stop does not remove the checklist');
-  assert.ok(body.indexOf('setMigrating(ids, false)') < body.indexOf(removal),
-    'the checklist is removed before the flags are cleared');
-  // A failed read or write must not fall through to the removal and report success: nothing was
-  // written, so the flags survive and would resurrect the checklist anyway.
-  assert.match(body, /if \(ids\.length && !await setMigrating\(ids, false\)\) \{[\s\S]{0,240}?return;/,
-    'Stop ignores a failed flag write');
-  // ...and the plain dismiss must not be routed through it at all: it needs no blob, so
-  // requiring one would make it fail whenever the blob cannot be read.
-  assert.match(body, /if \(ids\.length && /, 'a dismiss with nothing pending still requires the blob');
-  // The destroyed set is the PARAMETER, never re-derived here. Recomputing it would clear flags
-  // that arrived after the confirm and were never named in it.
-  assert.doesNotMatch(body, /const ids = /, 'stopMigration re-derives the id set instead of using the confirmed one');
-  // The truthful re-render: a batch that arrived after the confirm survives and must stay on
-  // screen rather than be replaced by a success message.
-  assert.match(body, /renderChecklist\(\);\s*\n\s*if \(!KeygrainMigration\.migratingIds\(allServices\)\.length\) \{/,
-    'Stop reports success without checking whether anything survived');
+  assert.ok(body.indexOf('writeStopped(') < body.indexOf(removal),
+    'the checklist is removed before the abandoned ids are recorded');
+  // Re-read from disk rather than patching state, so a batch that arrived after the confirm stays
+  // on screen instead of being replaced by a message that would be false.
+  assert.match(body, /await refreshChecklist\(\);\s*\n\s*if \(!KeygrainMigration\.countPending\(allServices, stopped\)\) \{/,
+    'Stop reports success without re-reading, or without checking for survivors');
+  // The abandoned set is only ever persisted through the one helper, which is also the only place
+  // that arms its self-write marker.
+  assert.equal([...src.matchAll(/chrome\.storage\.local\.(?:set\(\{ migrationStopped|remove\("migrationStopped"\))/g)].length, 2,
+    'migrationStopped is written outside writeStopped');
 });
 
-await test('migrate.js Stop destroys exactly the set it confirmed', async () => {
+await test('migrate.js Stop abandons exactly the set it confirmed', async () => {
   const body = bodyOf('migrate.js', 'stopBtn.addEventListener("click"', 2);
-  // The count in the message and the ids that get cleared must be one and the same read. Two
-  // reads let an external write land between them: the dialog says N and Stop forgets N+M, or
+  // The count in the message and the ids that get abandoned must be one and the same read. Two
+  // reads let an external write land between them: the dialog says N and Stop abandons N+M, or
   // worse, the count still reads zero and the confirm is skipped altogether.
-  assert.match(body, /const ids = KeygrainMigration\.migratingIds\(allServices\);/,
-    'the id set is not captured at click time');
-  assert.match(body, /stopDialogCount\.textContent = "Keygrain will forget the " \+ ids\.length/,
+  assert.match(body, /const ids = KeygrainMigration\.pendingIds\(allServices, stopped\);/,
+    'the id set is not captured at click time, or does not exclude already-abandoned services');
+  assert.match(body, /stopDialogCount\.textContent = "The " \+ ids\.length/,
     'the message count is not taken from the captured id set');
   assert.match(body, /stopDialogState = Object\.assign\(openDialog\(stopDialog, stopBtn\), \{ids\}\)/,
     'the confirmed id set is not carried on the dialog state');
   assert.match(sourceOf('migrate.js'),
     /stopConfirm\.addEventListener\("click", \(\) => \{[\s\S]{0,200}?const ids = stopDialogState\.ids;[\s\S]{0,120}?stopMigration\(ids\);/,
     'confirm does not pass the confirmed id set to stopMigration');
-  // The pending count comes from the flags, not from membership: a batch that reached this
-  // device through sync has flags and no checklist, and would otherwise count as zero and skip
-  // the confirm while silently discarding real work.
-  assert.match(body, /migratingIds\(allServices\)/, 'the pending count does not come from the flags');
-  // Nothing pending means nothing is forgotten, so that path stays the one-click Dismiss.
+  // Nothing pending means nothing is abandoned, so that path stays the one-click Dismiss.
   assert.match(body, /if \(!ids\.length\) \{ stopMigration\(ids\); return; \}/,
     'the nothing-pending path no longer skips the confirm');
+});
+
+await test('migrate.js reconciles the abandoned set on every load', async () => {
+  const body = bodyOf('migrate.js', 'async function loadChecklist(services)', 2);
+  // Reconciled BEFORE membership, and the result fed into it: membership computed against a stale
+  // abandoned set would re-adopt services the user has stopped, putting them back in the batch.
+  assert.match(body, /reconcileStopped\([\s\S]{0,160}?\)[\s\S]{0,120}?ensureMembership\(\s*\n?\s*data\.migrationChecklist, services, new Date\(\)\.toISOString\(\), stopped\)/,
+    'membership is reconciled without the abandoned set, or before it');
+  // A service rotated after being abandoned, or deleted, must drop out — otherwise the key grows
+  // for the life of the profile and a later import would silently skip those services.
+  assert.match(body, /if \(st\.changed\) await writeStopped\(stopped\)/,
+    'a reconciled abandoned set is not persisted');
+  assert.match(bodyOf('migrate.js', 'async function writeStopped(ids)', 2),
+    /selfWrites\.migrationStopped = storageMarker\(value\)[\s\S]*?selfWrites\.migrationStopped = STORAGE_MARKER_ABSENT/,
+    'writeStopped does not arm its marker on both the write and the removal');
 });
 
 await test('migrate.js Stop opens a usable modal, and cancel only closes', async () => {
@@ -2868,6 +3014,11 @@ await test('migrate.js Stop opens a usable modal, and cancel only closes', async
 await test('migrate.js shows Stop independently of the all-done panel', async () => {
   const src = sourceOf('migrate.js');
   const body = bodyOf('migrate.js', 'function renderChecklist()', 2);
+  // Abandoned services must be excluded from the rows too, not only from the count. Without the
+  // third argument every stopped service comes back as a pending row, the Stop control unhides
+  // (total !== 0), the progress counter resumes, and a later import lists them inside its batch.
+  assert.match(body, /KeygrainMigration\.project\(checklist, allServices, stopped\)/,
+    'the row set does not exclude abandoned services');
   // The literal bug 3: the only control lived inside #all-done, which is unhidden only when
   // doneCount === total, so a migration could not be abandoned part-way through. Anything other
   // than "no rows at all" as the hide condition reintroduces that.

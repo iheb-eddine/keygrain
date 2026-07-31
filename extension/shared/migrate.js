@@ -217,6 +217,9 @@
   // migration-state.js). `checklist` holds batch membership only.
   let allServices = [];
   let checklist = null;
+  // Ids the user abandoned via Stop migration. Local-only, like membership; the services keep
+  // their `migrating` flag so the popup goes on warning about them. See migration-state.js.
+  let stopped = [];
 
   // Markers for the values this page last wrote, so the storage listener at the bottom of
   // this file can tell its own writes apart from the popup's. See storageMarker in
@@ -322,13 +325,35 @@
     return done;
   }
 
-  // Read the stored checklist, upgrade it to v2 if needed, and reconcile its membership
-  // with the flags — recording flagged services it does not know about, dropping ids
-  // whose service is gone, and materialising one when flags arrived through sync with
-  // no checklist alongside. Persisted only when something actually moved.
+  // Persist the abandoned-id set, or delete the key when it empties so a profile that finished
+  // its migrations does not keep a stale one. Armed before the write, like every other write on
+  // this page: the onChanged event can be dispatched before set() resolves.
+  async function writeStopped(ids) {
+    if (ids.length) {
+      const value = KeygrainMigration.newStopped(ids);
+      selfWrites.migrationStopped = storageMarker(value);
+      await chrome.storage.local.set({ migrationStopped: value });
+    } else {
+      selfWrites.migrationStopped = STORAGE_MARKER_ABSENT;
+      await chrome.storage.local.remove("migrationStopped");
+    }
+  }
+
+  // Read both local stores, upgrade the checklist to v2 if needed, and reconcile:
+  //   - the abandoned set drops ids that are no longer flagged (rotated after being abandoned)
+  //     or whose service is gone
+  //   - membership records flagged services it does not know about, drops ids whose service is
+  //     gone, and materialises a checklist when flags arrived through sync with none alongside
+  // Abandoned ids take no part in membership, which is what stops Stop from un-doing itself.
+  // Each store is written only when it actually moved.
   async function loadChecklist(services) {
-    const stored = (await chrome.storage.local.get("migrationChecklist")).migrationChecklist;
-    const { checklist: next, changed } = KeygrainMigration.ensureMembership(stored, services, new Date().toISOString());
+    const data = await chrome.storage.local.get(["migrationChecklist", "migrationStopped"]);
+    const st = KeygrainMigration.reconcileStopped(KeygrainMigration.storedStoppedIds(data.migrationStopped), services);
+    stopped = st.ids;
+    if (st.changed) await writeStopped(stopped);
+
+    const { checklist: next, changed } = KeygrainMigration.ensureMembership(
+      data.migrationChecklist, services, new Date().toISOString(), stopped);
     checklist = next;
     if (changed) {
       if (checklist) {
@@ -733,9 +758,11 @@
     // Rows are projected from the live service list: pending status comes from each
     // service's `migrating` flag alone, names come from the service (so a rename in the
     // popup shows through), items whose service was deleted disappear, and a flagged
-    // service the checklist does not know about is still listed. Progress is computed
-    // over the full row set before filtering, so switching filters cannot distort it.
-    const rows = KeygrainMigration.project(checklist, allServices);
+    // service the checklist does not know about is still listed. Services the user
+    // abandoned via Stop are excluded — they keep their flag, and their warning, but they
+    // are no longer part of any batch. Progress is computed over the full row set before
+    // filtering, so switching filters cannot distort it.
+    const rows = KeygrainMigration.project(checklist, allServices, stopped);
     const doneCount = rows.filter(r => r.status === "done").length;
     const total = rows.length;
     const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
@@ -853,31 +880,35 @@
   //
   // Replaces the former Dismiss button, which lived inside #all-done and was therefore
   // unreachable while anything was still pending — bug 3: there was no way to abandon a
-  // migration part-way through. One control now covers both cases, and because it always
-  // clears the flags the reachability argument below disappears rather than being reasoned
-  // about again by the next reader.
+  // migration part-way through. One control now covers both cases.
   //
-  // CLEARING THE FLAGS IS NOT OPTIONAL. Dismiss could remove membership alone only because it
-  // was unreachable while any flag was set: project() lists EVERY flagged service as a pending
-  // row, so #all-done being visible proved no service carried `migrating`. Stop IS reachable
-  // with rows pending, so removing the key alone would leave flags behind, and the next
-  // external blob write would run ensureMembership, materialise a fresh checklist from those
-  // flags, and un-do the Stop.
+  // STOP DOES NOT CLEAR `migrating`, AND MUST NOT. The first version did, reading "forget about
+  // the remaining ones" as "erase them". That was wrong. The flag is the only mark on a service
+  // whose site still holds the old password, and it drives four things in the popup: the ⚠ badge,
+  // the Mark as rotated button, and the "⚠ Old password" warning shown on copy and on fill.
+  // Clearing it made an abandoned service look identical to a rotated one, so copying its
+  // password produced no warning and the paste then failed on the site with nothing to explain
+  // why. What the user wants stopped is the checklist and the counting, not the safety warning.
   //
-  // Semantics (agreed with the user): the services not yet rotated are forgotten — the sites
-  // keep their old passwords, and Keygrain's generated password will not work there until the
-  // user changes it on the site. Per-service granularity stays available through Mark as
-  // rotated. The confirm dialog states that consequence.
+  // Stop therefore records the abandoned ids in the local `migrationStopped` key and removes the
+  // checklist. It writes NO blob: the flags are untouched, so nothing in the encrypted payload
+  // changes and nothing needs to sync. (It still ends in a blob READ, because it re-renders from
+  // disk afterwards, so it costs one Argon2id derivation rather than the two a flag write took.)
+  // `ensureMembership` and `project` both skip abandoned ids, which is what keeps the checklist
+  // from being rebuilt out of the flags Stop deliberately leaves behind.
   //
-  // THE CONFIRMED SET IS THE DESTROYED SET. The id list is captured when the button is clicked,
-  // travels with the dialog, and is not recomputed when the write finally runs. Recomputing it
-  // would mean a flag that arrived in between — a sync from another device, another tab's
-  // import — is cleared without ever appearing in the sentence the user agreed to; and a click
-  // taken while the count still read zero would skip the confirm entirely and destroy it
-  // silently. That window is not narrow: a refresh triggered by an external write spends an
-  // Argon2id derivation re-reading the blob before it can update the count. Flags that arrive
-  // after the click therefore survive, and ensureMembership re-materialises a checklist for
-  // them — a batch this Stop never saw is a batch the user still needs to see.
+  // Per-service granularity stays available throughout: Mark as rotated still works from the
+  // popup, and rotating an abandoned service drops it from the set (reconcileStopped).
+  //
+  // THE CONFIRMED SET IS THE RECORDED SET. The id list is captured when the button is clicked,
+  // travels with the dialog, and is not recomputed when the write runs. Recomputing it would let
+  // a flag that arrived in between — a sync from another device, another tab's import — be
+  // abandoned without ever appearing in the sentence the user agreed to; and a click taken while
+  // the count still read zero would skip the confirm entirely. That window is not narrow: a
+  // refresh triggered by an external write spends an Argon2id derivation re-reading the blob
+  // before it can update the count. Flags arriving after the click stay pending, and the next
+  // load materialises a checklist for them — a batch this Stop never saw is one the user still
+  // needs to see.
 
   let stopDialogState = null;
 
@@ -889,28 +920,34 @@
 
   function stopMigration(ids) {
     serialize(async () => {
-      // Skipped entirely when there is nothing to clear: the plain dismiss needs no blob, so
-      // going through setMigrating would make it fail whenever the blob cannot be read — a
-      // regression against the button this replaces — and would derive a key for nothing.
+      // Recorded BEFORE the checklist is removed. In the other order a crash in between would
+      // leave the flags unabandoned with no checklist, and the next load would rebuild the
+      // checklist from them — Stop silently undone. This way a crash in between leaves the
+      // abandoned set written and a checklist that projects no rows, which the next load prunes
+      // to nothing and deletes.
       //
-      // False means nothing was written (blobGone, a failed decrypt). Report that rather than
-      // removing the checklist and claiming success: the flags would survive and resurrect it
-      // on the next external write anyway.
-      if (ids.length && !await setMigrating(ids, false)) {
-        progressText.textContent = "Nothing was changed. " + BLOB_READ_FAILED;
-        return;
+      // The union is taken against DISK, not against the module's `stopped`. serialize() orders
+      // operations within this tab and nothing orders them across tabs: a second migrate tab that
+      // stopped its own batch moments ago may not have reached this tab's listener yet — its
+      // refresh can be queued behind an Argon2id blob read — and writing a union built from stale
+      // in-memory state would drop the ids it just recorded, putting services the user confirmed
+      // as abandoned back into a fresh checklist. Both writers only ever add, so re-reading
+      // immediately before the write (a plain local get, no crypto) makes it additive.
+      if (ids.length) {
+        const onDisk = KeygrainMigration.storedStoppedIds(
+          (await chrome.storage.local.get("migrationStopped")).migrationStopped);
+        await writeStopped(KeygrainMigration.dedupeIds([...onDisk, ...ids]));
       }
       selfWrites.migrationChecklist = STORAGE_MARKER_ABSENT;
       await chrome.storage.local.remove("migrationChecklist");
       checklist = null;
-      // Re-render rather than clearing the DOM by hand. With membership gone every remaining row
-      // is a still-flagged service, so an empty list is proof the batch is really gone, and a
-      // non-empty one is a batch that arrived after the confirm — which must stay on screen
-      // instead of being replaced by a success message that would be a lie.
-      renderChecklist();
-      if (!KeygrainMigration.migratingIds(allServices).length) {
+      // Re-read both stores rather than patching state by hand: this re-derives `stopped` and the
+      // row set from what is actually on disk, so a batch that arrived after the confirm stays on
+      // screen instead of being replaced by a message that would be false.
+      await refreshChecklist();
+      if (!KeygrainMigration.countPending(allServices, stopped)) {
         progressText.textContent = ids.length
-          ? "Migration stopped. The services you had not rotated have been forgotten."
+          ? "Migration stopped. Those services still show an old-password warning in the popup, so you can rotate any of them later."
           : "Checklist dismissed.";
       }
     });
@@ -920,12 +957,12 @@
     // Focus moves into the dialog below, but a stray second activation would open it again, add
     // a second Tab-trap listener to the same element and orphan the first.
     if (stopDialogState) return;
-    const ids = KeygrainMigration.migratingIds(allServices);
-    // Nothing pending means nothing is forgotten, so there is no consequence to confirm and
-    // this is the plain Dismiss it replaces — one click, as before.
+    const ids = KeygrainMigration.pendingIds(allServices, stopped);
+    // Nothing pending means nothing is abandoned, so there is no consequence to confirm and this
+    // is the plain Dismiss it replaces — one click, as before.
     if (!ids.length) { stopMigration(ids); return; }
-    stopDialogCount.textContent = "Keygrain will forget the " + ids.length +
-      (ids.length === 1 ? " service" : " services") + " you have not rotated yet.";
+    stopDialogCount.textContent = "The " + ids.length + (ids.length === 1 ? " service" : " services") +
+      " you have not rotated will stay marked as still using their old password.";
     // openDialog, not window.confirm: it gives the focus trap and restores focus on close.
     // `ids` rides on the dialog state so the set the user confirms cannot be separated from the
     // sentence that describes it, and cannot outlive the dialog.
@@ -958,7 +995,7 @@
   // they could not corrupt anything here — every handler re-reads — but re-rendering on
   // each of our own writes would reset row button labels and decrypt the blob for nothing.
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (!externalChanges(changes, area, ["services", "migrationChecklist"], selfWrites).length) return;
+    if (!externalChanges(changes, area, ["services", "migrationChecklist", "migrationStopped"], selfWrites).length) return;
     // The blob being REMOVED by another context means the account was wiped on this device.
     // Stop the page rather than re-render: this tab still holds the old secret in memory, and
     // an absent key reads as an empty store, so it would otherwise show a clean, inviting
