@@ -622,6 +622,35 @@ await test('canonicalBlobPayload: differs when wallets change (not just services
   assert.notEqual(a, b);
 });
 
+// The canonical payload decides whether a PUT can be skipped, and SyncBlob.kt says it "MUST stay
+// byte-identical" to this function. Nothing compares the two platforms mechanically, so both sides
+// pin the SAME literal for the same input: if either drifts, its own suite fails. `migrating` is in
+// it because it is remote state — the extension sets it and syncs it — and its absence from the
+// Kotlin side made that client blind to a difference that lived only in this field, so it skipped
+// pushes it should have made. Note the shape: `true` when set, `null` when absent, never `false`
+// (applyMigrating deletes the property).
+await test('canonicalBlobPayload: exact serialization, shared with SyncBlob.kt', async () => {
+  ctx._c1 = [
+    {name: 'A', site: 'a.com', email: 'e@x', length: 20, symbols: '!@', counter: 1, migrating: true},
+    {name: 'B', site: 'b.com', email: 'e@x', length: 20, symbols: '!@', counter: 1}
+  ];
+  ctx._m1 = [{id: 'i1', updated_at: 1}, {id: 'i2', updated_at: 2}];
+  assert.equal(runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx),
+    '{"services":[{"id":"i1","updated_at":1,"name":"A","site":"a.com","email":"e@x","length":20,' +
+    '"symbols":"!@","counter":1,"migrating":true,"totp":null,"ssh":null},' +
+    '{"id":"i2","updated_at":2,"name":"B","site":"b.com","email":"e@x","length":20,' +
+    '"symbols":"!@","counter":1,"migrating":null,"totp":null,"ssh":null}],' +
+    '"wallets":[],"wallet_audit_log":[],"sync_conflicts":[]}');
+});
+
+await test('canonicalBlobPayload: differs when only `migrating` differs', async () => {
+  ctx._c1 = [{site: 'a.com', migrating: true}];
+  ctx._c2 = [{site: 'a.com'}];
+  ctx._m1 = [{id: 'i1', updated_at: 1}];
+  assert.notEqual(runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx),
+    runInContext(`canonicalBlobPayload(_c2, _m1, [], [], [])`, ctx));
+});
+
 await test('canonicalBlobPayload: excludes local-only synced flag', async () => {
   ctx._c1 = [{ site: 'a.com' }];
   ctx._c2 = [{ site: 'a.com', synced: true }];
