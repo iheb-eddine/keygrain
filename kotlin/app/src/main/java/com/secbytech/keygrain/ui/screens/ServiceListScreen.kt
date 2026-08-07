@@ -649,306 +649,171 @@ internal fun ServiceListScreen(
         } // Box
     } // Scaffold
 
-    // Sync email prompt dialog
+    // --- Dialogs (extracted to ServiceListDialogs.kt) ---
+
     if (showSyncEmailDialog) {
-        AlertDialog(
-            onDismissRequest = { showSyncEmailDialog = false },
-            title = { Text("Sync to Server") },
-            text = {
-                Column {
-                    Text("Email for sync identity:")
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = syncEmail,
-                        onValueChange = { syncEmail = it },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showSyncEmailDialog = false
-                        if (offlineMode) return@TextButton
-                        isSyncing = true
-                        val secretBytes = masterSecret.toByteArray()
-                        scope.launch {
-                            val msg = try {
-                                when (val r = syncManager.sync(secretBytes, syncEmail, serviceManager, context)) {
-                                    is SyncResult.Success -> {
-                                        syncManager.setSyncEmail(context, syncEmail)
-                                        skipNextDebounce = true
-                                        services = serviceManager.getServices()
-                                        deletionReview = serviceManager.getDeletionReview()
-                                        lastSyncTime = System.currentTimeMillis()
-                                        UserMessages.syncSuccess(r.services.size)
-                                    }
-                                    is SyncResult.AuthError -> UserMessages.AUTH_ERROR
-                                    is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
-                                    is SyncResult.ServerError -> UserMessages.SERVER_ERROR
-                                    is SyncResult.IntegrityError -> UserMessages.INTEGRITY_ERROR
-                                    is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
-                                }
-                            } catch (e: Exception) {
-                                Log.e("Keygrain", "Sync failed", e)
-                                UserMessages.NETWORK_ERROR
-                            } finally {
-                                secretBytes.fill(0)
+        SyncEmailDialog(
+            syncEmail = syncEmail,
+            onSyncEmailChange = { syncEmail = it },
+            onConfirm = {
+                showSyncEmailDialog = false
+                if (offlineMode) return@SyncEmailDialog
+                isSyncing = true
+                val secretBytes = masterSecret.toByteArray()
+                scope.launch {
+                    val msg = try {
+                        when (val r = syncManager.sync(secretBytes, syncEmail, serviceManager, context)) {
+                            is SyncResult.Success -> {
+                                syncManager.setSyncEmail(context, syncEmail)
+                                skipNextDebounce = true
+                                services = serviceManager.getServices()
+                                deletionReview = serviceManager.getDeletionReview()
+                                lastSyncTime = System.currentTimeMillis()
+                                UserMessages.syncSuccess(r.services.size)
                             }
-                            isSyncing = false
-                            snackbarHostState.showSnackbar(msg)
+                            is SyncResult.AuthError -> UserMessages.AUTH_ERROR
+                            is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
+                            is SyncResult.ServerError -> UserMessages.SERVER_ERROR
+                            is SyncResult.IntegrityError -> UserMessages.INTEGRITY_ERROR
+                            is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
                         }
-                    },
-                    enabled = syncEmail.isNotBlank()
-                ) { Text("Continue") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSyncEmailDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
-
-    // Loading dialog
-    if (isSyncing) {
-        AlertDialog(
-            onDismissRequest = {},
-            confirmButton = {},
-            text = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    CircularProgressIndicator()
-                    Text("Syncing...")
+                    } catch (e: Exception) {
+                        Log.e("Keygrain", "Sync failed", e)
+                        UserMessages.NETWORK_ERROR
+                    } finally {
+                        secretBytes.fill(0)
+                    }
+                    isSyncing = false
+                    snackbarHostState.showSnackbar(msg)
                 }
-            }
+            },
+            onDismiss = { showSyncEmailDialog = false }
         )
     }
 
-    // File export/import email prompt
+    if (isSyncing) { SyncingDialog() }
+
     fileAction?.let { action ->
-        AlertDialog(
-            onDismissRequest = { fileAction = null },
-            title = { Text(if (action == "export") "Export to File" else "Import from File") },
-            text = {
-                Column {
-                    Text("Email for encryption key:")
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = fileEmail,
-                        onValueChange = { fileEmail = it },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
-                    )
+        FileEmailDialog(
+            action = action,
+            fileEmail = fileEmail,
+            onFileEmailChange = { fileEmail = it },
+            onConfirm = {
+                fileAction = null
+                if (action == "export") {
+                    exportLauncher.launch("keygrain-backup.keygrain")
+                } else {
+                    importLauncher.launch(arrayOf("application/octet-stream", "*/*"))
                 }
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        fileAction = null
-                        if (action == "export") {
-                            exportLauncher.launch("keygrain-backup.keygrain")
-                        } else {
-                            importLauncher.launch(arrayOf("application/octet-stream", "*/*"))
-                        }
-                    },
-                    enabled = fileEmail.isNotBlank()
-                ) { Text("Continue") }
-            },
-            dismissButton = {
-                TextButton(onClick = { fileAction = null }) { Text("Cancel") }
-            }
+            onDismiss = { fileAction = null }
         )
     }
 
-    // Import confirmation dialog
     if (showImportConfirm) {
-        AlertDialog(
-            onDismissRequest = { showImportConfirm = false },
-            title = { Text("Confirm Import") },
-            text = {
-                Text("Replace all ${services.size} local services with ${importedServices.size} services from file?")
+        ImportConfirmDialog(
+            localCount = services.size,
+            importCount = importedServices.size,
+            onConfirm = {
+                showImportConfirm = false
+                serviceManager.replaceAll(importedServices)
+                services = serviceManager.getServices()
+                scope.launch { snackbarHostState.showSnackbar(UserMessages.importSuccess(importedServices.size)) }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    showImportConfirm = false
-                    serviceManager.replaceAll(importedServices)
-                    services = serviceManager.getServices()
-                    scope.launch { snackbarHostState.showSnackbar(UserMessages.importSuccess(importedServices.size)) }
-                }) { Text("Replace") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showImportConfirm = false }) { Text("Cancel") }
-            }
+            onDismiss = { showImportConfirm = false }
         )
     }
 
     showDeleteDialog?.let { id ->
-        val deleteName = services.firstOrNull { it.id == id }?.name ?: ""
-        val hasStoredTotp = services.firstOrNull { it.id == id }?.totp?.optString("mode") == "stored"
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = null },
-            title = { Text("Delete $deleteName?") },
-            text = if (hasStoredTotp) {
-                {
-                    Text(
-                        "⚠️ This service has a stored TOTP seed that is NOT derivable. " +
-                            "Deleting it here and syncing removes it from all your devices, and " +
-                            "it cannot be recovered."
-                    )
+        val svc = services.firstOrNull { it.id == id }
+        DeleteServiceDialog(
+            serviceName = svc?.name ?: "",
+            hasStoredTotp = svc?.totp?.optString("mode") == "stored",
+            onConfirm = {
+                if (isDemoMode) {
+                    services = services.filter { it.id != id }
+                } else {
+                    serviceManager.deleteService(id)
+                    services = serviceManager.getServices()
+                    triggerDebouncedSync()
                 }
-            } else null,
-            confirmButton = {
-                TextButton(onClick = {
-                    if (isDemoMode) {
-                        services = services.filter { it.id != id }
-                    } else {
-                        serviceManager.deleteService(id)
-                        services = serviceManager.getServices()
-                        triggerDebouncedSync()
-                    }
-                    showDeleteDialog = null
-                }) { Text("Delete") }
+                showDeleteDialog = null
             },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = null }) { Text("Cancel") }
-            }
+            onDismiss = { showDeleteDialog = null }
         )
     }
 
     if (showSwitchAccountDialog) {
-        AlertDialog(
-            onDismissRequest = { showSwitchAccountDialog = false },
-            title = { Text("Switch account?") },
-            text = {
-                Text(
-                    "This clears all data on this device — your services, wallets, and " +
-                        "settings — and returns to setup so you can enter a different master " +
-                        "secret.\n\nYour data on the sync server is not affected by this action."
-                )
+        SwitchAccountDialog(
+            onConfirm = {
+                showSwitchAccountDialog = false
+                onSwitchAccount()
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    showSwitchAccountDialog = false
-                    onSwitchAccount()
-                }) { Text("Switch account") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSwitchAccountDialog = false }) { Text("Cancel") }
-            }
+            onDismiss = { showSwitchAccountDialog = false }
         )
     }
 
     if (showDeleteServerDialog) {
-        AlertDialog(
-            onDismissRequest = { if (!deleteInProgress) showDeleteServerDialog = false },
-            title = { Text("Delete data from the server?") },
-            text = {
-                Column {
-                    Text(
-                        "This permanently erases everything stored on the sync server for " +
-                            "this account — all your services, wallets, and TOTP codes. This " +
-                            "cannot be undone on the server."
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(
-                            checked = keepLocal,
-                            onCheckedChange = { keepLocal = it },
-                            enabled = !deleteInProgress
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("Keep my data on this device (offline mode)")
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        if (keepLocal)
-                            "Your data stays on this phone. It's removed from the server, but " +
-                                "you can restore it later by turning Offline mode off to sync again."
-                        else
-                            "Your data will also be permanently erased from this device.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    deleteError?.let {
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            it,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !deleteInProgress,
-                    onClick = {
-                        deleteError = null
-                        // Race guard (a): invalidate any pending debounced sync so it
-                        // cannot recreate the record right after we delete it.
-                        syncGeneration++
-                        deleteInProgress = true
-                        val keep = keepLocal
-                        val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
-                        scope.launch {
+        DeleteServerDialog(
+            keepLocal = keepLocal,
+            onKeepLocalChange = { keepLocal = it },
+            deleteInProgress = deleteInProgress,
+            deleteError = deleteError,
+            onConfirm = {
+                deleteError = null
+                // Race guard (a): invalidate any pending debounced sync so it
+                // cannot recreate the record right after we delete it.
+                syncGeneration++
+                deleteInProgress = true
+                val keep = keepLocal
+                val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
+                scope.launch {
+                    try {
+                        // No derivable email => there is no server record to target.
+                        val result = if (email.isBlank()) {
+                            DeleteResult.NotFound
+                        } else {
+                            val secretBytes = masterSecret.toByteArray()
                             try {
-                                // No derivable email => there is no server record to target.
-                                val result = if (email.isBlank()) {
-                                    DeleteResult.NotFound
-                                } else {
-                                    val secretBytes = masterSecret.toByteArray()
-                                    try {
-                                        syncManager.deleteServerData(secretBytes, email, context)
-                                    } finally {
-                                        secretBytes.fill(0)
-                                    }
-                                }
-                                when (result) {
-                                    // SAFETY (Invariant #1): wipe/offline-flip ONLY here (200/404).
-                                    is DeleteResult.Success, is DeleteResult.NotFound -> {
-                                        if (keep) {
-                                            settingsPrefs.edit().putBoolean("offline_mode", true).apply()
-                                            offlineMode = true
-                                            showDeleteServerDialog = false
-                                            scope.launch {
-                                                snackbarHostState.showSnackbar(
-                                                    "Server data deleted. Your data is still on this " +
-                                                        "device — turn Offline mode off to sync again."
-                                                )
-                                            }
-                                        } else {
-                                            showDeleteServerDialog = false
-                                            onWipeLocalAndRestart()
-                                        }
-                                    }
-                                    is DeleteResult.AuthError ->
-                                        deleteError = "Couldn't verify your account. Nothing was changed."
-                                    is DeleteResult.RateLimited ->
-                                        deleteError = "Too many requests. Wait a moment and try again. Nothing was changed."
-                                    is DeleteResult.ServerError, is DeleteResult.NetworkError ->
-                                        deleteError = "Couldn't reach the server. Nothing was changed — please try again."
-                                }
-                            } catch (e: Exception) {
-                                // Fail-closed: any unexpected throwable leaves everything untouched.
-                                deleteError = "Something went wrong. Nothing was changed — please try again."
+                                syncManager.deleteServerData(secretBytes, email, context)
                             } finally {
-                                deleteInProgress = false
+                                secretBytes.fill(0)
                             }
                         }
+                        when (result) {
+                            // SAFETY (Invariant #1): wipe/offline-flip ONLY here (200/404).
+                            is DeleteResult.Success, is DeleteResult.NotFound -> {
+                                if (keep) {
+                                    settingsPrefs.edit().putBoolean("offline_mode", true).apply()
+                                    offlineMode = true
+                                    showDeleteServerDialog = false
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            "Server data deleted. Your data is still on this " +
+                                                "device — turn Offline mode off to sync again."
+                                        )
+                                    }
+                                } else {
+                                    showDeleteServerDialog = false
+                                    onWipeLocalAndRestart()
+                                }
+                            }
+                            is DeleteResult.AuthError ->
+                                deleteError = "Couldn't verify your account. Nothing was changed."
+                            is DeleteResult.RateLimited ->
+                                deleteError = "Too many requests. Wait a moment and try again. Nothing was changed."
+                            is DeleteResult.ServerError, is DeleteResult.NetworkError ->
+                                deleteError = "Couldn't reach the server. Nothing was changed — please try again."
+                        }
+                    } catch (e: Exception) {
+                        // Fail-closed: any unexpected throwable leaves everything untouched.
+                        deleteError = "Something went wrong. Nothing was changed — please try again."
+                    } finally {
+                        deleteInProgress = false
                     }
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             },
-            dismissButton = {
-                TextButton(
-                    enabled = !deleteInProgress,
-                    onClick = { showDeleteServerDialog = false }
-                ) { Text("Cancel") }
-            }
+            onDismiss = { showDeleteServerDialog = false }
         )
     }
 
