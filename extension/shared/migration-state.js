@@ -27,15 +27,10 @@
 // at render time. A stored status that disagrees with the flag is therefore not
 // representable.
 //
-// All functions here are pure: they take the checklist and the service list and
-// return new values. Persistence and crypto live in the callers.
-//
-// STOPPING A MIGRATION adds a third local store, `migrationStopped` — the ids of services the
-// user chose to abandon. It exists because Stop must NOT clear `migrating`: the flag is the only
-// warning that a site still holds the old password. See the block above reconcileStopped.
+// All functions here are pure: they take migration state and return new values.
+// Persistence and crypto live in the callers.
 
 const MIGRATION_CHECKLIST_VERSION = 2;
-const MIGRATION_STOPPED_VERSION = 1;
 
 const KeygrainMigration = (function () {
   function lower(s) {
@@ -156,23 +151,19 @@ const KeygrainMigration = (function () {
   // A v1 checklist is upgraded in memory first, so every reader is correct whether or
   // not the stored copy has been rewritten yet.
   //
-  // Abandoned services (`stopped`) are excluded outright, member or not: they belong to no
-  // batch. Without this, a later import's checklist would list every previously abandoned
-  // service alongside its own rows, because the sweep below picks up flagged non-members.
-  function project(checklist, services, stopped) {
+  function project(checklist, services) {
     const cl = normalize(checklist, services).checklist;
-    const stop = new Set(stopped || []);
     const byId = serviceById(services);
     const rows = [];
     const seen = new Set();
     for (const id of itemIds(cl)) {
       const svc = byId.get(id);
-      if (!svc || seen.has(svc.id) || stop.has(svc.id)) continue;
+      if (!svc || seen.has(svc.id)) continue;
       seen.add(svc.id);
       rows.push(row(svc));
     }
     for (const svc of services || []) {
-      if (!svc || !svc.id || !svc.migrating || seen.has(svc.id) || stop.has(svc.id)) continue;
+      if (!svc || !svc.id || !svc.migrating || seen.has(svc.id)) continue;
       seen.add(svc.id);
       rows.push(row(svc));
     }
@@ -189,58 +180,7 @@ const KeygrainMigration = (function () {
     };
   }
 
-  // === Abandoned services — "Stop migration" ===
-  //
-  // Stop discards the checklist. It MUST NOT clear `migrating`. That flag is the only mark on a
-  // service whose site still holds the old password, and it drives four things in the popup: the
-  // ⚠ badge, the copy warning, the fill warning, and the Mark as rotated button. The first
-  // version of Stop cleared it, which made an abandoned service indistinguishable from a rotated
-  // one — so copying its password produced no warning at all and the paste then failed on the
-  // site with no explanation. Suppressing that warning while the old password is still live is
-  // exactly backwards.
-  //
-  // The abandoned ids are recorded instead, in the local `migrationStopped` key, and the three
-  // functions that read the flags skip them: they are not counted, not projected, and not
-  // recorded as membership. All three matter. Without the membership exclusion,
-  // ensureMembership would rebuild the checklist out of the very flags Stop left behind; without
-  // the projection exclusion, a later import would list them among its own batch.
-  //
-  // Local-only, exactly like membership. The flag itself still syncs, so a second browser goes on
-  // showing these services as pending in its own checklist until it stops them there too.
-  // Reconciling that would need a synced per-service state, which means a payload version bump and
-  // matching support in the Android client — deliberately not done: the abandoned services are
-  // still correctly flagged everywhere, so no device is ever misled about which passwords are old.
-
-  // Tolerant reader for the stored key. Storage can be corrupt or hand-edited, and a malformed
-  // value must not throw out of the load path — one null checklist item once left the page blank.
-  //
-  // The version is CHECKED, not merely recorded: a future format whose `ids` held objects rather
-  // than strings would otherwise be read as a list of ids matching no service, which reconcile
-  // would silently prune to nothing — quietly un-abandoning every service. An unrecognised
-  // version reads as "nothing abandoned", which shows the batch again rather than losing it.
-  function storedStoppedIds(stored) {
-    if (!stored || stored.version !== MIGRATION_STOPPED_VERSION) return [];
-    if (!Array.isArray(stored.ids)) return [];
-    return dedupeIds(stored.ids);
-  }
-
-  function newStopped(ids) {
-    return {version: MIGRATION_STOPPED_VERSION, ids: dedupeIds(ids)};
-  }
-
-  // Keep only ids that still name a live, flagged service. A service rotated after being
-  // abandoned (Mark as rotated stays available, by design) or deleted drops out, so the key does
-  // not grow for the life of the profile — and a service that a later import flags again starts
-  // out pending, because a new import is a new decision.
-  function reconcileStopped(stopped, services) {
-    const flagged = new Set(migratingIds(services));
-    const before = dedupeIds(stopped);
-    const kept = before.filter(id => flagged.has(id));
-    return {ids: kept, changed: kept.length !== before.length};
-  }
-
-  // Every service still flagged, INCLUDING abandoned ones. This is the raw flag set: it is what
-  // reconcileStopped prunes against. Use pendingIds for "what is the user still working on".
+  // Every service still flagged. These are the services the user still needs to rotate.
   //
   // The `s.id` requirement keeps the set actionable: a service with no id cannot be addressed by
   // project() or applyMigrating(), so counting it would report work the user has no way to
@@ -251,15 +191,14 @@ const KeygrainMigration = (function () {
     return (services || []).filter(s => s && s.id && s.migrating).map(s => s.id);
   }
 
-  // The flagged services the user has not abandoned — the checklist's pending rows, the menu
-  // button's count, and the set Stop acts on.
-  function pendingIds(services, stopped) {
-    const stop = new Set(stopped || []);
-    return migratingIds(services).filter(id => !stop.has(id));
+  // Semantic alias used at confirmation boundaries: today every flagged id is pending, but call
+  // sites say what decision they are making rather than depending on the raw storage marker name.
+  function pendingIds(services) {
+    return migratingIds(services);
   }
 
-  function countPending(services, stopped) {
-    return pendingIds(services, stopped).length;
+  function countPending(services) {
+    return pendingIds(services).length;
   }
 
   // Reconcile membership with the flags, in three parts:
@@ -273,19 +212,14 @@ const KeygrainMigration = (function () {
   // absent checklist stay absent — this never invents an empty checklist. Pruning to
   // empty deletes it, because an all-done batch whose services are gone has nothing
   // left to show.
-  //
-  // Abandoned services are invisible here. That is what makes Stop stick: it leaves the flags
-  // in place on purpose, and without the exclusion this function would immediately rebuild a
-  // checklist from them on the next load — Stop would un-do itself.
-  function ensureMembership(checklist, services, createdAt, stopped) {
+  function ensureMembership(checklist, services, createdAt) {
     const norm = normalize(checklist, services);
     const base = norm.checklist;
-    const stop = new Set(stopped || []);
-    const flagged = pendingIds(services, stopped);
+    const flagged = pendingIds(services);
     if (!base && !flagged.length) return {checklist: null, changed: false};
 
     const live = serviceById(services);
-    const kept = itemIds(base).filter(id => live.has(id) && !stop.has(id));
+    const kept = itemIds(base).filter(id => live.has(id));
     const next = addIds({version: MIGRATION_CHECKLIST_VERSION, createdAt: base && base.createdAt, items: kept.map(id => ({id}))}, flagged, createdAt);
     if (!next.items.length) return {checklist: null, changed: !!checklist};
 
@@ -327,9 +261,34 @@ const KeygrainMigration = (function () {
     return {services: changed ? out : (services || []), changed};
   }
 
+  // Remove only ids the confirmation captured that are STILL migrating in the fresh blob.
+  // A service rotated in another context while the dialog was open is preserved. Tombstones are
+  // appended in the same pure transition so the caller cannot persist the removal without its
+  // deletion intent. `deletedAt` must be newer than every service timestamp; callers use
+  // nextTimestamp(services) before removing anything.
+  function removePendingServices(services, tombstones, ids, deletedAt) {
+    const target = new Set(ids || []);
+    const removedIds = [];
+    const removed = new Set();
+    const kept = [];
+    for (const svc of services || []) {
+      if (svc && svc.id && svc.migrating && target.has(svc.id)) {
+        if (!removed.has(svc.id)) {
+          removed.add(svc.id);
+          removedIds.push(svc.id);
+        }
+        continue;
+      }
+      kept.push(svc);
+    }
+    let timestamp = deletedAt;
+    const nextTombstones = [...(tombstones || [])];
+    for (const id of removedIds) nextTombstones.push({id, deleted_at: timestamp++});
+    return {services: kept, tombstones: nextTombstones, removedIds};
+  }
+
   return {
     VERSION: MIGRATION_CHECKLIST_VERSION,
-    STOPPED_VERSION: MIGRATION_STOPPED_VERSION,
     newChecklist,
     itemIds,
     dedupeIds,
@@ -341,9 +300,7 @@ const KeygrainMigration = (function () {
     migratingIds,
     pendingIds,
     countPending,
-    storedStoppedIds,
-    newStopped,
-    reconcileStopped,
-    applyMigrating
+    applyMigrating,
+    removePendingServices
   };
 })();

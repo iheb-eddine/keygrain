@@ -95,24 +95,20 @@
     </div>
   </div>
 
-  <!-- Stop migration confirmation.
-       Confirming discards the checklist and stops the counting. It deliberately does NOT clear
-       each service's `migrating` flag (see the handler in migrate.js): that flag is the only
-       warning that a site still holds the old password, and clearing it made copying such a
-       password silently produce one that does not work on the site. -->
+  <!-- Stop migration confirmation. Confirmed services that are still unrotated are deleted
+       from the encrypted service list with tombstones, so the removal propagates to other devices. -->
   <div id="stop-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="stop-dialog-title">
     <div class="dialog-box">
       <h2 id="stop-dialog-title">Stop the migration?</h2>
       <p id="stop-dialog-count"></p>
-      <p>This checklist is discarded and Keygrain stops counting your progress. Each of those
-        services keeps its <strong>⚠ migrate</strong> badge in the popup and still warns you when
-        you copy or fill its password, so you can rotate any of them later — one at a time, with
-        <strong>Mark as rotated</strong>.</p>
-      <p>Until you do, those sites keep their old passwords, and the password Keygrain generates
-        will not work on them.</p>
-      <!-- Still true, and worth saying: the import skips entries whose (site, email) already
-           exists, so re-importing the same CSV adds nothing and produces no checklist. -->
-      <p>This checklist itself cannot be brought back.</p>
+      <p>Their sites keep their existing passwords. Keygrain will forget those services on this
+        device and, after sync, on your other devices. It will no longer generate, copy, or fill
+        passwords for them. Services you already marked as rotated stay in Keygrain.</p>
+      <p id="stop-dialog-totp-warning" class="error hidden"><strong>Warning:</strong> At least
+        one service has a stored TOTP seed. Stored seeds are not derivable: removing the service
+        permanently deletes its seed from Keygrain, and you may need to re-enroll two-factor
+        authentication on that site.</p>
+      <p>You can import a removed service again later if you decide to rotate it.</p>
       <div class="dialog-actions">
         <button id="stop-cancel" class="btn-secondary">Cancel</button>
         <button id="stop-confirm" class="btn-danger">Stop migration</button>

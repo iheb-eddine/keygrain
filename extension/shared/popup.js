@@ -286,13 +286,8 @@
     // reacting to its own wipe; `accountWiped` stops a refresh that was ALREADY reading from
     // finishing afterwards and re-installing this account's arrays.
     //
-    // `migrationStopped` is in ACCOUNT_SCOPED_KEYS and is watched by the listener too, so it needs
-    // its own marker. Unmarked, the wipe's removal of it reads as external, and the listener takes
-    // the label-only path — which has none of refreshFromStorage's guards and would relabel the
-    // menu from this account's `services`, reset below but only after this await resolves.
     accountWiped = true;
     selfWrites.services = STORAGE_MARKER_ABSENT;
-    selfWrites.migrationStopped = STORAGE_MARKER_ABSENT;
     blobWrites++;
     await chrome.storage.local.remove(ACCOUNT_SCOPED_KEYS);
     clearStrengthenCache();
@@ -700,18 +695,11 @@
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    // `services` is what everything rendered here is derived from. `migrationStopped` is watched
-    // as well because Stop migration no longer touches the blob — it abandons services by
-    // recording their ids, leaving the flags alone — so there is no `services` event to
-    // piggyback on and the menu count would stay stale until the popup was reopened.
-    const changed = externalChanges(changes, area, ["services", "migrationStopped"], selfWrites);
-    if (!changed.length) return;
-    // A migrationStopped-only change moves the menu label and nothing else. Routing it through
-    // refreshFromStorage would spend an Argon2id derivation re-reading the blob for a string, and
-    // would be dropped by any of that function's deferral guards — none of which apply here,
-    // because relabelling a button cannot invalidate the rendered DOM.
-    if (changed.includes("services")) refreshFromStorage();
-    else updateMigrateBtn();
+    // Every migration change now lives in the encrypted services blob: rotation clears a flag and
+    // Stop removes services with tombstones. One services refresh therefore updates both rows and
+    // the menu count from the same source of truth.
+    if (!externalChanges(changes, area, ["services"], selfWrites).length) return;
+    refreshFromStorage();
   });
 
   async function saveServices() {
@@ -1352,33 +1340,11 @@
   }
 
   // === Auto-detect site ===
-  // The label counts services that STILL CARRY `migrating`, read from the service
-  // list itself rather than from a status stored on the checklist. The stored status
-  // never saw rotations done from here (Mark as rotated, or a password-version bump),
-  // so the button went on reporting services as pending after every one of them had
-  // been rotated. The checklist is not consulted at all: it is local-only, while the
-  // flag syncs, so a device that received an import through sync would otherwise show
-  // badges with a count of zero.
-  //
-  // `migrationStopped` IS consulted: Stop migration abandons services without clearing their
-  // flags (deliberately — the flag is what warns that the site still holds the old password), so
-  // the flags alone would go on counting work the user has explicitly given up on. Read at the
-  // point of use rather than cached, because it is a tiny unencrypted key and nothing else in the
-  // popup needs it, so no future call site can forget to refresh it. `services` may be reassigned
-  // across the await; the label is recomputed by every mutation, so at worst it is one tick late.
-  async function updateMigrateBtn() {
+  // The encrypted service list is the single source of truth. Rotated services have no
+  // `migrating` flag; services discarded by Stop are absent entirely.
+  function updateMigrateBtn() {
     const btn = document.getElementById("migrate-btn");
-    // A rejected get (an invalidated extension context, most likely) must not become an unhandled
-    // rejection that leaves the label stale with no retry. Falling back to "nothing abandoned"
-    // over-reports rather than under-reports: showing work that is already given up on is a
-    // nuisance, whereas hiding work the user still has to do is the failure this cycle exists to
-    // fix.
-    let stopped = [];
-    try {
-      stopped = KeygrainMigration.storedStoppedIds(
-        (await chrome.storage.local.get("migrationStopped")).migrationStopped);
-    } catch (_) { /* over-report */ }
-    const pending = KeygrainMigration.countPending(services, stopped);
+    const pending = KeygrainMigration.countPending(services);
     btn.textContent = pending > 0
       ? "Migration progress (" + pending + " remaining)"
       : "Migrate from another manager";
@@ -1847,11 +1813,9 @@
     await clearEmail();
     // Same three reasons as in wipeLocalAccountData: clear() removes `services`, an unmarked
     // removal reads as another context's write, and a refresh already in flight must not
-    // re-install this account's arrays after the wipe. clear() takes `migrationStopped` with
-    // everything else, and it is watched, so it needs its own marker for the same reason.
+    // re-install this account's arrays after the wipe.
     accountWiped = true;
     selfWrites.services = STORAGE_MARKER_ABSENT;
-    selfWrites.migrationStopped = STORAGE_MARKER_ABSENT;
     blobWrites++;
     await chrome.storage.local.clear();
     clearStrengthenCache();
