@@ -34,6 +34,15 @@ internal object SyncBlob {
                 .append(",\"length\":").append(s.length)
                 .append(",\"symbols\":").append(jsonStr(s.symbols))
                 .append(",\"counter\":").append(s.counter)
+                // Part of the canonical comparison because it is remote state: the extension
+                // sets it and syncs it. Omitting it made this app blind to a difference that
+                // is only in this field, so a merge that should have pushed a restored or
+                // cleared flag skipped the PUT instead.
+                //
+                // Shape matches sync.js exactly (`content.migrating ?? null`): `true` when set,
+                // `null` when absent. The extension deletes the property rather than writing
+                // `false`, so those are the only two values that occur.
+                .append(",\"migrating\":").append(if (s.migrating) "true" else "null")
                 .append(",\"totp\":").append(s.totp?.toString() ?: "null")
                 .append(",\"ssh\":").append(s.ssh?.toString() ?: "null")
                 .append("}")

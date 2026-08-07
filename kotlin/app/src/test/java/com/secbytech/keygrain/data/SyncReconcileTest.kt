@@ -369,6 +369,86 @@ class SyncReconcileTest {
         assertEquals(a, b)
     }
 
+    // `migrating` IS remote state: the browser extension sets it and syncs it, and it is the only
+    // marker for "this site still holds the old password". It was missing from this canonical
+    // payload while sync.js included it, so this client was blind to a difference living only in
+    // that field and skipped pushes it should have made.
+    //
+    // The expected string below is pinned CHARACTER FOR CHARACTER against the identical assertion
+    // in extension/tests/test.mjs ('canonicalBlobPayload: exact serialization, shared with
+    // SyncBlob.kt'). Nothing compares the two platforms mechanically, so if either drifts its own
+    // suite fails. Shape: `true` when set, `null` when absent, never `false`.
+    @Test
+    fun canonical_exactSerializationSharedWithSyncJs() {
+        val a = ServiceEntry(
+            name = "A", site = "a.com", email = "e@x", length = 20, symbols = "!@", counter = 1,
+            id = "i1", updatedAt = 1, migrating = true
+        )
+        val b = ServiceEntry(
+            name = "B", site = "b.com", email = "e@x", length = 20, symbols = "!@", counter = 1,
+            id = "i2", updatedAt = 2
+        )
+        assertEquals(
+            "{\"services\":[{\"id\":\"i1\",\"updated_at\":1,\"name\":\"A\",\"site\":\"a.com\"," +
+                "\"email\":\"e@x\",\"length\":20,\"symbols\":\"!@\",\"counter\":1," +
+                "\"migrating\":true,\"totp\":null,\"ssh\":null}," +
+                "{\"id\":\"i2\",\"updated_at\":2,\"name\":\"B\",\"site\":\"b.com\"," +
+                "\"email\":\"e@x\",\"length\":20,\"symbols\":\"!@\",\"counter\":1," +
+                "\"migrating\":null,\"totp\":null,\"ssh\":null}]," +
+                "\"wallets\":[],\"wallet_audit_log\":[],\"sync_conflicts\":[]}",
+            SyncBlob.canonicalBlobPayload(listOf(a, b), emptyList(), emptyList(), emptyList())
+        )
+    }
+
+    @Test
+    fun canonical_differsWhenOnlyMigratingDiffers() {
+        val a = SyncBlob.canonicalBlobPayload(
+            listOf(svc("i1", updatedAt = 1, synced = true).copy(migrating = true)),
+            emptyList(), emptyList(), emptyList()
+        )
+        val b = SyncBlob.canonicalBlobPayload(
+            listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList(), emptyList()
+        )
+        assertFalse(a == b)
+    }
+
+    // The flag must survive being written and read back. This app never sets it, but it is the only
+    // shape a service takes here: a field missing from toJsonContent is ERASED FOR EVERY DEVICE on
+    // the next push, silently marking a half-finished migration complete and taking the extension's
+    // old-password warnings with it.
+    @Test
+    fun toJsonContent_carriesMigratingBothWays() {
+        val flagged = ServiceEntry(name = "A", site = "a.com", email = "e@x", migrating = true)
+        assertTrue(flagged.toJsonContent().optBoolean("migrating", false))
+        // Omitted rather than written as false, matching the extension, which deletes the property.
+        val plain = ServiceEntry(name = "A", site = "a.com", email = "e@x")
+        assertFalse(plain.toJsonContent().has("migrating"))
+    }
+
+    // The other half of the same bug: the merge builds its records from this parse, so a flag
+    // dropped when READING the remote blob is gone from the record that gets written back.
+    @Test
+    fun parseServicesJson_preservesMigratingFromARemoteBlob() {
+        val parsed = ServiceManager.parseServicesJson(
+            "{\"services\":[" +
+                "{\"name\":\"A\",\"site\":\"a.com\",\"email\":\"e@x\",\"id\":\"i1\",\"updated_at\":1,\"migrating\":true}," +
+                "{\"name\":\"B\",\"site\":\"b.com\",\"email\":\"e@x\",\"id\":\"i2\",\"updated_at\":2}]}"
+        )
+        assertEquals(2, parsed.size)
+        assertTrue("a flagged service lost its flag on parse", parsed[0].migrating)
+        assertFalse("an unflagged service gained one", parsed[1].migrating)
+    }
+
+    // Full round trip, which is what a sync actually does: read the remote blob, then write the
+    // merged records back. Either side dropping the field erases it for every device.
+    @Test
+    fun remoteBlobRoundTripPreservesMigrating() {
+        val blob = "{\"services\":[{\"name\":\"A\",\"site\":\"a.com\",\"email\":\"e@x\"," +
+            "\"id\":\"i1\",\"updated_at\":1,\"migrating\":true}]}"
+        val pushedBack = ServiceManager.parseServicesJson(blob).first().toJsonContent()
+        assertTrue(pushedBack.optBoolean("migrating", false))
+    }
+
     @Test
     fun canonical_differsWhenUpdatedAtChanges() {
         val a = SyncBlob.canonicalBlobPayload(

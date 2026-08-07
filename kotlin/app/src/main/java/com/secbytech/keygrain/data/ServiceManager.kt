@@ -85,6 +85,51 @@ class ServiceManager(context: Context) {
         }
 
         /**
+         * Parses services out of a sync blob (`{"services":[...]}`) or a bare exported array.
+         * Pure: no Context, no instance state — see the note on [ServiceManager.parseJson].
+         *
+         * Every field this drops is a field the next push ERASES for every device, because the
+         * merge builds its records from here and [ServiceEntry.toJsonContent] writes them straight
+         * back. `migrating` was dropped until this comment existed, which silently marked a
+         * half-finished browser migration as complete and took the extension's old-password
+         * warnings with it.
+         */
+        fun parseServicesJson(json: String): List<ServiceEntry> {
+            val trimmed = json.trim()
+            val arr = if (trimmed.startsWith("[")) {
+                JSONArray(trimmed)
+            } else {
+                val obj = JSONObject(trimmed)
+                obj.getJSONArray("services")
+            }
+            return (0 until arr.length()).mapNotNull { i ->
+                try {
+                    val obj = arr.getJSONObject(i)
+                    val name = obj.optString("name", "").ifEmpty { return@mapNotNull null }
+                    val email = obj.optString("email", "").ifEmpty { return@mapNotNull null }
+                    val site = normalizeSite(obj.optString("site", name))
+                    if (site.isEmpty()) return@mapNotNull null
+                    ServiceEntry(
+                        name = name,
+                        site = site,
+                        email = email,
+                        length = obj.optInt("length", 20),
+                        symbols = obj.optString("symbols", Keygrain.DEFAULT_SYMBOLS),
+                        counter = obj.optInt("counter", 1),
+                        id = if (obj.has("id") && !obj.isNull("id")) obj.getString("id") else null,
+                        updatedAt = obj.optLong("updated_at", System.currentTimeMillis()),
+                        totp = if (obj.has("totp") && !obj.isNull("totp")) obj.getJSONObject("totp") else null,
+                        ssh = if (obj.has("ssh") && !obj.isNull("ssh")) obj.getJSONObject("ssh") else null,
+                        frecency = obj.optDouble("frecency", 0.0),
+                        migrating = obj.optBoolean("migrating", false)
+                    )
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+
+        /**
          * Build the stored record for an edit. Pure, so the Frozen Req 1 invariant is
          * unit-testable without a Context.
          *
@@ -323,6 +368,10 @@ class ServiceManager(context: Context) {
                 if (s.totp != null) put("totp", s.totp)
                 if (s.ssh != null) put("ssh", s.ssh)
                 if (s.frecency != 0.0) put("frecency", s.frecency)
+                // Content, so it belongs in a backup — unlike `synced` above, which is this
+                // device's own sync state. Restoring a backup must not lose the fact that a
+                // site still holds its old password.
+                if (s.migrating) put("migrating", true)
             })
         }
         return JSONObject().apply {
@@ -331,43 +380,13 @@ class ServiceManager(context: Context) {
         }.toString()
     }
 
-    fun parseJson(json: String): List<ServiceEntry> {
-        val trimmed = json.trim()
-        val arr = if (trimmed.startsWith("[")) {
-            JSONArray(trimmed)
-        } else {
-            val obj = JSONObject(trimmed)
-            obj.getJSONArray("services")
-        }
-        return (0 until arr.length()).mapNotNull { i ->
-            try {
-                val obj = arr.getJSONObject(i)
-                val name = obj.optString("name", "").ifEmpty { return@mapNotNull null }
-                val email = obj.optString("email", "").ifEmpty { return@mapNotNull null }
-                val site = normalizeSite(obj.optString("site", name))
-                if (site.isEmpty()) return@mapNotNull null
-                ServiceEntry(
-                    name = name,
-                    site = site,
-                    email = email,
-                    length = obj.optInt("length", 20),
-                    symbols = obj.optString("symbols", Keygrain.DEFAULT_SYMBOLS),
-                    counter = obj.optInt("counter", 1),
-                    id = if (obj.has("id") && !obj.isNull("id")) obj.getString("id") else null,
-                    updatedAt = obj.optLong("updated_at", System.currentTimeMillis()),
-                    totp = if (obj.has("totp") && !obj.isNull("totp")) obj.getJSONObject("totp") else null,
-                    ssh = if (obj.has("ssh") && !obj.isNull("ssh")) obj.getJSONObject("ssh") else null,
-                    frecency = obj.optDouble("frecency", 0.0),
-                    // Carried through from the remote blob. Dropping it here erased it for
-                    // every device on the next push from this app: the merge builds records
-                    // from this parse, and toJsonContent writes them straight back.
-                    migrating = obj.optBoolean("migrating", false)
-                )
-            } catch (_: Exception) {
-                null
-            }
-        }
-    }
+    /**
+     * Parses services out of a sync blob or an exported file. Delegates to the companion so the
+     * parse can be exercised by a plain JVM unit test: this class needs a Context for its
+     * EncryptedSharedPreferences, and the field this parse must not drop (`migrating`) is exactly
+     * the kind of omission that is invisible without a test.
+     */
+    fun parseJson(json: String): List<ServiceEntry> = parseServicesJson(json)
 
     private fun servicesJson(services: List<ServiceEntry>): String {
         val arr = JSONArray()
@@ -387,6 +406,9 @@ class ServiceManager(context: Context) {
                 if (s.totp != null) put("totp", s.totp)
                 if (s.ssh != null) put("ssh", s.ssh)
                 if (s.frecency != 0.0) put("frecency", s.frecency)
+                // Content, not sync state: it must survive a local save or the next push
+                // erases it for every device just as dropping it from toJsonContent did.
+                if (s.migrating) put("migrating", true)
             })
         }
         return arr.toString()
