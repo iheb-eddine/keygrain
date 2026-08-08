@@ -24,6 +24,8 @@ jobs:
           ACTUAL=$(sha256sum SPEC.md | cut -d' ' -f1)
           EXPECTED=$(tr -d '[:space:]' < .spec-checksum)
           [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::SPEC.md checksum mismatch"; exit 1; }
+      - name: Verify auxiliary vector checksums
+        run: sha256sum -c .fixtures-checksum
 
   version-check:
     runs-on: ubuntu-latest
@@ -43,6 +45,7 @@ jobs:
         run: |
           pip install -e .
           pip install pytest
+          set -o pipefail
           python -m pytest -q --color=no | tee test-output.txt
       - name: Check test count baseline
         working-directory: python
@@ -67,14 +70,17 @@ jobs:
           node-version: '20'
       - name: Run tests
         working-directory: extension/tests
-        run: node test.mjs | tee test-output.txt
+        run: |
+          set -o pipefail
+          node test.mjs | tee test-output.txt
       - name: Run popup module tests
         working-directory: extension/tests
         run: node test-popup-modules.mjs
       - name: Check test count baseline
         working-directory: extension/tests
         run: |
-          ACTUAL_COUNT=$(grep -o '^[0-9]* tests:' test-output.txt | grep -o '^[0-9]*' || true)
+          # Count passed tests, not the summary total (passed + failed).
+          ACTUAL_COUNT=$(grep -oE '[0-9]+ passed' test-output.txt | grep -oE '^[0-9]+' | tail -1 || true)
           ACTUAL_COUNT=${ACTUAL_COUNT:-0}
           BASELINE=$(grep '^js=' ../../.test-baselines | cut -d= -f2)
           if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
