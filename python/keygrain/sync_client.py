@@ -24,6 +24,7 @@ import hmac
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -208,6 +209,26 @@ DEFAULT_TIMEOUT = 30
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 
+def validate_server_url(server_url: str) -> None:
+    """Reject cleartext sync endpoints except explicitly local development hosts."""
+    try:
+        parsed = urllib.parse.urlsplit(server_url)
+        # Accessing .port is lazy and raises ValueError for malformed or out-of-range ports.
+        parsed.port
+        host = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError as exc:
+        raise ServerError("Invalid sync server URL.") from exc
+
+    is_loopback = host in {"localhost", "127.0.0.1", "::1"}
+    if parsed.scheme == "https" and host:
+        return
+    if parsed.scheme == "http" and is_loopback:
+        return
+    raise ServerError(
+        "Sync server URL must use HTTPS; HTTP is allowed only for localhost/loopback development."
+    )
+
+
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Block ALL HTTP redirects instead of following them.
 
@@ -368,6 +389,7 @@ def download_sync_content(
         ChecksumMismatchError, BlobDecryptError, or SyncError (malformed response
         or metadata/content length mismatch).
     """
+    validate_server_url(server_url)
     lookup_id = derive_lookup_id(secret, email)
     auth_password = derive_auth_password(secret, email)
     encryption_key = derive_encryption_key(secret, email)
