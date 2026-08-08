@@ -75,6 +75,41 @@ def test_lookup_id_email_case_insensitive():
     assert sc.derive_lookup_id(SECRET, "Test@Gmail.COM") == sc.derive_lookup_id(SECRET, EMAIL)
 
 
+@pytest.mark.parametrize("url", [
+    "https://keygrain.com",
+    "https://sync.example.test:9443/base",
+    "http://localhost:9860",
+    "http://127.0.0.1:9860",
+    "http://[::1]:9860",
+])
+def test_validate_server_url_accepts_https_and_loopback(url):
+    sc.validate_server_url(url)
+
+
+@pytest.mark.parametrize("url", [
+    "http://keygrain.com",
+    "http://sync.example.test:9860",
+    "ftp://localhost:21",
+    "https:///missing-host",
+    "not-a-url",
+])
+def test_validate_server_url_rejects_unsafe_or_malformed_urls(url):
+    with pytest.raises(sc.ServerError):
+        sc.validate_server_url(url)
+
+
+@pytest.mark.parametrize("url", [
+    "https://sync.example.test:abc",
+    "https://sync.example.test:65536",
+    "https://[::1",
+])
+def test_validate_server_url_normalizes_parser_errors(url):
+    with pytest.raises(sc.ServerError) as exc_info:
+        sc.validate_server_url(url)
+    assert str(exc_info.value) == "Invalid sync server URL."
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
 def test_derivation_regression_pins():
     # Regression pins for (secret='my-master-secret', email='test@gmail.com').
     # strengthen is independently vector-verified (test_strengthen.py); these pin
