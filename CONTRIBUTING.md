@@ -9,9 +9,11 @@ features.
 - **Security issues are not bug reports.** If you've found a vulnerability, do **not**
   open a public issue — follow [SECURITY.md](SECURITY.md) (private reporting).
 - **Algorithm changes are high-stakes.** `SPEC.md`, `vectors.json`, and the other
-  `*-vectors.json` files are the source of truth and are checksum-gated in CI. Changing
-  derivation behavior means bumping the spec, updating vectors, and updating **every**
-  platform so outputs stay byte-identical. Open an issue to discuss first.
+  `*-vectors.json` files are the source of truth. `SPEC.md` and `vectors.json` have
+  dedicated checksum gates; the remaining normative fixtures are covered by the aggregate
+  `.fixtures-checksum` gate. Changing derivation behavior means bumping the spec, updating
+  vectors, and updating **every** platform so outputs stay byte-identical. Open an issue to
+  discuss first.
 
 ## Development setup
 
