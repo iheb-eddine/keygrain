@@ -63,7 +63,7 @@ jobs:
       # validates the OIDC identity against the registered publisher
       # (owner=iheb-eddine, repo=keygrain, workflow=publish-testpypi.yml).
       - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: python/dist/
