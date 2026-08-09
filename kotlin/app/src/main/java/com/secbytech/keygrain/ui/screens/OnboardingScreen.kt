@@ -1,9 +1,5 @@
 package com.secbytech.keygrain.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -33,6 +29,8 @@ import com.secbytech.keygrain.data.SecretManager
 import com.secbytech.keygrain.data.ServiceEntry
 import com.secbytech.keygrain.data.ServiceManager
 import com.secbytech.keygrain.ui.WongPalette
+import com.secbytech.keygrain.ui.util.copyAndClear
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -98,6 +96,7 @@ fun OnboardingWizard(
                 2 -> FirstServicePage(
                     masterSecret = masterSecret,
                     serviceManager = serviceManager,
+                    clipboardScope = scope,
                     onServiceAdded = { name ->
                         addedServiceName = name
                         scope.launch { pagerState.animateScrollToPage(3) }
@@ -212,6 +211,7 @@ private fun MasterSecretPage(
 private fun FirstServicePage(
     masterSecret: String?,
     serviceManager: ServiceManager,
+    clipboardScope: CoroutineScope,
     onServiceAdded: (String) -> Unit,
     onSkip: () -> Unit,
     onBack: () -> Unit
@@ -240,6 +240,14 @@ private fun FirstServicePage(
     var symbols by remember { mutableStateOf(Keygrain.DEFAULT_SYMBOLS) }
     var showAdvanced by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
+    var passwordCopied by remember { mutableStateOf(false) }
+    LaunchedEffect(passwordCopied) {
+        if (passwordCopied) {
+            delay(1500)
+            passwordCopied = false
+        }
+    }
+
 
     // Derive the preview off the main thread with a typing debounce — derivePassword
     // runs Argon2id, and each distinct email while typing would otherwise strengthen
@@ -349,11 +357,13 @@ private fun FirstServicePage(
                     )
                 }
                 IconButton(onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("password", pw))
-                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                    copyAndClear(context, clipboardScope, "password", pw)
+                    passwordCopied = true
                 }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
+                    Icon(
+                        if (passwordCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                        contentDescription = if (passwordCopied) "Copied" else "Copy"
+                    )
                 }
             }
         }
