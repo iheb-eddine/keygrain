@@ -104,7 +104,7 @@ function next_byte():
 
 `UINT32_BE(ctr)` is the counter as a 4-byte big-endian unsigned integer (e.g., counter 1 → `0x00000001`).
 
-Implementations MAY pre-allocate stream bytes for performance, but MUST extend on demand if `pos` reaches the end.
+Implementations MAY pre-allocate stream bytes for performance (for example, 256 bytes as a conservative initial allocation hint), but MUST extend on demand if `pos` reaches the end. The initial allocation is not an exhaustion limit, and implementations are not required to allocate exactly 256 bytes.
 
 ### 4.4 Character Selection
 
@@ -193,11 +193,11 @@ A derived password used for HTTP Basic authentication with the sync server.
 ```
 strengthened = strengthen(secret, email)
 message = UTF8_ENCODE(LOWERCASE(email) + ":32:keygrain-auth")
-stream = build_stream(key = strengthened, message = message, needed = 64)
+stream = build_stream(key = strengthened, message = message)
 auth_password = build_password(stream, length = 32, symbols = "!@#$%&*-_=+?")
 ```
 
-This uses the same `build_stream` (§4.3) and `build_password` (§4.4 + §4.5) machinery as regular password derivation, with hardcoded length=32 and default symbols.
+This uses the same `build_stream` (§4.3) and `build_password` (§4.4 + §4.5) machinery as regular password derivation, with hardcoded length=32 and default symbols. Stream extension from §4.3 is mandatory. An implementation MAY use an initial allocation of 256 bytes as an optional/conservative performance hint, but 256 bytes is not an exhaustion limit: implementations MUST extend on demand if password generation consumes more bytes and are not required to allocate exactly 256 bytes.
 
 ### 6.3 Encryption Key
 
@@ -225,7 +225,9 @@ hash = HMAC-SHA256(key = secret_bytes, message = message)
 color_indices = [hash[0] % 8, hash[1] % 8, hash[2] % 8, hash[3] % 8]
 ```
 
-Note: The fingerprint uses the **raw secret** (not the strengthened key) and does **not** require an email address. This enables instant visual feedback on the lock screen before Argon2id completes.
+Note: The fingerprint uses the **raw secret** (not the strengthened key), does **not** require an email address, and is computed outside Argon2id. This enables instant visual feedback on the lock screen before Argon2id completes.
+
+Security qualification: the four indices expose 12 bits of information (four values from a palette of eight). The fingerprint is not a standalone secret verifier. It can provide a conditional 4096x prefilter only when an attacker also has a separate verification oracle; the fingerprint alone does not verify a guessed secret.
 
 ### 7.2 Color Palette (Wong)
 
@@ -244,7 +246,7 @@ Note: The fingerprint uses the **raw secret** (not the strengthened key) and doe
 
 ## 8. Test Vectors
 
-All values verified against the reference Python implementation (`argon2-cffi`).
+The §8.1 and §8.2 derivation values are verified against the reference Python implementation (`argon2-cffi`). The §8.3 fingerprint values are reproducible from the documented raw-secret HMAC formula and were independently checked; the reference Python implementation is not a fingerprint oracle. The existing `keygrain/sync-vectors.json` is the JS-oracle-generated cross-platform regression fixture for the sync authentication fields. It is an implementation-agreement fixture, not an independently generated conformance fixture from this prose, and it remains unchanged.
 
 ### 8.1 Key Strengthening
 
@@ -280,7 +282,7 @@ Vectors 1, 3, and 4 MUST produce identical output (site and email case normaliza
 | `different-secret` | `d482d679` | `[4, 2, 6, 1]` |
 | `a` | `b57cc734` | `[5, 4, 7, 4]` |
 
-Note: The fingerprint does not use email. Same secret always produces same colors regardless of email.
+Note: The fingerprint uses the raw secret outside Argon2id and does not use email. Same secret always produces the same colors regardless of email. The existing sync authentication fixture is maintained separately in `keygrain/sync-vectors.json` as a JS-oracle/cross-platform regression fixture.
 
 ---
 
@@ -298,7 +300,7 @@ Note: The fingerprint does not use email. Same secret always produces same color
 ### 9.1 Limitations
 
 - **Compromised device:** If an attacker extracts the raw secret from memory, strengthening provides no protection.
-- **Very weak secrets:** A 4-digit PIN is brute-forceable (~3 hours at 1s/guess for 10⁴ candidates).
+- **Very weak secrets:** A 4-digit PIN is brute-forceable. An empirical single-core measurement processed approximately 9.7 candidates per second, or approximately 17 minutes for 10,000 candidates. This is an empirical estimate, not a universal timing guarantee; actual rates vary with hardware, implementation, and runtime conditions.
 
 ---
 
@@ -327,7 +329,7 @@ This normalization is applied before the site enters the message string.
 
 ### 10.3 Stream Length
 
-Byte consumption is non-deterministic due to rejection sampling. The stream extends on demand via HMAC-SHA256 rounds with a 4-byte big-endian counter. Implementations MAY pre-allocate `length * 3` bytes as a performance hint.
+Byte consumption is non-deterministic due to rejection sampling. Implementations MUST extend the stream on demand via HMAC-SHA256 rounds with a 4-byte big-endian counter when consumption reaches the current stream. Implementations MAY pre-allocate `length * 3` bytes only as a performance hint; that allocation is not an exhaustion limit.
 
 ### 10.4 Minimum Password Length
 
