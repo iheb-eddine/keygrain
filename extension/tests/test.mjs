@@ -2821,6 +2821,50 @@ await test('popup.js persists the blob from exactly one place', async () => {
   assert.equal([...sourceOf('popup.js').matchAll(/chrome\.storage\.local\.set\(\{\s*services/g)].length, 1);
 });
 
+await test('popup.js clears both PIN keys after five wrong attempts', async () => {
+  // The failed-attempt branch of the PIN unlock handler, delimited by the catch's closing brace.
+  const branch = bodyOf('popup.js', 'const fails = (data.pinFailCount || 0) + 1;', 4);
+  // Five is the documented lockout, and it must be the >= comparison: `fails === 5` would let a
+  // stale count above five keep the encrypted secret on the device forever.
+  assert.match(branch, /if \(fails >= 5\) \{/,
+    'the PIN lockout threshold is no longer five wrong attempts');
+  // Both keys go in the same removal. pinData alone leaves pinFailCount at 5, so the next PIN
+  // set inherits an already-exhausted counter; pinFailCount alone leaves the wrapped secret
+  // behind, which is the thing the lockout exists to destroy.
+  const removal = /chrome\.storage\.local\.remove\(\[([^\]]*)\]\)/.exec(branch);
+  assert.ok(removal, 'the lockout branch no longer removes anything');
+  assert.ok(removal[1].includes('"pinData"'), 'the lockout leaves the wrapped secret on the device');
+  assert.ok(removal[1].includes('"pinFailCount"'), 'the lockout leaves the fail counter behind');
+});
+
+await test('popup.js wipes both PIN keys when the account is wiped', async () => {
+  const scoped = /const ACCOUNT_SCOPED_KEYS = \[([\s\S]*?)\];/.exec(sourceOf('popup.js'));
+  assert.ok(scoped, 'ACCOUNT_SCOPED_KEYS not found');
+  // Switch account and the delete-local branch both wipe through this list. A PIN key missing
+  // from it survives the wipe, so the next account on the device inherits a PIN that unwraps
+  // the previous account's secret.
+  assert.ok(scoped[1].includes('"pinData"'),
+    'an account wipe would leave the previous account\'s wrapped secret behind');
+  assert.ok(scoped[1].includes('"pinFailCount"'),
+    'an account wipe would leave the previous account\'s fail counter behind');
+  // The list is only load-bearing if the wipe actually removes by it — an inlined key array here
+  // would drift from ACCOUNT_SCOPED_KEYS silently.
+  assert.match(bodyOf('popup.js', 'async function wipeLocalAccountData()', 2),
+    /await chrome\.storage\.local\.remove\(ACCOUNT_SCOPED_KEYS\);/,
+    'the account wipe does not remove by ACCOUNT_SCOPED_KEYS');
+});
+
+await test('popup.js full reset clears storage rather than enumerating PIN keys', async () => {
+  const body = bodyOf('popup.js', 'resetConfirmBtn.addEventListener("click", async () => {', 2);
+  // Reset Keygrain is the one path that needs no key list: clear() drops every key in
+  // chrome.storage.local, so pinData and pinFailCount go with it and cannot be forgotten when a
+  // new key is added. The account wipe above cannot use clear() — it must preserve the
+  // device/config keys (settings, onboardingDone, siteRules, …) — which is exactly why that path
+  // needs the explicit ACCOUNT_SCOPED_KEYS list and this one does not.
+  assert.match(body, /await chrome\.storage\.local\.clear\(\);/,
+    'the full reset no longer clears storage, so PIN state can survive it');
+});
+
 await test('popup.js closes the index-bound dialogs through the refresh flush', async () => {
   const src = sourceOf('popup.js');
   // addDialog and deleteDialog carry an index into `services` (editIndex, deleteTarget), so a
