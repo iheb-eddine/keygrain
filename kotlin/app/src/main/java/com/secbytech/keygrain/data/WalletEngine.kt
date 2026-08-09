@@ -98,7 +98,7 @@ object WalletEngine {
         val entropy1 = deriveWalletEntropy(secret, email, walletName, chain, counter)
         val entropy2 = deriveWalletEntropy(secret, email, walletName, chain, counter)
         check(entropy1.contentEquals(entropy2)) {
-            "CRITICAL: Double-derivation mismatch. Possible implementation bug or hardware fault."
+            "CRITICAL: Double-derivation mismatch in the wallet expansion step."
         }
         return entropyToMnemonic(entropy1)
     }

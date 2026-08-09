@@ -156,6 +156,6 @@ def derive_wallet_mnemonic(
     )
     if entropy1 != entropy2:
         raise RuntimeError(
-            "CRITICAL: Double-derivation mismatch. Possible implementation bug or hardware fault."
+            "CRITICAL: Double-derivation mismatch in the wallet expansion step."
         )
     return entropy_to_mnemonic(entropy1)

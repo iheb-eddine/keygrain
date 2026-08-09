@@ -68,7 +68,7 @@ async function deriveWalletMnemonic(secret, email, { walletName, chain, counter 
   const entropy2 = await deriveWalletEntropy(secret, email, { walletName, chain, counter });
   for (let i = 0; i < 32; i++) {
     if (entropy1[i] !== entropy2[i]) {
-      throw new Error("CRITICAL: Double-derivation mismatch. Possible implementation bug or hardware fault.");
+      throw new Error("CRITICAL: Double-derivation mismatch in the wallet expansion step.");
     }
   }
   return await entropyToMnemonic(entropy1);
