@@ -91,7 +91,25 @@ Keygrain generates deterministic passwords from a master secret and fills them i
 **Data transmitted:**
 - Lookup ID (HMAC-derived hash — not the user's email)
 - Encrypted blob (AES-256-GCM ciphertext of the site list)
-- Auth token (bcrypt hash of a derived password — not the master secret)
+- Derived `auth_password` in the HTTP Basic password field. The server stores a bcrypt hash; the bcrypt hash itself is not transmitted.
+- HTTPS is required for the production sync endpoint; HTTP is not safe for non-loopback deployments.
+
+## Permission: `optional_host_permissions` (Chrome) / `optional_permissions` (Firefox) — `*://*/*`
+
+**What it does:** Allows the user to grant the extension access to saved website origins for
+native in-field autofill.
+
+**Why needed:** The inline fill button must be injected into login pages without requiring the
+user to open the popup first. The extension requests this broad browser permission only after
+an explicit consent dialog, registers patterns derived from the user's saved sites, and removes
+the registrations when inline autofill is disabled or the user locks the extension. The master
+secret never enters the page context; only a selected, allow-listed account token and display
+metadata cross into the content script.
+
+**User control:** The feature is off by default, the browser permission can be revoked, and the
+extension can be disabled from Settings. The permission declaration is broad because browser
+permission APIs require an origin pattern; runtime registration narrows actual injection to
+saved sites.
 
 ## Summary Table
 
@@ -104,3 +122,4 @@ Keygrain generates deterministic passwords from a master secret and fills them i
 | `storage` | Encrypted data + settings | Persistent site list across sessions |
 | `tabs` | Badge count + background tab access | Visual indicator, shortcut/menu fill |
 | `host_permissions` | Sync server communication | Cross-device encrypted sync |
+| `optional_host_permissions` (Chrome) / `optional_permissions` (Firefox) | User-approved saved-site access | Inline autofill without opening the popup |

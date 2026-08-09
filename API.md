@@ -5,28 +5,26 @@ API reference for the Keygrain sync server. This document covers the HTTP interf
 ## Base URL
 
 ```
-http://localhost:9860
+https://keygrain.com
 ```
 
 The server listens on port `9860` by default (configurable via `PORT` environment variable).
+Use HTTPS for every non-loopback deployment. Plain HTTP is suitable only for an explicitly
+local development server.
 
 ## Authentication
 
-All `/api/sync/` endpoints require HTTP Basic authentication.
+All `/api/sync/` endpoints require HTTP Basic authentication. The client derives both
+credentials from the strengthened secret defined in `SPEC.md` §3 and §6:
 
-| Credential | Value |
-|-----------|-------|
-| Username | `lookup_id` |
-| Password | `auth_password` |
+| Credential | Derivation |
+|-----------|------------|
+| `lookup_id` | `hex(HMAC-SHA256(strengthened, UTF8(lowercase(email) + ":keygrain-id")))` — 64 lowercase hex characters |
+| `auth_password` | `build_password(build_stream(strengthened, UTF8(lowercase(email) + ":32:keygrain-auth"), 256), 32, DEFAULT_SYMBOLS)` |
 
-Both are derived from the user's `secret` and `email`:
+The server stores a bcrypt hash (cost 12) of the auth_password on first PUT. Subsequent requests are verified against this hash. The bcrypt hash is never sent over the wire; the client sends the derived `auth_password` in the HTTP Basic password field over HTTPS.
 
-| Value | Derivation |
-|-------|-----------|
-| `lookup_id` | `hex(HMAC-SHA256(secret, email + ":keygrain-id"))` — 64 hex characters |
-| `auth_password` | `derive_password_v1(secret, email, length=32, symbols=default, salt="keygrain-auth")` |
-
-The server stores a bcrypt hash (cost 12) of the auth_password on first PUT. Subsequent requests are verified against this hash.
+The complete byte-level algorithm and the `DEFAULT_SYMBOLS` value are normative in `SPEC.md` §6. Do not implement this contract as a raw-secret HMAC or as an undefined `derive_password_v1` function.
 
 ## Endpoints
 
