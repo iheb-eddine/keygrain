@@ -50,7 +50,7 @@ class KeygrainAutofillService : AutofillService() {
             if (domain != null && domain.isNotEmpty()) {
                 val trustedBrowsers = getTrustedBrowsers()
                 if (requestingPackage == null || requestingPackage !in trustedBrowsers) {
-                    Log.d("KeygrainAutofill", "Untrusted browser: $requestingPackage")
+                    Log.d("KeygrainAutofill", "Untrusted browser")
                     callback.onSuccess(null)
                     return
                 }
@@ -66,7 +66,7 @@ class KeygrainAutofillService : AutofillService() {
             val psl = PublicSuffixList.getInstance(applicationContext)
             val visitedRegistrable = psl.extractRegistrableDomain(normalizedDomain)
             if (visitedRegistrable == null) {
-                Log.d("KeygrainAutofill", "No registrable domain for: $normalizedDomain")
+                Log.d("KeygrainAutofill", "No registrable domain")
                 callback.onSuccess(null)
                 return
             }
@@ -76,7 +76,7 @@ class KeygrainAutofillService : AutofillService() {
             }
 
             if (matches.isEmpty()) {
-                Log.d("KeygrainAutofill", "No matching services for: $visitedRegistrable")
+                Log.d("KeygrainAutofill", "No matching services")
                 callback.onSuccess(null)
                 return
             }
