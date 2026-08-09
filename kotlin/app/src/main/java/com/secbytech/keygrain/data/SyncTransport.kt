@@ -19,6 +19,7 @@ internal class SyncTransport(private val baseUrl: String) {
         return try {
             conn = (URL("$baseUrl/api/sync/$lookupId").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
+                instanceFollowRedirects = false
                 setRequestProperty("Authorization", authHeader)
                 connectTimeout = 15000
                 readTimeout = 15000
@@ -53,6 +54,7 @@ internal class SyncTransport(private val baseUrl: String) {
         return try {
             conn = (URL("$baseUrl/api/sync/$lookupId").openConnection() as HttpURLConnection).apply {
                 requestMethod = "PUT"
+                instanceFollowRedirects = false
                 setRequestProperty("Authorization", authHeader)
                 setRequestProperty("Content-Type", "application/json")
                 if (etag != null) setRequestProperty("If-Match", "\"$etag\"")
@@ -102,6 +104,7 @@ internal class SyncTransport(private val baseUrl: String) {
         return try {
             conn = (URL("$baseUrl/api/sync/$lookupId").openConnection() as HttpURLConnection).apply {
                 requestMethod = "DELETE"
+                instanceFollowRedirects = false
                 setRequestProperty("Authorization", authHeader)
                 connectTimeout = 15000
                 readTimeout = 15000
