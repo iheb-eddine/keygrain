@@ -83,20 +83,43 @@ function selectServiceForFill(matches, context) {
 // pin-tests in tests/test.mjs guard against broadening drift. Returns [] when
 // nothing matches; never throws on hostile/missing data (site is String-coerced,
 // like the other pure helpers).
+// Return the normalized saved site only when both endpoints are positively
+// classified and the exact-only IP/localhost rule is satisfied. Missing PSL
+// state is deliberately a hard no-match.
+function safeMatchSite(site, host) {
+  const psl = globalThis.KeygrainPublicSuffix;
+  if (!psl || typeof psl.classify !== "function" || typeof psl.isSafeForMatching !== "function") return null;
+  let siteResult, hostResult;
+  try {
+    siteResult = psl.classify(site);
+    hostResult = psl.classify(host);
+    if (!psl.isSafeForMatching(site) || !psl.isSafeForMatching(host)) return null;
+  } catch (_) {
+    return null;
+  }
+  if (siteResult.exactOnly || hostResult.exactOnly) return siteResult.host === hostResult.host ? siteResult.host : null;
+  return siteResult.host;
+}
+
+function isSafeMatchingSite(site, host) {
+  return safeMatchSite(site, host) !== null;
+}
+
 function filterMostSpecific(services, host) {
   const list = Array.isArray(services) ? services : [];
   const h = String(host == null ? "" : host).toLowerCase();
   if (h === "") return [];
+  if (!safeMatchSite(host, host)) return [];
   const scored = [];
   let best = -1;
   for (const s of list) {
     if (!s) continue;
     const raw = s.site || s.name;
-    const site = String(raw == null ? "" : raw).toLowerCase();
-    if (site === "") continue;
+    const site = safeMatchSite(raw, host);
+    if (!site) continue;
     if (!(site === h || h.endsWith("." + site))) continue;
     const spec = site.split(".").length;
-    scored.push({ s, spec });
+    scored.push({s, spec});
     if (spec > best) best = spec;
   }
   return scored.filter((e) => e.spec === best).map((e) => e.s);
@@ -322,6 +345,8 @@ globalThis.KeygrainAutofill = {
   rankServices,
   selectServiceForFill,
   filterMostSpecific,
+  safeMatchSite,
+  isSafeMatchingSite,
   looksLikeEmail,
   isPasswordDescriptor,
   isFillableUsernameDescriptor,

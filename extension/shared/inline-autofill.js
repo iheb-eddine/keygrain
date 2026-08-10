@@ -57,11 +57,24 @@ function isIPv4(host) {
 function computeMatchPatterns(services) {
   const list = Array.isArray(services) ? services : [];
   const out = new Set();
+  const psl = globalThis.KeygrainPublicSuffix;
+  if (!psl || typeof psl.classify !== "function" || typeof psl.isSafeForMatching !== "function") return [];
   for (const s of list) {
     if (!s) continue;
     const raw = s.site || s.name;
     if (typeof raw !== "string") continue;
-    const host = raw.toLowerCase();
+    let result;
+    try {
+      result = psl.classify(raw);
+      if (!psl.isSafeForMatching(raw)) continue;
+    } catch (_) { continue; }
+    const host = result.host;
+    // IP literals and localhost are exact-only. IPv6 brackets are valid in an
+    // exact match pattern, but never receive a wildcard pattern.
+    if (result.exactOnly) {
+      out.add("*://" + host + "/*");
+      continue;
+    }
     if (!isCleanHostname(host)) continue;
     out.add("*://" + host + "/*");
     if (host.split(".").length >= 2 && !isIPv4(host)) {

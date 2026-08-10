@@ -21,6 +21,11 @@
     </div>
     <input type="file" id="file-input" accept=".csv" class="hidden" aria-label="Select CSV file">
     <div id="parse-error" class="error hidden" role="alert"></div>
+    <section id="stored-advisories" class="stored-advisories hidden" aria-labelledby="stored-advisories-title">
+      <h2 id="stored-advisories-title">Review saved sites</h2>
+      <p>Some saved sites are public suffixes and may match too broadly. Re-import the original CSV to review a possible correction; changing a site changes its generated password.</p>
+      <div id="stored-advisory-list"></div>
+    </section>
   </div>
 
   <!-- Step 2: Preview -->
@@ -62,6 +67,13 @@
     </div>
     <p id="confirm-summary"></p>
     <p id="confirm-skip" class="hidden"></p>
+    <section id="correction-review" class="correction-review hidden" aria-labelledby="correction-review-title">
+      <h3 id="correction-review-title">Review existing sites</h3>
+      <p id="correction-review-intro">These source-backed corrections change the generated password. Keep the current site unless you have verified the source address.</p>
+      <div id="correction-list"></div>
+      <p id="correction-confirm-status" class="hidden" role="status"></p>
+      <button id="confirm-corrections-btn" class="btn-danger hidden" type="button" disabled>Confirm selected corrections</button>
+    </section>
     <div class="step-actions">
       <button id="back-to-2" class="btn-secondary">Back</button>
       <button id="import-btn" class="btn-primary">Import</button>
@@ -116,6 +128,8 @@
     </div>
   </div>
 
+  <script src="lib/public_suffix_list.js"></script>
+  <script src="public-suffix.js"></script>
   <script src="compat.js"></script>
   <script src="lib/hash-wasm-argon2.js"></script>
   <script src="keygrain.js"></script>

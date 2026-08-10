@@ -130,3 +130,22 @@ h2 { font-size: 1.1rem; margin-top: 0; }
 .btn-danger:hover { background: #c82333; }
 
 .pw-toggle { background: none; border: none; cursor: pointer; font-size: 0.9rem; padding: 2px 4px; }
+
+/* Source-backed correction review: old/new values are visible, raw evidence is
+   rendered by migrate.js as text nodes, and the destructive confirmation is
+   visually distinct from the ordinary import action. */
+.correction-review { margin: 1rem 0; padding: 1rem; border: 1px solid #d9a441; border-radius: 0.5rem; background: #fffaf0; }
+.correction-review h3 { margin-top: 0; }
+.correction-item { margin: 0.75rem 0; padding: 0.75rem; border: 1px solid #e0d5bd; border-radius: 0.35rem; background: #fff; }
+.correction-item p { margin: 0.35rem 0; }
+.correction-site-old { text-decoration: line-through; }
+.correction-site-new { font-weight: 700; }
+.correction-source { overflow-wrap: anywhere; white-space: pre-wrap; }
+.correction-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.6rem; }
+.correction-item[data-choice="proposed"] { border-color: #b33a3a; }
+.correction-item[data-choice="keep"] { border-color: #7a8a99; }
+#correction-confirm-status { font-weight: 700; margin-top: 0.75rem; }
+
+.stored-advisories { margin: 1rem 0; padding: 1rem; border: 1px solid #d9a441; border-radius: 0.5rem; background: #fffaf0; }
+.stored-advisory-item { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 0.6rem 0; }
+.stored-advisory-item .advisory-details { flex: 1 1 18rem; }
