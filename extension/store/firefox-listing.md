@@ -53,7 +53,7 @@ https://keygrain.com
 
 ## Support Email
 
-admin@keygrain.com
+contact@keygrain.com
 
 ## Privacy Policy URL
 
@@ -103,7 +103,7 @@ Keygrain is a deterministic cryptographic derivation tool. It derives passwords,
 4. Click "Add Service", enter a site name (e.g., "github.com")
 5. A deterministic password is generated — verify it's the same every time with the same inputs
 6. Navigate to github.com, click the extension icon, click "Fill" to autofill
-7. To test sync: enable sync in settings (requires creating an account on keygrain.com)
+7. To test sync: enable sync in settings. Use the same email and master secret on another installation; no normal Keygrain account is required.
 
 ### Network requests
 
