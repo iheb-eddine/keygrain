@@ -85,12 +85,13 @@ Each service in your list shows a colored bar indicating password strength:
 
 ---
 
-## Copying a Password
+## Copying Sensitive Values
 
-Click the **📋** (clipboard) button next to any service. The password is copied to your clipboard.
+Click the **📋** (clipboard) button next to a service to copy its password.
 
-- A confirmation message appears: "Copied! Clears in 30s."
-- After 30 seconds, your clipboard is automatically cleared for security.
+- Password, TOTP code, TOTP seed, and SSH private-key copies made from the popup are cleared after 30 seconds.
+- Locking the extension clears the secret from the extension session, but it does not guarantee that the clipboard is cleared.
+- Some other copy actions, including SSH public-key and migration-preview copies, do not use that per-copy timer. Do not treat clipboard cleanup as a guarantee.
 
 ---
 
@@ -220,6 +221,8 @@ If you're switching from another password manager:
 2. Select **Migrate from another manager**
 3. Follow the guided process to import your existing passwords
 
+The preview shows the **Site** value used for derivation next to the original value from your export. If an entry has no usable address, the site may be guessed from its title, so review those rows carefully. Changing the Site changes the generated password; the source/provenance details are preview-only and are not stored in the imported service.
+
 Keygrain creates a migration checklist so you can update each site one at a time. Services marked with "⚠️ migrate" still use your old password — visit each site to change it to the Keygrain-generated one.
 
 Click **✅ Mark as rotated** in the edit dialog once you've updated a site.
@@ -277,7 +280,7 @@ The export is encrypted with your master secret — it's safe to store in cloud 
 
 ## Breach Warnings
 
-Keygrain checks for known data breaches that affect your services. When a breach is detected:
+Keygrain checks a static breach feed against the domains of your saved services. These are site/feed advisories, not proof that your specific derived password appeared in a breach. When a matching advisory is found:
 
 - A warning banner appears with details about the breach
 - Click **×** to dismiss a warning
