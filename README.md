@@ -108,7 +108,7 @@ Keygrain derives unique, strong passwords from your master secret and site infor
 ### Python CLI
 
 ```bash
-pip install git+https://github.com/iheb-eddine/keygrain.git#subdirectory=python
+pip install keygrain
 
 keygrain me@example.com --site github.com
 ```
