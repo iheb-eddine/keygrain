@@ -241,6 +241,12 @@ private fun FirstServicePage(
     var showAdvanced by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
     var passwordCopied by remember { mutableStateOf(false) }
+    fun symbolsAreValid(value: String): Boolean = try {
+        Keygrain.validateSymbols(value)
+        true
+    } catch (_: IllegalArgumentException) {
+        false
+    }
     LaunchedEffect(passwordCopied) {
         if (passwordCopied) {
             delay(1500)
@@ -254,10 +260,10 @@ private fun FirstServicePage(
     // synchronously on the main thread.
     var password by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(site, email, length, symbols, masterSecret) {
-        if (email.isBlank() || site.isBlank()) { password = null; return@LaunchedEffect }
+        if (email.isBlank() || site.isBlank() || !symbolsAreValid(symbols)) { password = null; return@LaunchedEffect }
         delay(400)
         val len = (length.toIntOrNull() ?: 20).coerceAtLeast(8)
-        val syms = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS }
+        val syms = symbols
         password = withContext(Dispatchers.Default) {
             try {
                 Keygrain.derivePassword(
@@ -275,13 +281,14 @@ private fun FirstServicePage(
         onSkip = onSkip,
         primaryLabel = "Add Service",
         onPrimary = {
+            if (!symbolsAreValid(symbols)) return@OnboardingPageLayout
             serviceManager.addService(
                 ServiceEntry(
                     name = name.trim(),
                     site = site.trim().ifEmpty { name.trim().lowercase() },
                     email = email.trim(),
                     length = (length.toIntOrNull() ?: 20).coerceAtLeast(8),
-                    symbols = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS }
+                    symbols = symbols
                 )
             )
             onServiceAdded(name.trim())

@@ -109,6 +109,17 @@
     const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
     const LOWER = "abcdefghjkmnpqrstuvwxyz";
     const DIGITS = "23456789";
+    const DEFAULT_SYMBOLS = "!@#$%&*-_=+?";
+    const DEFAULT_SYMBOL_POLICY = "ascii-printable-v1";
+
+    function validateSymbols(symbols, policy = DEFAULT_SYMBOL_POLICY) {
+        if (policy !== DEFAULT_SYMBOL_POLICY) throw new RangeError("Unknown symbol policy.");
+        if (typeof symbols !== "string" || symbols.length === 0) throw new RangeError("Symbols must be non-empty graphic printable ASCII.");
+        for (let i = 0; i < symbols.length; i++) {
+            const code = symbols.charCodeAt(i);
+            if (code < 0x21 || code > 0x7e) throw new RangeError("Symbols must contain only graphic printable ASCII characters.");
+        }
+    }
 
     const MESSAGES = {
       LENGTH_MIN: "Password length must be at least 8 characters.",
@@ -154,7 +165,8 @@
         return stream;
     }
 
-    async function derivePassword(secret, email, site, length, symbols, counter) {
+    async function derivePassword(secret, email, site, length, symbols, counter, policy = DEFAULT_SYMBOL_POLICY) {
+        validateSymbols(symbols, policy);
         const enc = new TextEncoder();
         const strengthened = await strengthen(secret, email);
         const message = enc.encode(site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + counter);
@@ -255,8 +267,8 @@
         if (!site) { status.textContent = "Site is required."; return; }
         if (length < 8) { status.textContent = MESSAGES.LENGTH_MIN; return; }
         if (length > 128) { status.textContent = "Password length must not exceed 128."; return; }
+        try { validateSymbols(symbols); } catch (err) { status.textContent = err.message; return; }
         if (UPPER.length + LOWER.length + DIGITS.length + symbols.length > 256) { status.textContent = "Total charset size must not exceed 256 characters."; return; }
-        if (!symbols) { status.textContent = MESSAGES.SYMBOLS_REQUIRED; return; }
         const btn = document.getElementById("generate");
         btn.disabled = true;
         status.textContent = "Strengthening key…";

@@ -143,6 +143,12 @@ internal fun ServiceEditorScreen(
                     TextButton(
                         enabled = name.isNotBlank() && email.isNotBlank(),
                         onClick = {
+                            try {
+                                Keygrain.validateSymbols(symbols)
+                            } catch (_: IllegalArgumentException) {
+                                scope.launch { snackbarHostState.showSnackbar("Symbols must be non-empty graphic printable ASCII.") }
+                                return@TextButton
+                            }
                             val totpJson = when (totpModeIndex) {
                                 1 -> { // Stored
                                     val input = totpSeed.trim()
@@ -181,7 +187,7 @@ internal fun ServiceEditorScreen(
                                 site = site.trim().ifEmpty { name.trim().lowercase() },
                                 email = email.trim(),
                                 length = (length.toIntOrNull() ?: 20).coerceAtLeast(8),
-                                symbols = symbols.ifEmpty { Keygrain.DEFAULT_SYMBOLS },
+                                symbols = symbols,
                                 counter = (counter.toIntOrNull() ?: 1).coerceAtLeast(1),
                                 totp = totpJson,
                                 ssh = sshJson

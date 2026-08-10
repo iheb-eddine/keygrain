@@ -1726,7 +1726,7 @@
     if (!timeout || timeout < 1) { showStatus(statusEl, "Timeout must be at least 1 minute.", statusTimerState); return; }
     if (!length || length < 8) { showStatus(statusEl, "Length must be at least 8.", statusTimerState); return; }
     if (length > 128) { showStatus(statusEl, "Length must not exceed 128.", statusTimerState); return; }
-    if (!symbols) { showStatus(statusEl, "At least one symbol is required.", statusTimerState); return; }
+    try { validateSymbols(symbols); } catch (err) { showStatus(statusEl, "Symbols must be non-empty graphic printable ASCII.", statusTimerState); return; }
     if (24 + 24 + 8 + symbols.length > 256) { showStatus(statusEl, "Symbol charset too long (max " + (256 - 24 - 24 - 8) + " characters).", statusTimerState); return; }
     if (!url.startsWith("https://")) { showStatus(statusEl, "Server URL must start with https://", statusTimerState); return; }
     settings = {autoLockMinutes: timeout, defaultLength: length, defaultSymbols: symbols, serverUrl: url};
@@ -2014,7 +2014,7 @@
     if (length < 8) { showStatus(statusEl, "Length must be at least 8.", statusTimerState); return; }
     if (length > 128) { showStatus(statusEl, "Length must not exceed 128.", statusTimerState); return; }
     const symbols = addSymbols.value;
-    if (!symbols) { showStatus(statusEl, "At least one symbol is required.", statusTimerState); return; }
+    try { validateSymbols(symbols); } catch (err) { showStatus(statusEl, "Symbols must be non-empty graphic printable ASCII.", statusTimerState); return; }
     if (24 + 24 + 8 + symbols.length > 256) { showStatus(statusEl, "Symbol charset too long (max " + (256 - 24 - 24 - 8) + " characters).", statusTimerState); return; }
     // Duplicate check: same (site, email) pair must not exist
     const normalizedSite = normalizeSite(site);
