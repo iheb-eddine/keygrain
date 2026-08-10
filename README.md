@@ -186,7 +186,6 @@ cd kotlin && ./gradlew assembleRelease
 - [Terminology & Style](docs/GLOSSARY.md) — canonical terms and documentation governance
 - [User Guide: Extension](docs/user-guide-extension.md)
 - [User Guide: Android](docs/user-guide-mobile.md)
-- [Design Documents](designs/) — 80+ design docs covering every feature
 
 ## License
 
