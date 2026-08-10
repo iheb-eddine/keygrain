@@ -3,26 +3,46 @@
 ## Installation
 
 ```bash
-# From the Git repository (SSH)
+# Recommended: install the published package from PyPI
+pip install keygrain
+
+# Development/source checkout
 pip install "git+https://github.com/iheb-eddine/keygrain.git#subdirectory=python"
 
-# Local development
+# Local development from a checkout
 pip install -e python/
 ```
 
-Requires Python ≥ 3.10.
+Requires Python ≥ 3.10. Use the Git or editable installs only when developing from source; normal users should install the published PyPI package.
 
 ---
 
 ## Environment Variable
 
-All commands require your master secret via environment variable:
+Derivation commands use this environment variable by default for the master secret:
 
 ```bash
 export KEYGRAIN_SECRET="your master secret here"
 ```
 
 > **SECURITY:** Never put your master secret in shell history. Use `read -s KEYGRAIN_SECRET && export KEYGRAIN_SECRET` or a secrets manager.
+
+### Secret sources for `sync`, `list`, and `get`
+
+For a normal `sync` download and for `list`/`get`, provide exactly one of the following secret sources:
+
+```bash
+# Interactive hidden prompt (default when run in a terminal)
+keygrain get --site github.com
+
+# Environment variable
+keygrain get --site github.com --secret-env KEYGRAIN_SECRET
+
+# File, such as a Docker/Kubernetes secret mount
+keygrain get --site github.com --secret-file /run/secrets/keygrain_secret
+```
+
+The raw `--secret VALUE` argument is intentionally unsupported because it can leak through process listings or shell history. The CLI does not automatically load `.env` files. `--secret-env` and `--secret-file` are mutually exclusive.
 
 ---
 
