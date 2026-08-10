@@ -9,9 +9,18 @@ async function getLockMinutes() {
   return (data.settings && data.settings.autoLockMinutes) || DEFAULT_LOCK_MINUTES;
 }
 
-// === Badge helpers ===
+// Domain matching is a containment gate, not a derivation normalizer.
+function serviceSite(service) {
+  const raw = service && (service.site || service.name);
+  return typeof raw === "string" ? raw.toLowerCase() : "";
+}
+
 function domainMatches(site, hostname) {
-  if (!site || !hostname) return false;
+  if (!site || !hostname || !globalThis.KeygrainAutofill
+    || typeof globalThis.KeygrainAutofill.isSafeMatchingSite !== "function") return false;
+  try {
+    if (!globalThis.KeygrainAutofill.isSafeMatchingSite(site, hostname)) return false;
+  } catch (_) { return false; }
   return site === hostname || hostname.endsWith("." + site);
 }
 
@@ -55,7 +64,7 @@ async function updateBadge(tabId) {
     const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
     const services = JSON.parse(new TextDecoder().decode(decrypted)).services || [];
     const count = services.filter(s => {
-      const site = (s.site || s.name).toLowerCase();
+      const site = serviceSite(s);
       return domainMatches(site, host);
     }).length;
     browser.browserAction.setBadgeText({text: count > 0 ? String(count) : "", tabId});
@@ -297,6 +306,8 @@ async function autofillForTab(tab, fillAction) {
     if (matches.length === 0) { openPopupSafe(); return; }
 
     try {
+      await browser.tabs.executeScript(tab.id, {file: "lib/public_suffix_list.js"});
+      await browser.tabs.executeScript(tab.id, {file: "public-suffix.js"});
       await browser.tabs.executeScript(tab.id, {file: "autofill.js"});
       await browser.tabs.executeScript(tab.id, {file: "content.js"});
     } catch { openPopupSafe(); return; }
@@ -363,6 +374,8 @@ async function autofillOtpForTab(tab) {
     if (matches.length === 0) { openPopupSafe(); return; }
 
     try {
+      await browser.tabs.executeScript(tab.id, {file: "lib/public_suffix_list.js"});
+      await browser.tabs.executeScript(tab.id, {file: "public-suffix.js"});
       await browser.tabs.executeScript(tab.id, {file: "autofill.js"});
       await browser.tabs.executeScript(tab.id, {file: "content.js"});
     } catch { openPopupSafe(); return; }
@@ -404,7 +417,9 @@ async function focusedFieldIsOtp(tab) {
   if (!sessionSecret || !sessionEmail) return false;
   if (!tab?.url) return false;
   try {
-    await browser.tabs.executeScript(tab.id, {file: "autofill.js"});
+    await browser.tabs.executeScript(tab.id, {file: "lib/public_suffix_list.js"});
+      await browser.tabs.executeScript(tab.id, {file: "public-suffix.js"});
+      await browser.tabs.executeScript(tab.id, {file: "autofill.js"});
     await browser.tabs.executeScript(tab.id, {file: "content.js"});
   } catch { return false; }
   const ctx = await afGetFillContext(tab.id);
@@ -441,7 +456,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 // in Increment B. See designs/extension-native-infield-autofill.md.
 // ===================================================================
 const INLINE_SCRIPT_ID = "keygrain-inline";
-const INLINE_JS = ["autofill.js", "inline-autofill.js", "inline-autofill-ui.js", "content.js"];
+const INLINE_JS = ["lib/public_suffix_list.js", "public-suffix.js", "autofill.js", "inline-autofill.js", "inline-autofill-ui.js", "content.js"];
 
 // MV2 registration is session-scoped to the persistent background page. There is
 // no getRegisteredContentScripts, so we cache the currently-registered match set
@@ -583,7 +598,7 @@ async function injectIntoOpenSavedTabs() {
       host = u.hostname.replace(/^www\./, "").toLowerCase();
     } catch { continue; }
     if (!host) continue;
-    if (!services.some(s => domainMatches((s.site || s.name).toLowerCase(), host))) continue;
+    if (!services.some(s => domainMatches(serviceSite(s), host))) continue;
     try {
       for (const file of INLINE_JS) {
         await browser.tabs.executeScript(tab.id, {file});
@@ -676,7 +691,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         if (!sessionSecret || !sessionEmail) return;
         const services = await decryptServices();
         if (!services) return;
-        const svc = services.find(s => s.id === msg.token && domainMatches((s.site || s.name).toLowerCase(), host));
+        const svc = services.find(s => s.id === msg.token && domainMatches(serviceSite(s), host));
         if (!svc) return;
         const password = await derivePassword(sessionSecret, svc.email, {site: svc.site || svc.name, length: svc.length || 20, symbols: svc.symbols || "!@#$%&*-_=+?", counter: svc.counter || 1});
         browser.tabs.sendMessage(sender.tab.id, {action: "fill", password, email: svc.email}).catch(() => {});
@@ -695,7 +710,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         if (!services) return;
         // Server-authoritative: re-verify id===token && domainMatches && s.totp; the seed
         // never crosses — only the derived code goes back via {action:"fillOtp"}.
-        const svc = services.find(s => s.id === msg.token && domainMatches((s.site || s.name).toLowerCase(), host) && s.totp);
+        const svc = services.find(s => s.id === msg.token && domainMatches(serviceSite(s), host) && s.totp);
         if (!svc) return;
         const {code} = await getTOTPCode(svc, sessionSecret);
         browser.tabs.sendMessage(sender.tab.id, {action: "fillOtp", code}).catch(() => {});

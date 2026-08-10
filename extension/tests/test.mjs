@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import { createContext, runInContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { webcrypto } from 'node:crypto';
+import { webcrypto, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -68,8 +68,9 @@ function buildContext() {
   const tweetnaclSrc = readFileSync(resolve(shared, 'lib', 'tweetnacl.js'), 'utf8');
   runInContext(`var module = {exports:{}}; var exports = module.exports;\n${tweetnaclSrc}\nvar nacl = module.exports;`, ctx);
 
-  // Load source files in order
-  for (const file of ['keygrain.js', 'bip39-wordlist.js', 'wallet.js', 'bip85.js', 'totp.js', 'ssh.js', 'sync.js', 'popup-crypto.js', 'popup-dialog.js', 'autofill.js', 'inline-autofill.js', 'migration-state.js', 'migrate.js']) {
+  // Load source files in the same synchronous order as production: generated PSL
+  // data, then classifier, then every consumer.
+  for (const file of ['lib/public_suffix_list.js', 'public-suffix.js', 'keygrain.js', 'bip39-wordlist.js', 'wallet.js', 'bip85.js', 'totp.js', 'ssh.js', 'sync.js', 'popup-crypto.js', 'popup-dialog.js', 'autofill.js', 'inline-autofill.js', 'migration-state.js', 'migrate.js']) {
     const src = readFileSync(resolve(shared, file), 'utf8');
     runInContext(src, ctx);
   }
@@ -102,6 +103,10 @@ function km(method, ...args) {
   ctx._kmArgs = args;
   return runInContext(`KeygrainMigrate.${method}(..._kmArgs)`, ctx);
 }
+function kmj(method, ...args) {
+  ctx._kmArgs = args;
+  return runInContext(`JSON.parse(JSON.stringify(KeygrainMigrate.${method}(..._kmArgs)))`, ctx);
+}
 
 // Helper to call KeygrainMigration.* pure helpers (migration-state.js) in the VM
 // context. Results are round-tripped through JSON so assertions compare plain data
@@ -110,6 +115,168 @@ function kmig(method, ...args) {
   ctx._kmigArgs = args;
   return runInContext(`JSON.parse(JSON.stringify(KeygrainMigration.${method}(..._kmigArgs) ?? null))`, ctx);
 }
+
+// ============================================================
+// PUBLIC SUFFIX LIST TESTS
+// ============================================================
+console.log('\\nPublic Suffix List Tests:');
+function kpsl(method, ...args) {
+  ctx._pslArgs = args;
+  return runInContext(`KeygrainPublicSuffix.${method}(..._pslArgs)`, ctx);
+}
+
+await test('PSL: generated metadata and full pinned rule payload', async () => {
+  const data = runInContext('KeygrainPublicSuffixData', ctx);
+  assert.equal(data.sourceUrl, 'https://publicsuffix.org/list/public_suffix_list.dat');
+  assert.equal(data.version, '2026-05-14_08-35-31_UTC');
+  assert.equal(data.commit, 'e452c7058d6946bd76952b128c12f5ce87a5acb8');
+  assert.equal(data.sourceSha256, '6f7f7d9e8c68447f1c74095a12574b7fee46b0cd759c518a659aee0615d8e118');
+  assert.ok(data.rules.length > 10000, 'runtime payload must contain the full snapshot');
+  const source = readFileSync(resolve(shared, 'lib', 'public_suffix_list.dat'), 'utf8');
+  const sourceRules = source.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('//'));
+  assert.equal(data.rules.length, sourceRules.length, 'runtime payload must contain every source rule');
+  assert.equal(createHash('sha256').update(source).digest('hex'), data.sourceSha256);
+  assert.equal(readFileSync(resolve(shared, 'lib', 'public_suffix_list.sha256'), 'utf8').trim(), data.sourceSha256);
+});
+
+await test('PSL: exact public suffixes are not registrable', async () => {
+  for (const host of ['com', 'github.io', 'co.uk', 'herokuapp.com', 'pages.dev']) {
+    assert.equal(kpsl('classify', host).type, 'public-suffix', host);
+    assert.equal(kpsl('isKnownPublicSuffix', host), true, host);
+    assert.equal(kpsl('isKnownRegistrable', host), false, host);
+    assert.equal(kpsl('isSafeForMatching', host), false, host);
+  }
+});
+
+await test('PSL: known registrable domains and deep subdomains are safe', async () => {
+  for (const host of ['google.com', 'example.co.uk', 'foo.github.io', 'login.herokuapp.com', 'a.b.example.com']) {
+    const result = kpsl('classify', host);
+    assert.equal(result.type, 'registrable', host);
+    assert.equal(kpsl('isKnownRegistrable', host), true, host);
+    assert.equal(kpsl('isSafeForMatching', host), true, host);
+  }
+  assert.equal(kpsl('classify', 'a.b.example.com').registrableDomain, 'example.com');
+});
+
+await test('PSL: wildcard and exception rules follow the pinned algorithm', async () => {
+  assert.equal(kpsl('classify', 'a.ck').type, 'public-suffix');
+  assert.equal(kpsl('classify', 'www.ck').type, 'registrable');
+  assert.equal(kpsl('classify', 'a.www.ck').registrableDomain, 'www.ck');
+});
+
+await test('PSL: IDN input is normalized deterministically', async () => {
+  const result = kpsl('classify', '食狮.公司.cn');
+  assert.equal(result.type, 'registrable');
+  assert.equal(result.host, 'xn--85x722f.xn--55qx5d.cn');
+  assert.equal(result.publicSuffix, 'xn--55qx5d.cn');
+});
+
+await test('PSL: IP and localhost are exact-only safe classifications', async () => {
+  for (const host of ['192.168.1.1', '[::1]', 'LOCALHOST']) {
+    const result = kpsl('classify', host);
+    assert.ok(result.type === 'ip' || result.type === 'localhost');
+    assert.equal(result.exactOnly, true);
+    assert.equal(kpsl('isSafeForMatching', host), true);
+  }
+  assert.equal(kpsl('classify', 'foo.localhost').type, 'unknown-suffix');
+});
+
+await test('PSL: URL-like, malformed, and unknown inputs fail closed', async () => {
+  for (const host of ['foo.internal', 'example.com:443', 'https://example.com', 'user@example.com/path', '[::1', '999.1.1.1', '']) {
+    const result = kpsl('classify', host);
+    assert.ok(['unknown-suffix', 'invalid'].includes(result.type), `${host}: ${result.type}`);
+    assert.equal(kpsl('isSafeForMatching', host), false, host);
+  }
+});
+
+await test('PSL: missing generated data produces unavailable state with no safe result', async () => {
+  const isolated = createContext({URL, Set, Object, Array, String, Number, RegExp, Math, JSON, console});
+  runInContext(readFileSync(resolve(shared, 'public-suffix.js'), 'utf8'), isolated);
+  assert.equal(runInContext('KeygrainPublicSuffix.status()', isolated), 'unavailable');
+  assert.equal(runInContext("KeygrainPublicSuffix.classify('google.com').type", isolated), 'unavailable');
+  assert.equal(runInContext("KeygrainPublicSuffix.isSafeForMatching('google.com')", isolated), false);
+});
+
+await test('PSL loading: every browser/page consumer loads data before helper and consumers', async () => {
+  const chrome = readFileSync(resolve(root, 'extension/chrome/background.js'), 'utf8');
+  const firefox = readFileSync(resolve(root, 'extension/firefox/background.js'), 'utf8');
+  const manifest = JSON.parse(readFileSync(resolve(root, 'extension/firefox/manifest.json'), 'utf8'));
+  const migration = readFileSync(resolve(shared, 'migrate.html'), 'utf8');
+  const ordered = (text, before, after) => {
+    assert.ok(text.indexOf(before) >= 0, `missing ${before}`);
+    assert.ok(text.indexOf(after) > text.indexOf(before), `${before} must precede ${after}`);
+  };
+  ordered(chrome, 'lib/public_suffix_list.js', 'public-suffix.js');
+  ordered(chrome, 'public-suffix.js', 'autofill.js');
+  ordered(migration, 'src="lib/public_suffix_list.js"', 'src="public-suffix.js"');
+  ordered(migration, 'src="public-suffix.js"', 'src="migrate.js"');
+  const scripts = manifest.background.scripts;
+  assert.ok(scripts.indexOf('lib/public_suffix_list.js') < scripts.indexOf('public-suffix.js'));
+  assert.ok(scripts.indexOf('public-suffix.js') < scripts.indexOf('autofill.js'));
+  assert.ok(scripts.indexOf('autofill.js') < scripts.indexOf('background.js'));
+  const chromeInjected = [...chrome.matchAll(/files: \[([^\]]+)\]/g)].map(m => m[1]).filter(s => s.includes('autofill.js'));
+  assert.equal(chromeInjected.length, 3, 'credentials, OTP, and focused-OTP Chrome paths must be covered');
+  for (const list of chromeInjected) {
+    ordered(list, 'lib/public_suffix_list.js', 'public-suffix.js');
+    ordered(list, 'public-suffix.js', 'autofill.js');
+  }
+  const count = (text, needle) => text.split(needle).length - 1;
+  assert.equal(count(firefox, 'file: "lib/public_suffix_list.js"'), 3);
+  assert.equal(count(firefox, 'file: "public-suffix.js"'), 3);
+  assert.equal(count(firefox, 'file: "autofill.js"'), 3);
+  for (const match of firefox.matchAll(/file: "autofill\.js"/g)) {
+    const prefix = firefox.slice(Math.max(0, match.index - 260), match.index);
+    assert.ok(prefix.includes('file: "lib/public_suffix_list.js"') && prefix.includes('file: "public-suffix.js"'));
+  }
+  const inlineStart = chrome.indexOf('const INLINE_JS');
+  assert.ok(inlineStart >= 0 && chrome.indexOf('lib/public_suffix_list.js', inlineStart) < chrome.indexOf('autofill.js', inlineStart));
+  const ffInlineStart = firefox.indexOf('const INLINE_JS');
+  assert.ok(ffInlineStart >= 0 && firefox.indexOf('lib/public_suffix_list.js', ffInlineStart) < firefox.indexOf('autofill.js', ffInlineStart));
+  assert.equal(readFileSync(resolve(shared, 'public-suffix.js'), 'utf8').includes('fetch('), false);
+});
+
+await test('background matcher wiring: both browsers gate every unsafe path and preserve exact/suffix policy', async () => {
+  for (const file of ['chrome/background.js', 'firefox/background.js']) {
+    const source = readFileSync(resolve(root, 'extension', file), 'utf8');
+    assert.ok(source.includes('function serviceSite(service)'));
+    assert.ok(source.includes('isSafeMatchingSite'));
+    assert.equal(source.includes('(s.site || s.name).toLowerCase()'), false);
+    for (const marker of ['updateBadge', 'autofillForTab', 'autofillOtpForTab', 'injectIntoOpenSavedTabs', 'fillInline', 'fillInlineOtp']) {
+      assert.ok(source.includes(marker), `${file}: ${marker}`);
+    }
+    assert.ok(source.includes('registerInline'));
+  }
+  const domainHarness = (file) => {
+    const isolated = createContext({URL, Set, Object, Array, String, Number, RegExp, Math, JSON, console});
+    for (const dependency of ['lib/public_suffix_list.js', 'public-suffix.js', 'autofill.js']) {
+      runInContext(readFileSync(resolve(shared, dependency), 'utf8'), isolated);
+    }
+    const source = readFileSync(resolve(root, 'extension', file), 'utf8');
+    const start = source.indexOf('// Domain matching');
+    const end = source.indexOf('async function hmacSHA256', start);
+    runInContext(source.slice(start, end), isolated);
+    return isolated;
+  };
+  for (const file of ['chrome/background.js', 'firefox/background.js']) {
+    const isolated = domainHarness(file);
+    for (const expression of [
+      "domainMatches('example.com', 'example.com')",
+      "domainMatches('example.com', 'app.example.com')",
+      "domainMatches('foo.github.io', 'foo.github.io')",
+      "domainMatches('localhost', 'localhost')",
+      "domainMatches('192.168.1.1', '192.168.1.1')",
+    ]) assert.equal(runInContext(expression, isolated), true, `${file}: ${expression}`);
+    for (const expression of [
+      "domainMatches('github.io', 'github.io')",
+      "domainMatches('github.io', 'tenant.github.io')",
+      "domainMatches('foo.github.io', 'other.github.io')",
+      "domainMatches('localhost', 'foo.localhost')",
+      "domainMatches('192.168.1.1', 'x.192.168.1.1')",
+      "domainMatches('foo.internal', 'foo.internal')",
+      "domainMatches({hostile: true}, 'example.com')",
+    ]) assert.equal(runInContext(expression, isolated), false, `${file}: ${expression}`);
+  }
+});
 
 // --- Load test vectors ---
 const totpVectors = JSON.parse(readFileSync(resolve(root, 'totp-vectors.json'), 'utf8'));
@@ -1095,6 +1262,41 @@ await test('filterMostSpecific + selectServiceForFill: genuine tie -> {decision:
   assert.equal(r.candidates.length, 2);
 });
 
+await test('filterMostSpecific: public suffix records are contained while registrable tenants remain scoped', async () => {
+  const out = ka('filterMostSpecific', [
+    {site: 'github.io', email: 'bare@x.com'},
+    {site: 'foo.github.io', email: 'tenant@x.com'},
+  ], 'foo.github.io');
+  assert.equal(JSON.stringify(Array.from(out, s => s.email)), JSON.stringify(['tenant@x.com']));
+  assert.equal(JSON.stringify(ka('filterMostSpecific', [{site: 'github.io'}], 'github.io')), '[]');
+});
+await test('filterMostSpecific: IP and localhost are exact-only', async () => {
+  assert.equal(ka('filterMostSpecific', [{site: 'localhost'}], 'localhost').length, 1);
+  assert.equal(ka('filterMostSpecific', [{site: 'localhost'}], 'foo.localhost').length, 0);
+  assert.equal(ka('filterMostSpecific', [{site: '192.168.1.1'}], '192.168.1.1').length, 1);
+  assert.equal(ka('filterMostSpecific', [{site: '192.168.1.1'}], 'x.192.168.1.1').length, 0);
+});
+await test('filterMostSpecific: unknown and unavailable PSL suppress matching', async () => {
+  assert.equal(ka('filterMostSpecific', [{site: 'foo.internal'}], 'foo.internal').length, 0);
+  const isolated = createContext({URL, Set, Object, Array, String, Number, RegExp, Math, JSON, console});
+  runInContext(readFileSync(resolve(shared, 'autofill.js'), 'utf8'), isolated);
+  runInContext(readFileSync(resolve(shared, 'inline-autofill.js'), 'utf8'), isolated);
+  assert.equal(runInContext("KeygrainAutofill.filterMostSpecific([{site: 'example.com'}], 'example.com').length", isolated), 0);
+  assert.equal(runInContext("JSON.stringify(KeygrainInline.computeMatchPatterns([{site: 'example.com'}]))", isolated), '[]');
+  const malformed = createContext({URL, Set, Object, Array, String, Number, RegExp, Math, JSON, console,
+    KeygrainPublicSuffix: {classify: () => ({type: 'registrable', host: 'example.com'})}});
+  runInContext(readFileSync(resolve(shared, 'autofill.js'), 'utf8'), malformed);
+  runInContext(readFileSync(resolve(shared, 'inline-autofill.js'), 'utf8'), malformed);
+  assert.doesNotThrow(() => runInContext("KeygrainAutofill.filterMostSpecific([{site: 'example.com'}], 'example.com')", malformed));
+  assert.equal(runInContext("JSON.stringify(KeygrainInline.computeMatchPatterns([{site: 'example.com'}]))", malformed), '[]');
+  const throwing = createContext({URL, Set, Object, Array, String, Number, RegExp, Math, JSON, console,
+    KeygrainPublicSuffix: {classify: () => ({type: 'registrable', host: 'example.com'}), isSafeForMatching: () => { throw new Error('bad PSL'); }}});
+  runInContext(readFileSync(resolve(shared, 'autofill.js'), 'utf8'), throwing);
+  runInContext(readFileSync(resolve(shared, 'inline-autofill.js'), 'utf8'), throwing);
+  assert.doesNotThrow(() => runInContext("KeygrainAutofill.filterMostSpecific([{site: 'example.com'}], 'example.com')", throwing));
+  assert.equal(runInContext("JSON.stringify(KeygrainInline.computeMatchPatterns([{site: 'example.com'}]))", throwing), '[]');
+});
+
 // --- isPasswordDescriptor (3) ---
 await test('isPasswordDescriptor: type=password -> true', async () => {
   assert.equal(ka('isPasswordDescriptor', { type: 'password' }), true);
@@ -1473,9 +1675,9 @@ await test('computeMatchPatterns: multi-label -> exact + subdomain wildcard', as
   const out = ki('computeMatchPatterns', [{ id: '1', site: 'example.com' }]);
   assert.deepEqual(out, ['*://*.example.com/*', '*://example.com/*']);
 });
-await test('computeMatchPatterns: bare TLD com -> exact only (no wildcard)', async () => {
+await test('computeMatchPatterns: bare public suffix com -> dropped', async () => {
   const out = ki('computeMatchPatterns', [{ id: '1', site: 'com' }]);
-  assert.deepEqual(out, ['*://com/*']);
+  assert.deepEqual(out, []);
 });
 await test('computeMatchPatterns: single-label localhost -> exact only', async () => {
   const out = ki('computeMatchPatterns', [{ id: '1', site: 'localhost' }]);
@@ -1485,9 +1687,9 @@ await test('computeMatchPatterns: IPv4 -> exact only (no wildcard)', async () =>
   const out = ki('computeMatchPatterns', [{ id: '1', site: '192.168.1.1' }]);
   assert.deepEqual(out, ['*://192.168.1.1/*']);
 });
-await test('computeMatchPatterns: IPv6 [::1] -> dropped (no pattern, no throw)', async () => {
+await test('computeMatchPatterns: IPv6 [::1] -> exact only (no wildcard)', async () => {
   const out = ki('computeMatchPatterns', [{ id: '1', site: '[::1]' }]);
-  assert.deepEqual(out, []);
+  assert.deepEqual(out, ['*://[::1]/*']);
 });
 await test('computeMatchPatterns: empty/garbage site -> dropped', async () => {
   const out = ki('computeMatchPatterns', [
@@ -2107,6 +2309,152 @@ await test('resolveSiteFields: extractDomain === resolveSiteFields(...).site for
   for (const [url, name] of inputs) {
     assert.equal(km('extractDomain', url, name), km('resolveSiteFields', url, name).site, `mismatch for [${url}, ${name}]`);
   }
+});
+
+await test('resolveSiteFields: PSL strips only a positively registrable legacy residual', async () => {
+  const r = km('resolveSiteFields', 'accounts.google.com', 'Google');
+  assert.equal(r.site, 'google.com');
+  assert.equal(r.legacySite, 'google.com');
+  assert.equal(r.safeSite, 'google.com');
+  assert.equal(r.source, 'url');
+  assert.equal(r.sourceText, 'accounts.google.com');
+  assert.equal(r.decision, 'stripped');
+  assert.equal(r.classification, 'registrable');
+  assert.equal('oldPassword' in r, false);
+});
+await test('resolveSiteFields: known public suffix residual retains complete host', async () => {
+  for (const [url, residual] of [['accounts.github.io', 'github.io'], ['login.herokuapp.com', 'herokuapp.com']]) {
+    const r = km('resolveSiteFields', url, 'Imported');
+    assert.equal(r.site, url); assert.equal(r.legacySite, residual); assert.equal(r.safeSite, url);
+    assert.equal(r.decision, 'prefix-retained-public-suffix');
+    assert.equal(r.sourceText, url);
+  }
+});
+await test('resolveSiteFields: unknown residual and no-prefix host are conservative', async () => {
+  const unknown = km('resolveSiteFields', 'accounts.foo.internal', 'Internal');
+  assert.equal(unknown.site, 'accounts.foo.internal');
+  assert.equal(unknown.legacySite, 'foo.internal');
+  assert.equal(unknown.decision, 'prefix-retained-unknown');
+  assert.equal(unknown.classification, 'unknown-suffix');
+  const ordinary = km('resolveSiteFields', 'sub.google.com', 'Google');
+  assert.equal(ordinary.site, 'sub.google.com');
+  assert.equal(ordinary.legacySite, 'sub.google.com');
+  assert.equal(ordinary.decision, 'unmodified');
+});
+await test('resolveSiteFields: IP, localhost, title and empty provenance remain explicit', async () => {
+  const ip = km('resolveSiteFields', '192.168.1.1', 'Router');
+  assert.equal(ip.site, '192.168.1.1'); assert.equal(ip.decision, 'unmodified'); assert.equal(ip.classification, 'ip');
+  const local = km('resolveSiteFields', 'localhost', 'Local');
+  assert.equal(local.site, 'localhost'); assert.equal(local.decision, 'unmodified');
+  const title = km('resolveSiteFields', 'not a url', 'My Bank');
+  assert.equal(title.sourceText, 'My Bank'); assert.equal(title.decision, 'title-fallback');
+  const empty = km('resolveSiteFields', '', '');
+  assert.equal(empty.sourceText, ''); assert.equal(empty.decision, 'empty');
+});
+await test('resolveSiteFields: unavailable PSL retains prefix residual host', async () => {
+  const isolated = createContext({URL, Object, Array, String, RegExp, Set, Map, JSON, console,
+    KeygrainPublicSuffix: {classify: () => ({type: 'unavailable'})}});
+  runInContext(readFileSync(resolve(shared, 'migrate.js'), 'utf8'), isolated);
+  const r = runInContext("KeygrainMigrate.resolveSiteFields('accounts.google.com', 'Google')", isolated);
+  assert.equal(r.site, 'accounts.google.com');
+  assert.equal(r.decision, 'prefix-retained-unknown');
+  assert.equal(r.classification, 'unavailable');
+});
+
+const CORRECTION_SERVICES = [
+  {id: 'legacy', name: 'GitHub', site: 'github.io', email: 'a@b.com', length: 20, symbols: '!@', counter: 1, migrating: true, synced: true, updated_at: 100, totp: {mode: 'stored'}, ssh: {publicKey: 'x'}},
+  {id: 'other', name: 'Other', site: 'other.com', email: 'o@b.com', length: 24, symbols: '#$', counter: 2, updated_at: 200}
+];
+const CORRECTION_ROW = {legacySite: 'github.io', safeSite: 'accounts.github.io', source: 'url', sourceText: 'https://accounts.github.io/login', email: 'A@B.COM', oldPassword: 'DO NOT COPY'};
+
+await test('correction model: source-backed legacy match creates a warning review without oldPassword', async () => {
+  const result = kmj('analyzeCorrectionRows', [CORRECTION_ROW], CORRECTION_SERVICES);
+  assert.equal(result.corrections.length, 1);
+  assert.deepEqual(Object.keys(result.corrections[0]).sort(), ['currentSite', 'email', 'passwordChangeWarning', 'proposedSite', 'serviceId', 'sourceText', 'sourceTitle', 'sourceUrl'].sort());
+  assert.equal(result.corrections[0].serviceId, 'legacy');
+  assert.equal(result.corrections[0].currentSite, 'github.io');
+  assert.equal(result.corrections[0].proposedSite, 'accounts.github.io');
+  assert.equal(result.corrections[0].sourceUrl, CORRECTION_ROW.sourceText);
+  assert.equal(JSON.stringify(result).includes('DO NOT COPY'), false);
+});
+await test('correction model: corrected safe-site match is idempotent and no duplicate is proposed', async () => {
+  const corrected = {...CORRECTION_SERVICES[0], site: 'accounts.github.io'};
+  const result = kmj('analyzeCorrectionRows', [CORRECTION_ROW], [corrected]);
+  assert.equal(result.corrections.length, 0); assert.equal(result.conflicts.length, 0); assert.equal(result.newCandidates.length, 0);
+});
+await test('correction model: ambiguous, both-match, and multiple-source conflicts are explicit', async () => {
+  const duplicate = {...CORRECTION_SERVICES[0], id: 'duplicate'};
+  const ambiguous = kmj('analyzeCorrectionRows', [CORRECTION_ROW], [...CORRECTION_SERVICES, duplicate]);
+  assert.equal(ambiguous.corrections.length, 0); assert.equal(ambiguous.conflicts[0].kind, 'ambiguous-match');
+  const both = kmj('analyzeCorrectionRows', [CORRECTION_ROW], [...CORRECTION_SERVICES, {...CORRECTION_SERVICES[0], id: 'safe', site: 'accounts.github.io'}]);
+  assert.equal(both.conflicts[0].kind, 'ambiguous-match');
+  const multiple = kmj('analyzeCorrectionRows', [CORRECTION_ROW, {...CORRECTION_ROW, sourceText: 'https://accounts.github.io/other'}], CORRECTION_SERVICES);
+  assert.equal(multiple.corrections.length, 0); assert.equal(multiple.conflicts[0].kind, 'multiple-proposals');
+});
+await test('correction model: source-less rows and missing matches are advisory/new only', async () => {
+  const advisory = kmj('analyzeCorrectionRows', [{...CORRECTION_ROW, source: 'title', sourceText: 'GitHub'}], CORRECTION_SERVICES);
+  assert.equal(advisory.corrections.length, 0); assert.equal(advisory.advisories.length, 1);
+  const newCandidate = kmj('analyzeCorrectionRows', [{...CORRECTION_ROW, email: 'new@b.com'}], CORRECTION_SERVICES);
+  assert.equal(newCandidate.corrections.length, 0); assert.equal(newCandidate.newCandidates.length, 1);
+  assert.equal(JSON.stringify(newCandidate).includes('DO NOT COPY'), false);
+});
+await test('correction model: stored public suffix produces advisory without invented replacement', async () => {
+  const advisories = kmj('findPublicSuffixAdvisories', CORRECTION_SERVICES);
+  assert.equal(advisories.length, 1); assert.equal(advisories[0].serviceId, 'legacy');
+  assert.equal('proposedSite' in advisories[0], false);
+});
+await test('correction transition: cancel/stale/delete are no-op and confirmation changes only site+timestamp', async () => {
+  const cancelled = kmj('applyCorrection', CORRECTION_SERVICES, {serviceId: 'legacy', currentSite: 'github.io', proposedSite: 'accounts.github.io', email: 'a@b.com'}, {confirmed: false, timestamp: 1000});
+  assert.equal(cancelled.ok, false); assert.equal(cancelled.reason, 'cancelled'); assert.deepEqual(cancelled.services, CORRECTION_SERVICES);
+  const stale = kmj('applyCorrection', [...CORRECTION_SERVICES.map(s => ({...s})),], {serviceId: 'legacy', currentSite: 'old.io', proposedSite: 'accounts.github.io', email: 'a@b.com'}, {confirmed: true, timestamp: 1000});
+  assert.equal(stale.ok, false); assert.equal(stale.reason, 'stale-target');
+  const deleted = kmj('applyCorrection', CORRECTION_SERVICES, {serviceId: 'missing', currentSite: 'github.io', proposedSite: 'accounts.github.io', email: 'a@b.com'}, {confirmed: true, timestamp: 1000});
+  assert.equal(deleted.ok, false); assert.equal(deleted.reason, 'stale-target');
+  const success = kmj('applyCorrection', CORRECTION_SERVICES, {serviceId: 'legacy', currentSite: 'github.io', proposedSite: 'accounts.github.io', email: 'a@b.com'}, {confirmed: true, timestamp: 150});
+  assert.equal(success.ok, true); assert.equal(success.services[0].site, 'accounts.github.io'); assert.equal(success.services[0].updated_at, 201);
+  const before = {...CORRECTION_SERVICES[0]}; delete before.site; delete before.updated_at;
+  const after = {...success.services[0]}; delete after.site; delete after.updated_at;
+  assert.deepEqual(after, before); assert.deepEqual(success.services[1], CORRECTION_SERVICES[1]);
+});
+
+await test('correction UI/integration: review markup and serialized fresh-write guards are present', async () => {
+  const html = readFileSync(resolve(shared, 'migrate.html'), 'utf8');
+  const css = readFileSync(resolve(shared, 'migrate.css'), 'utf8');
+  const source = readFileSync(resolve(shared, 'migrate.js'), 'utf8');
+  for (const id of ['stored-advisories', 'stored-advisory-list', 'correction-review', 'correction-list', 'confirm-corrections-btn', 'correction-confirm-status']) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.includes('Keep current site') === false, 'review choices are created as inert DOM text, not raw HTML');
+  assert.ok(css.includes('.correction-review') && css.includes('.correction-item'));
+  const reviewStart = source.indexOf('function renderCorrectionReview');
+  const reviewEnd = source.indexOf('function updateCorrectionControls', reviewStart);
+  assert.ok(reviewStart >= 0 && reviewEnd > reviewStart);
+  const reviewSource = source.slice(reviewStart, reviewEnd);
+  assert.ok(reviewSource.includes('textContent'));
+  assert.equal(reviewSource.includes('innerHTML'), false);
+  assert.equal(reviewSource.includes('oldPassword'), false);
+  assert.ok(source.indexOf('const plan = planCorrectionCommit') >= 0);
+  assert.ok(source.indexOf('const plan = planCorrectionCommit') < source.lastIndexOf('await writeBlob(blob)'));
+  const advisoryStart = source.indexOf('function renderStoredAdvisories');
+  const advisoryEnd = source.indexOf('// === Init ===', advisoryStart);
+  const advisorySource = source.slice(advisoryStart, advisoryEnd);
+  assert.ok(advisorySource.includes('findPublicSuffixAdvisories') && advisorySource.includes('textContent'));
+  assert.ok(advisorySource.includes('fileInput.click()') && advisorySource.includes('Keep current site'));
+  assert.equal(advisorySource.includes('innerHTML'), false);
+  assert.ok(source.indexOf('renderStoredAdvisories(allServices)') >= 0);
+  assert.ok(source.includes('if (!changed)'));
+});
+
+await test('correction commit planner: preview conflicts/stale targets abort before any writeable plan', async () => {
+  const conflictRows = [CORRECTION_ROW, {...CORRECTION_ROW, safeSite: 'login.github.io', sourceText: 'https://login.github.io'}];
+  const preview = kmj('analyzeCorrectionRows', conflictRows, CORRECTION_SERVICES);
+  assert.equal(preview.conflicts.length, 1);
+  const conflictPlan = kmj('planCorrectionCommit', CORRECTION_SERVICES, conflictRows, preview, {}, true, 1000);
+  assert.equal(conflictPlan.ok, false); assert.equal(conflictPlan.reason, 'conflict');
+  assert.deepEqual(conflictPlan.services, CORRECTION_SERVICES);
+  const singlePreview = kmj('analyzeCorrectionRows', [CORRECTION_ROW], CORRECTION_SERVICES);
+  const changedTarget = [{...CORRECTION_SERVICES[0], site: 'changed.io'}, CORRECTION_SERVICES[1]];
+  const stalePlan = kmj('planCorrectionCommit', changedTarget, [CORRECTION_ROW], singlePreview, {'legacy\\0https://accounts.github.io/login': 'proposed'}, true, 1000);
+  assert.equal(stalePlan.ok, false); assert.equal(stalePlan.reason, 'stale-target');
+  assert.deepEqual(stalePlan.services, changedTarget);
 });
 
 // ============================================================

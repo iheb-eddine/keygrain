@@ -1,5 +1,5 @@
 // background.js — Chrome MV3 service worker
-importScripts("lib/hash-wasm-argon2.js", "keygrain.js", "totp.js", "sync.js", "autofill.js", "inline-autofill.js");
+importScripts("lib/public_suffix_list.js", "public-suffix.js", "lib/hash-wasm-argon2.js", "keygrain.js", "totp.js", "sync.js", "autofill.js", "inline-autofill.js");
 
 const DEFAULT_LOCK_MINUTES = 15;
 
@@ -8,9 +8,18 @@ async function getLockMinutes() {
   return (data.settings && data.settings.autoLockMinutes) || DEFAULT_LOCK_MINUTES;
 }
 
-// === Badge helpers ===
+// Domain matching is a containment gate, not a derivation normalizer.
+function serviceSite(service) {
+  const raw = service && (service.site || service.name);
+  return typeof raw === "string" ? raw.toLowerCase() : "";
+}
+
 function domainMatches(site, hostname) {
-  if (!site || !hostname) return false;
+  if (!site || !hostname || !globalThis.KeygrainAutofill
+    || typeof globalThis.KeygrainAutofill.isSafeMatchingSite !== "function") return false;
+  try {
+    if (!globalThis.KeygrainAutofill.isSafeMatchingSite(site, hostname)) return false;
+  } catch (_) { return false; }
   return site === hostname || hostname.endsWith("." + site);
 }
 
@@ -55,7 +64,7 @@ async function updateBadge(tabId) {
     const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
     const services = JSON.parse(new TextDecoder().decode(decrypted)).services || [];
     const count = services.filter(s => {
-      const site = (s.site || s.name).toLowerCase();
+      const site = serviceSite(s);
       return domainMatches(site, host);
     }).length;
     chrome.action.setBadgeText({text: count > 0 ? String(count) : "", tabId});
@@ -315,7 +324,7 @@ async function autofillForTab(tab, fillAction) {
   if (matches.length === 0) { openPopupSafe(); return; }
 
   try {
-    await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["autofill.js", "content.js"]});
+    await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["lib/public_suffix_list.js", "public-suffix.js", "autofill.js", "content.js"]});
   } catch { openPopupSafe(); return; }
 
   const loopStart = Date.now();
@@ -377,7 +386,7 @@ async function autofillOtpForTab(tab) {
   if (matches.length === 0) { openPopupSafe(); return; }
 
   try {
-    await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["autofill.js", "content.js"]});
+    await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["lib/public_suffix_list.js", "public-suffix.js", "autofill.js", "content.js"]});
   } catch { openPopupSafe(); return; }
 
   const loopStart = Date.now();
@@ -415,7 +424,7 @@ async function focusedFieldIsOtp(tab) {
   const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
   if (!secret || !email) return false;
   if (!tab?.url) return false;
-  try { await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["autofill.js", "content.js"]}); }
+  try { await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["lib/public_suffix_list.js", "public-suffix.js", "autofill.js", "content.js"]}); }
   catch { return false; }
   const ctx = await afGetFillContext(tab.id);
   return !!(ctx && ctx.focusedIsOtp);
@@ -451,7 +460,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // Increment B. See designs/extension-native-infield-autofill.md.
 // ===================================================================
 const INLINE_SCRIPT_ID = "keygrain-inline";
-const INLINE_JS = ["autofill.js", "inline-autofill.js", "inline-autofill-ui.js", "content.js"];
+const INLINE_JS = ["lib/public_suffix_list.js", "public-suffix.js", "autofill.js", "inline-autofill.js", "inline-autofill-ui.js", "content.js"];
 
 async function inlineEnabled() {
   const data = await chrome.storage.local.get("inlineAutofillEnabled");
@@ -579,7 +588,7 @@ async function injectIntoOpenSavedTabs() {
       host = u.hostname.replace(/^www\./, "").toLowerCase();
     } catch { continue; }
     if (!host) continue;
-    if (!services.some(s => domainMatches((s.site || s.name).toLowerCase(), host))) continue;
+    if (!services.some(s => domainMatches(serviceSite(s), host))) continue;
     try {
       await chrome.scripting.executeScript({target: {tabId: tab.id}, files: INLINE_JS});
     } catch {}
@@ -676,7 +685,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!secret || !email) return;
         const services = await decryptServices();
         if (!services) return;
-        const svc = services.find(s => s.id === msg.token && domainMatches((s.site || s.name).toLowerCase(), host));
+        const svc = services.find(s => s.id === msg.token && domainMatches(serviceSite(s), host));
         if (!svc) return;
         const password = await derivePassword(secret, svc.email, {site: svc.site || svc.name, length: svc.length || 20, symbols: svc.symbols || "!@#$%&*-_=+?", counter: svc.counter || 1});
         chrome.tabs.sendMessage(sender.tab.id, {action: "fill", password, email: svc.email}).catch(() => {});
@@ -696,7 +705,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!services) return;
         // Server-authoritative: re-verify id===token && domainMatches && s.totp; the seed
         // never crosses — only the derived code goes back via {action:"fillOtp"}.
-        const svc = services.find(s => s.id === msg.token && domainMatches((s.site || s.name).toLowerCase(), host) && s.totp);
+        const svc = services.find(s => s.id === msg.token && domainMatches(serviceSite(s), host) && s.totp);
         if (!svc) return;
         const {code} = await getTOTPCode(svc, secret);
         chrome.tabs.sendMessage(sender.tab.id, {action: "fillOtp", code}).catch(() => {});

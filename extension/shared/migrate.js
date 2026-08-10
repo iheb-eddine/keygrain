@@ -115,15 +115,43 @@
     return /^[\d.]+$/.test(host) || host.includes(":");
   }
 
-  // Resolve both the derived site and its provenance from a CSV export row.
-  // `source` records WHERE the site came from so the preview can show the user
-  // the original address next to the guess (see migrate wizard step 2):
-  //   "url"   -> a host was parsed from the url field; site is the processed host
-  //   "title" -> no host; site is the entry title, lowercased/trimmed
-  //   "empty" -> no host and no title; site is ""
-  // This is pure code-motion of the former extractDomain body (same statement
-  // order: url parse -> www strip -> isIP -> STRIP_PREFIXES) so extractDomain's
-  // output is byte-identical to before.
+  // Compute the pre-KG-03 candidate without consulting the PSL. Keeping this
+  // calculation separate makes the migration change auditable: the PSL may
+  // veto a legacy strip, but it can never introduce a new eTLD+1 heuristic.
+  function legacyCandidate(host) {
+    for (const prefix of STRIP_PREFIXES) {
+      if (!host.startsWith(prefix)) continue;
+      const rest = host.slice(prefix.length);
+      const parts = rest.split(".");
+      const isTwoPartDomain = parts.length === 2;
+      const isThreePartWithKnownTLD = parts.length === 3 && MULTI_PART_TLDS.includes(parts.slice(1).join("."));
+      return {
+        legacySite: isTwoPartDomain || isThreePartWithKnownTLD ? rest : host,
+        prefixMatched: true,
+        residual: rest,
+      };
+    }
+    return {legacySite: host, prefixMatched: false, residual: ""};
+  }
+
+  function safeCandidate(host) {
+    const legacy = legacyCandidate(host);
+    if (!legacy.prefixMatched || legacy.legacySite === host) {
+      return {safeSite: host, decision: "unmodified", classification: "unmodified"};
+    }
+    const result = KeygrainPublicSuffix.classify(legacy.residual);
+    if (result.type === "registrable") {
+      return {safeSite: legacy.residual, decision: "stripped", classification: result.type};
+    }
+    if (result.type === "public-suffix") {
+      return {safeSite: host, decision: "prefix-retained-public-suffix", classification: result.type};
+    }
+    return {safeSite: host, decision: "prefix-retained-unknown", classification: result.type};
+  }
+
+  // Resolve the candidate and its transient source evidence. The `site` field
+  // remains the compatibility projection consumed by the existing importer;
+  // it is now the PSL-safe candidate, never a stored-record rewrite.
   function resolveSiteFields(url, name) {
     let host = "";
     if (url) {
@@ -139,23 +167,25 @@
       }
     }
     if (!host) {
-      return name ? { site: name.toLowerCase().trim(), source: "title" } : { site: "", source: "empty" };
+      const site = name ? name.toLowerCase().trim() : "";
+      return site
+        ? {site, legacySite: site, safeSite: site, source: "title", sourceText: name, decision: "title-fallback", classification: "title"}
+        : {site: "", legacySite: "", safeSite: "", source: "empty", sourceText: "", decision: "empty", classification: "empty"};
     }
     host = host.replace(/^www\./, "");
-    if (isIP(host)) return { site: host, source: "url" };
-    for (const prefix of STRIP_PREFIXES) {
-      if (host.startsWith(prefix)) {
-        const rest = host.slice(prefix.length);
-        const parts = rest.split(".");
-        const isTwoPartDomain = parts.length === 2;
-        const isThreePartWithKnownTLD = parts.length === 3 && MULTI_PART_TLDS.includes(parts.slice(1).join("."));
-        if (isTwoPartDomain || isThreePartWithKnownTLD) {
-          host = rest;
-        }
-        break;
-      }
+    if (isIP(host)) {
+      return {site: host, legacySite: host, safeSite: host, source: "url", sourceText: url, decision: "unmodified", classification: "ip"};
     }
-    return { site: host, source: "url" };
+    const resolved = safeCandidate(host);
+    return {
+      site: resolved.safeSite,
+      legacySite: legacyCandidate(host).legacySite,
+      safeSite: resolved.safeSite,
+      source: "url",
+      sourceText: url,
+      decision: resolved.decision,
+      classification: resolved.classification,
+    };
   }
 
   function extractDomain(url, name) {
@@ -174,11 +204,181 @@
     });
   }
 
+  function correctionSiteKey(value) {
+    if (typeof value !== "string") return "";
+    try { return normalizeSite(value); } catch (_) { return ""; }
+  }
+
+  function correctionEmailKey(value) {
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+  }
+
+  function serviceMatchesCorrection(service, site, email) {
+    return !!service && correctionSiteKey(service.site) !== ""
+      && correctionSiteKey(service.site) === correctionSiteKey(site)
+      && correctionEmailKey(service.email) === correctionEmailKey(email);
+  }
+
+  function correctionRowView(row, safeSite, legacySite) {
+    return {
+      serviceName: safeSite,
+      legacySite,
+      safeSite,
+      email: correctionEmailKey(row.email),
+      source: row.source || "",
+      sourceText: typeof row.sourceText === "string" ? row.sourceText : "",
+      decision: row.decision || "",
+      classification: row.classification || "",
+    };
+  }
+
+  function correctionReview(row, service, safeSite) {
+    const sourceText = typeof row.sourceText === "string" ? row.sourceText : "";
+    return {
+      serviceId: service.id,
+      currentSite: service.site,
+      proposedSite: safeSite,
+      email: service.email,
+      sourceUrl: row.source === "url" ? sourceText : "",
+      sourceTitle: row.source === "title" ? sourceText : "",
+      sourceText,
+      passwordChangeWarning: "The proposed site generates a different password. Confirm the source address before changing it.",
+    };
+  }
+
+  // Analyze a re-import against the current service list. This is deliberately
+  // pure: it proposes only a source-backed correction and never writes/guesses.
+  function analyzeCorrectionRows(rows, services) {
+    const result = {corrections: [], conflicts: [], advisories: [], newCandidates: []};
+    const pending = new Map();
+    const list = Array.isArray(services) ? services : [];
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const legacySite = typeof row.legacySite === "string" ? row.legacySite : (row.serviceName || "");
+      const safeSite = typeof row.safeSite === "string" ? row.safeSite : (row.serviceName || "");
+      const email = correctionEmailKey(row.email);
+      if (row.source !== "url" || !legacySite || !safeSite || !email) {
+        result.advisories.push({kind: "source-required", sourceText: typeof row.sourceText === "string" ? row.sourceText : "", email});
+        continue;
+      }
+      const legacyKey = correctionSiteKey(legacySite);
+      const safeKey = correctionSiteKey(safeSite);
+      if (!legacyKey || !safeKey) {
+        result.advisories.push({kind: "unverified-source", sourceText: row.sourceText || "", email});
+        continue;
+      }
+      if (legacyKey === safeKey) {
+        result.newCandidates.push(correctionRowView(row, safeSite, legacySite));
+        continue;
+      }
+      const safeMatches = list.filter(service => serviceMatchesCorrection(service, safeSite, email));
+      const legacyMatches = list.filter(service => serviceMatchesCorrection(service, legacySite, email));
+      if (safeMatches.length > 1 || legacyMatches.length > 1 || (safeMatches.length && legacyMatches.length)) {
+        result.conflicts.push({kind: "ambiguous-match", sourceText: row.sourceText || "", email, currentSite: legacySite, proposedSite: safeSite});
+        continue;
+      }
+      if (safeMatches.length === 1) {
+        // The corrected record already exists: this is the idempotent path.
+        continue;
+      }
+      if (legacyMatches.length !== 1) {
+        result.newCandidates.push(correctionRowView(row, safeSite, legacySite));
+        continue;
+      }
+      const proposal = correctionReview(row, legacyMatches[0], safeSite);
+      const prior = pending.get(proposal.serviceId) || [];
+      prior.push(proposal);
+      pending.set(proposal.serviceId, prior);
+    }
+    for (const proposals of pending.values()) {
+      if (proposals.length !== 1) {
+        result.conflicts.push({kind: "multiple-proposals", serviceId: proposals[0].serviceId, sourceText: proposals.map(proposal => proposal.sourceUrl || proposal.sourceTitle || proposal.sourceText || ""), proposals});
+      } else {
+        result.corrections.push(proposals[0]);
+      }
+    }
+    return result;
+  }
+
+  function findPublicSuffixAdvisories(services) {
+    return (Array.isArray(services) ? services : []).filter(service => {
+      const site = service && typeof service.site === "string" ? service.site : "";
+      return site && KeygrainPublicSuffix.isKnownPublicSuffix(site);
+    }).map(service => ({
+      serviceId: service.id,
+      name: service.name,
+      email: service.email,
+      site: service.site,
+      message: "This site may match too broadly. Re-import the original CSV to review a possible correction; changing it changes the generated password.",
+    }));
+  }
+
+  // Confirmed transition model used by Unit 4b's serialized storage path.
+  // Comparison uses the captured raw site/email, not a newly normalized value,
+  // so a concurrent edit cannot be overwritten by a stale preview.
+  function applyCorrection(services, correction, options = {}) {
+    const list = Array.isArray(services) ? services : [];
+    if (!options.confirmed) return {ok: false, reason: "cancelled", services: list.slice()};
+    if (!correction || !correction.serviceId || typeof correction.currentSite !== "string"
+      || typeof correction.proposedSite !== "string" || correction.currentSite === correction.proposedSite) {
+      return {ok: false, reason: "invalid", services: list.slice()};
+    }
+    const matches = list.filter(service => service && service.id === correction.serviceId);
+    if (matches.length !== 1) return {ok: false, reason: "stale-target", services: list.slice()};
+    const target = matches[0];
+    if (target.site !== correction.currentSite || correctionEmailKey(target.email) !== correctionEmailKey(correction.email)) {
+      return {ok: false, reason: "stale-target", services: list.slice()};
+    }
+    const maxUpdated = list.reduce((max, service) => Math.max(max, Number.isFinite(service && service.updated_at) ? service.updated_at : 0), 0);
+    const requested = Number.isFinite(options.timestamp) ? options.timestamp : Date.now();
+    const updatedAt = Math.max(requested, maxUpdated + 1);
+    const next = list.map(service => service === target ? {...service, site: correction.proposedSite, updated_at: updatedAt} : service);
+    return {ok: true, serviceId: target.id, services: next};
+  }
+
   // === Wizard UI + Storage Integration ===
 
+
+  function planCorrectionCommit(services, entries, previewAnalysis, choices, confirmed, timestamp) {
+    const original = Array.isArray(services) ? services : [];
+    const rows = Array.isArray(entries) ? entries : [];
+    const previewConflicts = (previewAnalysis && previewAnalysis.conflicts) || [];
+    const conflictMatches = (conflict, entry) => Array.isArray(conflict.sourceText)
+      ? conflict.sourceText.includes(entry.sourceText || "")
+      : conflict.sourceText === (entry.sourceText || "");
+    if (rows.some(entry => previewConflicts.some(conflict => conflictMatches(conflict, entry)))) {
+      return {ok: false, reason: "conflict", services: original.slice(), changed: false};
+    }
+    const fresh = analyzeCorrectionRows(rows, original);
+    if (fresh.conflicts.some(conflict => rows.some(entry => conflictMatches(conflict, entry)))) {
+      return {ok: false, reason: "conflict", services: original.slice(), changed: false};
+    }
+    const proposalFor = (analysis, entry) => (analysis.corrections || []).find(proposal =>
+      proposal.sourceUrl === (entry.sourceText || "") && correctionEmailKey(proposal.email) === correctionEmailKey(entry.email));
+    let next = original.slice();
+    let changed = false;
+    for (const entry of rows) {
+      const previewProposal = proposalFor(previewAnalysis || {}, entry);
+      if (!previewProposal) continue;
+      const choice = choices && choices[correctionChoiceKey(previewProposal)];
+      if (choice === "keep") continue;
+      if (choice !== "proposed" || !confirmed) return {ok: false, reason: "not-confirmed", services: original.slice(), changed: false};
+      const freshProposal = proposalFor(fresh, entry);
+      if (!freshProposal || freshProposal.serviceId !== previewProposal.serviceId
+        || freshProposal.currentSite !== previewProposal.currentSite
+        || freshProposal.proposedSite !== previewProposal.proposedSite
+        || correctionEmailKey(freshProposal.email) !== correctionEmailKey(previewProposal.email)) {
+        return {ok: false, reason: "stale-target", services: original.slice(), changed: false};
+      }
+      const result = applyCorrection(next, freshProposal, {confirmed: true, timestamp});
+      if (!result.ok) return {ok: false, reason: result.reason, services: original.slice(), changed: false};
+      next = result.services;
+      changed = true;
+    }
+      return {ok: true, services: next, changed, analysis: fresh};
+  }
   // Test hook: expose the pure domain helper to the Node VM. No-op in the browser
   // (document is defined there, so this block is skipped and init proceeds).
-  if (typeof document === "undefined") { globalThis.KeygrainMigrate = { extractDomain, resolveSiteFields }; return; }
+  if (typeof document === "undefined") { globalThis.KeygrainMigrate = { extractDomain, resolveSiteFields, analyzeCorrectionRows, findPublicSuffixAdvisories, applyCorrection, planCorrectionCommit }; return; }
 
   // DOM refs
   const errorScreen = document.getElementById("error-screen");
@@ -186,12 +386,18 @@
   const dropZone = document.getElementById("drop-zone");
   const fileInput = document.getElementById("file-input");
   const parseError = document.getElementById("parse-error");
+  const storedAdvisoriesEl = document.getElementById("stored-advisories");
+  const storedAdvisoryListEl = document.getElementById("stored-advisory-list");
   const previewHeader = document.getElementById("preview-header");
   const previewBody = document.getElementById("preview-body");
   const previewFooter = document.getElementById("preview-footer");
   const toggleAll = document.getElementById("toggle-all");
   const confirmSummary = document.getElementById("confirm-summary");
   const confirmSkip = document.getElementById("confirm-skip");
+  const correctionReviewEl = document.getElementById("correction-review");
+  const correctionListEl = document.getElementById("correction-list");
+  const correctionConfirmStatus = document.getElementById("correction-confirm-status");
+  const confirmCorrectionsBtn = document.getElementById("confirm-corrections-btn");
   const importBtn = document.getElementById("import-btn");
   const progressBar = document.getElementById("progress-bar");
   const progressText = document.getElementById("progress-text");
@@ -366,6 +572,33 @@
     return true;
   }
 
+  function renderStoredAdvisories(services) {
+    storedAdvisoryListEl.textContent = "";
+    const advisories = findPublicSuffixAdvisories(services);
+    storedAdvisoriesEl.classList.toggle("hidden", advisories.length === 0);
+    advisories.forEach(advisory => {
+      const item = document.createElement("div");
+      item.className = "stored-advisory-item";
+      const details = document.createElement("span");
+      details.className = "advisory-details";
+      details.textContent = (advisory.name || "Unnamed service") + " — " + (advisory.email || "") + ": " + advisory.site;
+      item.appendChild(details);
+      const reimport = document.createElement("button");
+      reimport.type = "button";
+      reimport.className = "btn-primary";
+      reimport.textContent = "Re-import original CSV";
+      reimport.addEventListener("click", () => fileInput.click());
+      item.appendChild(reimport);
+      const keep = document.createElement("button");
+      keep.type = "button";
+      keep.className = "btn-secondary";
+      keep.textContent = "Keep current site";
+      keep.addEventListener("click", () => item.remove());
+      item.appendChild(keep);
+      storedAdvisoryListEl.appendChild(item);
+    });
+  }
+
   // === Init ===
   const secretResp = await sendMsg({ action: "getSecret" });
   const emailResp = await sendMsg({ action: "getEmail" });
@@ -412,6 +645,7 @@
   }
   allServices = initialBlob.services;
   await loadChecklist(allServices);
+  renderStoredAdvisories(allServices);
 
   if (location.hash === "#checklist" && checklist) {
     showStep(4);
@@ -458,16 +692,15 @@
     // parsedEntries is nulled). serviceName is byte-identical to the previous
     // `extractDomain(f.url, f.name) || f.name || "unknown"`.
     const entries = fields.map(f => {
-      const { site, source } = resolveSiteFields(f.url, f.name);
-      // sourceText = the raw original value this row's Site was derived from,
-      // shown verbatim in the read-only cell. For "title" it is the ORIGINAL-CASE
-      // title (distinct from the lowercased Site). For "empty" it is "" and the
-      // cell renders a static literal instead.
-      const sourceText = source === "url" ? f.url : (source === "title" ? f.name : "");
+      const resolved = resolveSiteFields(f.url, f.name);
       return {
-        serviceName: site || f.name || "unknown",
-        source,
-        sourceText,
+        serviceName: resolved.site || f.name || "unknown",
+        legacySite: resolved.legacySite,
+        safeSite: resolved.safeSite,
+        source: resolved.source,
+        sourceText: resolved.sourceText,
+        decision: resolved.decision,
+        classification: resolved.classification,
         email: f.email,
         oldPassword: f.oldPassword
       };
@@ -516,7 +749,12 @@
       nameInput.value = entry.serviceName;
       nameInput.className = "svc-name";
       nameInput.setAttribute("aria-label", "Site (used to derive your password)");
-      nameInput.addEventListener("change", () => { entry.serviceName = nameInput.value.trim(); });
+      nameInput.addEventListener("change", () => {
+        entry.serviceName = nameInput.value.trim();
+        // An edited Site is the user's explicit candidate; never apply the
+        // resolver's old safe candidate after the preview was changed.
+        entry.safeSite = entry.serviceName;
+      });
       tdName.appendChild(nameInput);
       tr.appendChild(tdName);
 
@@ -624,11 +862,109 @@
   // === Step 3: Confirm ===
   let skipCount = 0;
   let selectedEntries = [];
+  let correctionAnalysis = {corrections: [], conflicts: [], advisories: [], newCandidates: []};
+  const correctionChoices = new Map();
+  let correctionsConfirmed = false;
 
   // Preview-only: mirrors the check the import performs against its own working list.
   function alreadyExists(entry) {
     return allServices.some(s => normalizeSite(s.site) === normalizeSite(entry.serviceName) && s.email.toLowerCase() === entry.email.toLowerCase());
   }
+
+  function correctionChoiceKey(proposal) {
+    return String(proposal.serviceId) + "\\0" + String(proposal.sourceUrl || proposal.sourceTitle || proposal.sourceText || "");
+  }
+
+  function renderCorrectionReview() {
+    correctionListEl.textContent = "";
+    correctionChoices.clear();
+    correctionsConfirmed = false;
+    const proposals = correctionAnalysis.corrections || [];
+    proposals.forEach(proposal => correctionChoices.set(correctionChoiceKey(proposal), "keep"));
+    const hasAdvisory = (correctionAnalysis.advisories || []).length > 0;
+    const hasConflict = (correctionAnalysis.conflicts || []).length > 0;
+    if (!proposals.length && !hasAdvisory && !hasConflict) {
+      correctionReviewEl.classList.add("hidden");
+      confirmCorrectionsBtn.classList.add("hidden");
+      return;
+    }
+    correctionReviewEl.classList.remove("hidden");
+    proposals.forEach(proposal => {
+      const item = document.createElement("div");
+      item.className = "correction-item";
+      item.dataset.choice = "keep";
+      const heading = document.createElement("p");
+      heading.textContent = "Existing service: ";
+      const oldSite = document.createElement("span");
+      oldSite.className = "correction-site-old";
+      oldSite.textContent = proposal.currentSite;
+      const arrow = document.createTextNode(" → ");
+      const newSite = document.createElement("span");
+      newSite.className = "correction-site-new";
+      newSite.textContent = proposal.proposedSite;
+      heading.append(oldSite, arrow, newSite);
+      item.appendChild(heading);
+      const source = document.createElement("p");
+      source.className = "correction-source";
+      source.textContent = "Source evidence: " + (proposal.sourceUrl || proposal.sourceTitle || proposal.sourceText || "unavailable");
+      item.appendChild(source);
+      const warning = document.createElement("p");
+      warning.textContent = proposal.passwordChangeWarning;
+      item.appendChild(warning);
+      const actions = document.createElement("div");
+      actions.className = "correction-actions";
+      const keep = document.createElement("button");
+      keep.type = "button";
+      keep.className = "btn-secondary";
+      keep.textContent = "Keep current site";
+      const use = document.createElement("button");
+      use.type = "button";
+      use.className = "btn-danger";
+      use.textContent = "Use proposed site";
+      const key = correctionChoiceKey(proposal);
+      keep.addEventListener("click", () => {
+        correctionChoices.set(key, "keep");
+        item.dataset.choice = "keep";
+        correctionsConfirmed = false;
+        updateCorrectionControls();
+      });
+      use.addEventListener("click", () => {
+        correctionChoices.set(key, "proposed");
+        item.dataset.choice = "proposed";
+        correctionsConfirmed = false;
+        updateCorrectionControls();
+      });
+      actions.append(keep, use);
+      item.appendChild(actions);
+      correctionListEl.appendChild(item);
+    });
+    for (const conflict of correctionAnalysis.conflicts || []) {
+      const el = document.createElement("p");
+      el.textContent = "Conflict: this source row has multiple or ambiguous existing matches. Keep current and skip it.";
+      correctionListEl.appendChild(el);
+    }
+    for (const advisory of correctionAnalysis.advisories || []) {
+      const el = document.createElement("p");
+      el.textContent = "Advisory: re-import the original CSV to review a possible correction; no replacement was guessed.";
+      correctionListEl.appendChild(el);
+    }
+    updateCorrectionControls();
+  }
+
+  function updateCorrectionControls() {
+    const selected = correctionAnalysis.corrections.filter(p => correctionChoices.get(correctionChoiceKey(p)) === "proposed").length;
+    confirmCorrectionsBtn.classList.toggle("hidden", selected === 0);
+    confirmCorrectionsBtn.disabled = selected === 0 || correctionsConfirmed;
+    correctionConfirmStatus.classList.toggle("hidden", !correctionsConfirmed);
+    importBtn.disabled = selected > 0 && !correctionsConfirmed;
+    if (correctionsConfirmed) correctionConfirmStatus.textContent = "Selected corrections confirmed. Import will revalidate them immediately before saving.";
+  }
+
+  confirmCorrectionsBtn.addEventListener("click", () => {
+    if (!correctionAnalysis.corrections.some(p => correctionChoices.get(correctionChoiceKey(p)) === "proposed")) return;
+    correctionsConfirmed = true;
+    updateCorrectionControls();
+  });
 
   async function prepareConfirm() {
     // Re-read: the popup may have added or removed services since this page loaded. A
@@ -651,6 +987,8 @@
     // Count skips
     skipCount = 0;
     selectedEntries.forEach(e => { if (alreadyExists(e)) skipCount++; });
+    correctionAnalysis = analyzeCorrectionRows(selectedEntries, allServices);
+    renderCorrectionReview();
 
     confirmSummary.textContent = "Import " + (selectedEntries.length - skipCount) + " services into Keygrain?";
     if (skipCount > 0) {
@@ -674,22 +1012,47 @@
         return;
       }
 
-      // Add the services that don't already exist. Each gets its own timestamp: one
-      // shared value would make an id-order tie-break certain rather than merely
-      // possible where two rows collapse to the same (site, email). Newly added rows go
-      // into the working list as we go, so the existence check dedupes within the batch
-      // as well — normalizeSite is idempotent, so comparing an already-normalised
-      // stored site against a freshly normalised one is sound.
+      // The pure planner independently guards preview conflicts, then performs
+      // fresh target revalidation before this operation is allowed to write.
+      const choiceObject = {};
+      for (const [key, value] of correctionChoices) choiceObject[key] = value;
+      const plan = planCorrectionCommit(blob.services, selectedEntries, correctionAnalysis, choiceObject, correctionsConfirmed, nextTimestamp(blob.services));
+      if (!plan.ok) {
+        confirmSummary.textContent = plan.reason === "conflict"
+          ? "Nothing was imported. A source row is conflicted; keep the current site and skip it."
+          : "Nothing was imported. An existing service changed; reload the review and try again.";
+        return;
+      }
+      blob.services = plan.services;
+      let changed = plan.changed;
+      const proposalFor = (analysis, entry) => (analysis.corrections || []).find(p =>
+        p.sourceUrl === (entry.sourceText || "") && correctionEmailKey(p.email) === correctionEmailKey(entry.email));
+      const conflictFor = (analysis, entry) => (analysis.conflicts || []).some(c =>
+        Array.isArray(c.sourceText) ? c.sourceText.includes(entry.sourceText || "") : c.sourceText === (entry.sourceText || ""));
+
+      // Add ordinary new candidates only. A correction row kept by the user,
+      // or any preview/fresh conflict, is skipped rather than creating a duplicate.
       let now = nextTimestamp(blob.services);
       const exists = (entry) => blob.services.some(s => normalizeSite(s.site) === normalizeSite(entry.serviceName) && s.email.toLowerCase() === entry.email.toLowerCase());
       selectedEntries.forEach(e => {
+        if (proposalFor(correctionAnalysis, e) || conflictFor(correctionAnalysis, e) || conflictFor(plan.analysis, e)) return;
         if (exists(e)) return;
         blob.services.push({ name: e.serviceName, site: normalizeSite(e.serviceName), email: e.email, length: settings.defaultLength, symbols: settings.defaultSymbols, counter: 1, migrating: true, id: crypto.randomUUID(), updated_at: now++, synced: false });
+        changed = true;
       });
+      if (!changed) {
+        confirmSummary.textContent = "No changes were made. Kept current sites and skipped existing records.";
+        return;
+      }
       // Same handling as a failed read above: say nothing was imported and leave the button
       // disabled, because the only way forward is reopening the popup.
-      if (!await writeBlob(blob)) {
-        confirmSummary.textContent = "Nothing was imported. " + BLOB_READ_FAILED;
+      try {
+        if (!await writeBlob(blob)) {
+          confirmSummary.textContent = "Nothing was imported. " + BLOB_READ_FAILED;
+          return;
+        }
+      } catch (_) {
+        confirmSummary.textContent = "Nothing was imported. The updated data could not be saved.";
         return;
       }
       allServices = blob.services;
