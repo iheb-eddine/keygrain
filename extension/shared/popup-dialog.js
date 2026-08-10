@@ -117,7 +117,7 @@ function shortcutHintText(opts) {
   const isMac = !!(opts && opts.isMac);
   const trimmed = raw.trim();
   if (trimmed) return { label: trimmed, isSet: true };
-  return { label: isMac ? "Cmd+Shift+K" : "Ctrl+Shift+K", isSet: false };
+  return { label: isMac ? "Cmd+Shift+Y" : "Ctrl+Shift+Y", isSet: false };
 }
 
 // shortcutCustomizeInfo(isFirefox) -> {method, url, steps}

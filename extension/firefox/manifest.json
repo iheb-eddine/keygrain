@@ -29,8 +29,8 @@
   "commands": {
     "fill_credentials": {
       "suggested_key": {
-        "default": "Ctrl+Shift+K",
-        "mac": "Command+Shift+K"
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
       },
       "description": "Fill credentials for current site"
     }

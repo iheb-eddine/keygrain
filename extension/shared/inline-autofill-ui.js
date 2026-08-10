@@ -545,8 +545,8 @@ if (!window.__keygrain_inline_injected) {
   // pointerdown + concluding click, both topmost-hitting our host) kills pe:auto
   // overlays. A user socially-engineered into a DELIBERATE action on an occluded
   // row (an option CLICK, or a mouse-HOVER/ARROW then ENTER) can still fill — an
-  // accepted, documented limitation. The browser toolbar popup and the Ctrl+Shift+K
-  // (Cmd+Shift+K on mac) "fill_credentials" command are rendered by browser chrome,
+  // accepted, documented limitation. The browser toolbar popup and the Ctrl+Shift+Y
+  // (Cmd+Shift+Y on mac) "fill_credentials" command are rendered by browser chrome,
   // cannot be occluded by page content, and remain the UNSPOOFABLE fallback.
   function onPointerArm(e) { pointerArmedEl = trustedPointer(e) ? e.currentTarget : null; }
   function clearPointerArm() { pointerArmedEl = null; }

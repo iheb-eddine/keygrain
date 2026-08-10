@@ -32,10 +32,10 @@ GIF PRODUCTION SPEC:
   4. Select "github.com" from services list → password derived instantly
   5. Click "Fill" → username + password autofill into the form
   6. Navigate to a second site (e.g., gitlab.com login)
-  7. Press Ctrl+Shift+K → form fills instantly WITHOUT opening popup
+  7. Press Ctrl+Shift+Y → form fills instantly WITHOUT opening popup
   8. Brief pause showing filled form
 - Style: Dark browser theme, no real credentials, placeholder email "me@example.com"
-- The Ctrl+Shift+K moment is the "wow" beat — emphasize the speed (no popup, instant fill)
+- The Ctrl+Shift+Y moment is the "wow" beat — emphasize the speed (no popup, instant fill)
 -->
 
 <p align="center">
@@ -78,7 +78,7 @@ Keygrain derives unique, strong passwords from your master secret and site infor
 
 **Browser Extension**
 - Autofill username + password into login forms
-- Zero-click fill via `Ctrl+Shift+K`
+- Zero-click fill via `Ctrl+Shift+Y`
 - PIN unlock (no need to re-enter master secret every time)
 - Fuzzy search with frecency ranking
 - Breach warnings for compromised sites
@@ -103,7 +103,7 @@ Keygrain derives unique, strong passwords from your master secret and site infor
 1. Download from the [Chrome Web Store](https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha) or [Firefox Add-ons](https://addons.mozilla.org/addon/keygrain/), or load unpacked from `extension/dist/chrome/`
 2. Click the Keygrain icon → enter your master secret and email
 3. Add a site → your password is derived instantly
-4. Click **Fill** or press `Ctrl+Shift+K` to autofill the active page
+4. Click **Fill** or press `Ctrl+Shift+Y` to autofill the active page
 
 ### Python CLI
 
