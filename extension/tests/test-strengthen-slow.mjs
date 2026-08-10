@@ -30,16 +30,25 @@ runInContext(hashwasmSrc, ctx);
 const keygrainSrc = readFileSync(resolve(shared, 'keygrain.js'), 'utf8');
 runInContext(keygrainSrc, ctx);
 
-// Load vector
+// Load every strengthen vector. Clearing the cache before each invocation is
+// intentional: duplicate/case-normalized vectors must exercise real Argon2id,
+// not pass by reusing a previous strengthen result.
 const vectors = JSON.parse(readFileSync(resolve(root, 'vectors.json'), 'utf8'));
-const v = vectors.strengthen_vectors[0];
+const strengthenVectors = vectors.strengthen_vectors;
+let passed = 0;
 
-// Run test
-console.log(`Testing strengthenSecret("${v.secret_utf8}", "${v.email}")...`);
-const result = await runInContext(
-  `strengthenSecret(${JSON.stringify(v.secret_utf8)}, ${JSON.stringify(v.email)})`,
-  ctx
-);
-const hex = Buffer.from(result).toString('hex');
-assert.equal(hex, v.expected_hex, `Expected ${v.expected_hex}, got ${hex}`);
-console.log(`  ✓ strengthen vector matches: ${hex}`);
+for (const [index, v] of strengthenVectors.entries()) {
+  runInContext('clearStrengthenCache()', ctx);
+  console.log(`Testing strengthen vector ${index}: "${v.secret_utf8}" / "${v.email}"...`);
+  const result = await runInContext(
+    `strengthenSecret(${JSON.stringify(v.secret_utf8)}, ${JSON.stringify(v.email)})`,
+    ctx
+  );
+  const hex = Buffer.from(result).toString('hex');
+  assert.equal(hex, v.expected_hex, `Vector ${index}: expected ${v.expected_hex}, got ${hex}`);
+  passed++;
+  console.log(`  ✓ strengthen vector ${index} matches: ${hex}`);
+}
+
+assert.equal(passed, strengthenVectors.length, 'Every strengthen vector must execute');
+console.log(`✓ ${passed}/${strengthenVectors.length} strengthen vectors used real Argon2id`);
