@@ -2,6 +2,18 @@
 const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 const LOWER = "abcdefghjkmnpqrstuvwxyz";
 const DIGITS = "23456789";
+const DEFAULT_SYMBOLS = "!@#$%&*-_=+?";
+const DEFAULT_SYMBOL_POLICY = "ascii-printable-v1";
+
+function validateSymbols(symbols, policy = DEFAULT_SYMBOL_POLICY) {
+  if (policy !== DEFAULT_SYMBOL_POLICY) throw new RangeError("unknown symbol policy");
+  if (typeof symbols !== "string" || symbols.length === 0) throw new RangeError("symbols must be a non-empty graphic printable ASCII string");
+  for (let i = 0; i < symbols.length; i++) {
+    const code = symbols.charCodeAt(i);
+    if (code < 0x21 || code > 0x7e) throw new RangeError("symbols must contain only graphic printable ASCII characters");
+  }
+  return symbols;
+}
 
 // Argon2id strengthen cache (single entry — one active session)
 let _strengthenCache = null;
@@ -100,11 +112,11 @@ function buildPassword(stream, length, symbols) {
   return chars.join("");
 }
 
-async function derivePassword(secret, email, { site, length = 20, symbols = "!@#$%&*-_=+?", counter = 1 }) {
+async function derivePassword(secret, email, { site, length = 20, symbols = DEFAULT_SYMBOLS, counter = 1, policy = DEFAULT_SYMBOL_POLICY }) {
   if (!secret) throw new RangeError("secret must not be empty");
   if (!email || !email.trim()) throw new RangeError("email must not be empty");
   if (length < 8 || length > 128) throw new RangeError("length must be between 8 and 128");
-  if (!symbols) throw new RangeError("symbols must not be empty");
+  validateSymbols(symbols, policy);
   if (counter < 1) throw new RangeError("counter must be at least 1");
   if (UPPER.length + LOWER.length + DIGITS.length + symbols.length > 256) throw new RangeError("symbols too long (full charset exceeds 256 characters)");
   const enc = new TextEncoder();

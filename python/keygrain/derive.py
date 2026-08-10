@@ -10,6 +10,7 @@ UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
 LOWER = "abcdefghjkmnpqrstuvwxyz"
 DIGITS = "23456789"
 DEFAULT_SYMBOLS = "!@#$%&*-_=+?"
+_DEFAULT_SYMBOL_POLICY = "ascii-printable-v1"
 
 def normalize_site(site: str) -> str:
     """Normalize a site identifier: strip protocol, www, path, lowercase."""
@@ -46,6 +47,15 @@ def clear_strengthen_cache() -> None:
     _strengthen_cache.clear()
 
 
+def _validate_symbols(symbols: str, policy: str) -> None:
+    if policy != _DEFAULT_SYMBOL_POLICY:
+        raise ValueError("Error: Unknown symbol policy.")
+    if not isinstance(symbols, str) or not symbols:
+        raise ValueError("Error: Symbols must be a non-empty graphic printable ASCII string.")
+    if any(not (0x21 <= ord(char) <= 0x7E) for char in symbols):
+        raise ValueError("Error: Symbols must contain only graphic printable ASCII characters.")
+
+
 def derive_password(
     secret: bytes,
     email: str,
@@ -54,6 +64,7 @@ def derive_password(
     length: int = 20,
     symbols: str = DEFAULT_SYMBOLS,
     counter: int = 1,
+    policy: str = _DEFAULT_SYMBOL_POLICY,
 ) -> str:
     """Derive a deterministic password from secret + email + site.
 
@@ -74,8 +85,7 @@ def derive_password(
         raise ValueError("Error: Password length must be at least 8.")
     if length > 128:
         raise ValueError("Error: Password length must not exceed 128.")
-    if not symbols:
-        raise ValueError("Error: At least one symbol character is required.")
+    _validate_symbols(symbols, policy)
     if not email or not email.strip():
         raise ValueError("Error: Email must not be empty.")
     if counter < 1:

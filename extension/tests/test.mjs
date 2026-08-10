@@ -15,6 +15,7 @@ let passed = 0, failed = 0;
 function test(name, fn) { return fn().then(() => { passed++; console.log(`  ✓ ${name}`); }, e => { failed++; console.log(`  ✗ ${name}: ${e.message}`); }); }
 
 // --- Strengthen mock data ---
+let strengthenCalls = 0;
 const STRENGTHEN_MAP = {
   'my-master-secret|test@gmail.com': 'd7b935b8298f476c6046cb71501fcb8c9a53327df3cc4e05c696fea7ef3d035a',
   'short|alice@example.com': '3633552e469c5ea783380f877b271672e7261795298870734940afe4f808b47b',
@@ -48,6 +49,7 @@ function buildContext() {
     setTimeout, clearTimeout,
     hashwasm: {
       argon2id: async ({ password, salt, parallelism, iterations, memorySize, hashLength, outputType }) => {
+        strengthenCalls++;
         const secretStr = new TextDecoder().decode(password);
         const saltStr = new TextDecoder().decode(salt);
         const emailMatch = saltStr.match(/^keygrain-strengthen:(.+)$/);
@@ -194,6 +196,34 @@ for (const v of coreVectors.vectors) {
 
 await test('derivePassword: rejects length > 128', async () => {
   await assert.rejects(() => call('derivePassword', 'secret', 'a@b.com', { site: 'x.com', length: 129 }), /length must be between 8 and 128/);
+});
+
+await test('derivePassword: accepts printable ASCII boundaries and preserves sequence semantics', async () => {
+  for (const symbols of ['!', '~', '!~', '!!A']) {
+    const result = await call('derivePassword', 'my-master-secret', 'test@gmail.com', {
+      site: 'github.com', length: 20, symbols, counter: 1
+    });
+    assert.equal(result.length, 20);
+  }
+});
+
+await test('derivePassword: rejects empty, space, controls, DEL, non-ASCII, and UTF-16 surrogate input', async () => {
+  strengthenCalls = 0;
+  for (const symbols of ['', ' ', '\x1f', '\x7f', 'é', '\ud800', '😀']) {
+    await assert.rejects(
+      () => call('derivePassword', 'my-master-secret', 'test@gmail.com', {site: 'github.com', symbols})
+    );
+  }
+  assert.equal(strengthenCalls, 0);
+});
+
+await test('derivePassword: rejects unknown symbol policy before strengthening', async () => {
+  strengthenCalls = 0;
+  await assert.rejects(
+    () => call('derivePassword', 'my-master-secret', 'test@gmail.com', {site: 'github.com', policy: 'future-unicode'}),
+    /unknown symbol policy/
+  );
+  assert.equal(strengthenCalls, 0);
 });
 
 // buildPassword: rejection sampling boundary
@@ -3102,6 +3132,86 @@ await test('migrate.css styles the dialog it now owns, and can still hide it', a
     assert.ok(!m[2].includes('display'), '#' + m[1] + ' declares display, which defeats .hidden');
   }
   assert.ok(/#stop-row \{/.test(css), 'the #stop-row rule is missing');
+});
+
+await test('derivePassword: preserves order, duplicate weighting, and fixed-category overlap exactly', async () => {
+  const expected = {
+    '!A': 'Whv6dVxdG4wYAUAXF43M',
+    'A!': 'Whv6dVxdG4wY!UAXF43M',
+    '!!A': 'Ugs4bVwaF2wYAUAUC4yL',
+    '!1': 'Whv6dVxdG4wY1UAXF43M',
+  };
+  const actual = {};
+  for (const symbols of Object.keys(expected)) {
+    actual[symbols] = await call('derivePassword', 'my-master-secret', 'test@gmail.com', {
+      site: 'github.com', length: 20, symbols, counter: 1
+    });
+  }
+  assert.deepEqual(actual, expected);
+  assert.notEqual(actual['!A'], actual['A!']);
+  assert.notEqual(actual['!!A'], actual['!A']);
+  assert.notEqual(actual['!1'], actual['!A']);
+});
+
+await test('popup Add/Edit and Settings symbol fields reject before mutation or write', async () => {
+  const popupSource = readFileSync(resolve(shared, 'popup.js'), 'utf8');
+  const settingsStart = popupSource.indexOf('settingsSave.addEventListener("click"');
+  const settingsEnd = popupSource.indexOf('// === In-page autofill toggle + consent ===', settingsStart);
+  const settingsHandler = popupSource.slice(settingsStart, settingsEnd);
+  const addStart = popupSource.indexOf('addConfirm.addEventListener("click"');
+  const addEnd = popupSource.indexOf('rotateBtn.addEventListener("click"', addStart);
+  const addHandler = popupSource.slice(addStart, addEnd);
+  assert.ok(settingsStart >= 0 && settingsEnd > settingsStart, 'Settings handler must be present');
+  assert.ok(addStart >= 0 && addEnd > addStart, 'Add/Edit handler must be present');
+
+  for (const symbols of ['', ' ', '\x1f', '\x7f', 'é', '😀']) {
+    assert.throws(() => call('validateSymbols', symbols), /graphic printable ASCII/);
+  }
+
+  const settingsValidation = settingsHandler.indexOf('try { validateSymbols(symbols); }');
+  const settingsReturn = settingsHandler.indexOf('return;', settingsValidation);
+  const settingsWrite = settingsHandler.indexOf('await chrome.storage.local.set({settings})');
+  assert.ok(settingsValidation >= 0 && settingsValidation < settingsReturn && settingsReturn < settingsWrite);
+  assert.match(settingsHandler, /const symbols = setSymbols\.value/);
+  assert.doesNotMatch(settingsHandler, /symbols\s*\|\|/);
+
+  const addValidation = addHandler.indexOf('try { validateSymbols(symbols); }');
+  const addReturn = addHandler.indexOf('return;', addValidation);
+  const editMutation = addHandler.indexOf('services[editIndex] =');
+  const addMutation = addHandler.indexOf('services.push(');
+  assert.ok(addValidation >= 0 && addValidation < addReturn);
+  assert.ok(addValidation < editMutation && addValidation < addMutation);
+  assert.match(addHandler, /const symbols = addSymbols\.value/);
+  assert.match(addHandler, /if \(editIndex !== null\)/);
+  assert.doesNotMatch(addHandler, /symbols\s*\|\|/);
+});
+
+await test('live web derivation rejects invalid symbols before strengthen and accepts ASCII edges', async () => {
+  const webSource = readFileSync(resolve(root, 'web', 'index.html'), 'utf8');
+  const webStart = webSource.indexOf('    const UPPER =');
+  const webEnd = webSource.indexOf('    let clearTimer = null;', webStart);
+  assert.ok(webStart >= 0 && webEnd > webStart, 'live web derivation block must be present');
+  let webStrengthenCalls = 0;
+  const webCtx = createContext({
+    crypto: webcrypto,
+    TextEncoder, Uint8Array, DataView, Math, RangeError, Error, Promise,
+    hashwasm: { argon2id: async () => { webStrengthenCalls++; return new Uint8Array(32); } },
+  });
+  runInContext(webSource.slice(webStart, webEnd), webCtx);
+  webCtx._args = ['secret', 'a@b.com', 'example.com', 20, '!', 1];
+  const lowerEdge = await runInContext('derivePassword(..._args)', webCtx);
+  webCtx._args = ['secret', 'a@b.com', 'example.com', 20, '~', 1];
+  const upperEdge = await runInContext('derivePassword(..._args)', webCtx);
+  assert.equal(lowerEdge.length, 20);
+  assert.equal(upperEdge.length, 20);
+  assert.equal(webStrengthenCalls, 2);
+
+  webStrengthenCalls = 0;
+  for (const symbols of [' ', '\x00', '\x1f', '\x7f', 'é', '😀']) {
+    webCtx._args = ['secret', 'a@b.com', 'example.com', 20, symbols, 1];
+    await assert.rejects(() => runInContext('derivePassword(..._args)', webCtx), /printable ASCII/);
+  }
+  assert.equal(webStrengthenCalls, 0, 'invalid live-web symbols must reject before strengthen/output');
 });
 
 // ============================================================

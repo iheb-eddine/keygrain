@@ -2,7 +2,9 @@ package com.secbytech.keygrain.data
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -102,6 +104,113 @@ class KeygrainTest {
     @Test(expected = IllegalArgumentException::class)
     fun testEmptySiteRejected() {
         Keygrain.derivePassword("secret".toByteArray(), "a@b.com", "")
+    }
+
+
+    @Test
+    fun testAsciiPrintableSymbolBoundariesAccepted() {
+        val symbols = "!~"
+        val result = Keygrain.derivePassword("secret".toByteArray(), "a@b.com", "x.com", symbols = symbols)
+        assertEquals(20, result.length)
+        assertEquals(true, result.any { it == '!' || it == '~' })
+    }
+
+    @Test
+    fun testInvalidSymbolsRejected() {
+        val invalid = listOf("", " ", "\u001F", "\u007F", "é", "😀")
+        for (symbols in invalid) {
+            try {
+                Keygrain.derivePassword("secret".toByteArray(), "a@b.com", "x.com", symbols = symbols)
+                throw AssertionError("Expected invalid symbols to be rejected: $symbols")
+            } catch (_: IllegalArgumentException) {
+                // expected
+            }
+        }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun testUnknownSymbolPolicyRejected() {
+        Keygrain.derivePassword("secret".toByteArray(), "a@b.com", "x.com", policy = "future-unicode")
+    }
+
+    @Test
+    fun testDuplicateAndOverlappingSymbolsRemainValid() {
+        val symbols = "!!A"
+        val result = Keygrain.derivePassword("secret".toByteArray(), "a@b.com", "x.com", symbols = symbols)
+        assertEquals(20, result.length)
+    }
+    @Test
+    fun testSymbolSequenceSemanticsHaveExactOutputs() {
+        val expected = mapOf(
+            "!A" to "Whv6dVxdG4wYAUAXF43M",
+            "A!" to "Whv6dVxdG4wY!UAXF43M",
+            "!!A" to "Ugs4bVwaF2wYAUAUC4yL",
+            "!1" to "Whv6dVxdG4wY1UAXF43M"
+        )
+        val actual = expected.mapValues { (symbols, _) ->
+            Keygrain.derivePassword(
+                secret = "my-master-secret".toByteArray(),
+                email = "test@gmail.com",
+                site = "github.com",
+                length = 20,
+                symbols = symbols,
+                counter = 1
+            )
+        }
+        assertEquals(expected, actual)
+        assertNotEquals(actual["!A"], actual["A!"])
+        assertNotEquals(actual["!!A"], actual["!A"])
+        assertNotEquals(actual["!1"], actual["!A"])
+    }
+
+    private fun readApprovedSource(relativePath: String): String {
+        val candidates = listOf(
+            File("src/main/java/$relativePath"),
+            File("app/src/main/java/$relativePath"),
+            File("../../main/java/$relativePath"),
+            File("keygrain/kotlin/app/src/main/java/$relativePath")
+        )
+        return candidates.firstOrNull { it.isFile }?.readText()
+            ?: throw AssertionError("Approved source file not found: $relativePath")
+    }
+
+    @Test
+    fun testEditorAndOnboardingRejectInvalidSymbolsBeforeSaveOrPreviewWithoutSubstitution() {
+        val invalid = listOf("", " ", "\u001F", "\u007F", "é", "😀")
+        for (symbols in invalid) {
+            try {
+                Keygrain.validateSymbols(symbols)
+                throw AssertionError("Expected invalid symbols to be rejected: $symbols")
+            } catch (_: IllegalArgumentException) {
+                // expected
+            }
+        }
+
+        val editor = readApprovedSource("com/secbytech/keygrain/ui/screens/ServiceEditorScreen.kt")
+        val editorValidation = editor.indexOf("Keygrain.validateSymbols(symbols)")
+        val editorReturn = editor.indexOf("return@TextButton", editorValidation)
+        val editorSave = editor.indexOf("onSave(ServiceEntry(", editorReturn)
+        val editorSymbols = editor.indexOf("symbols = symbols", editorReturn)
+        assertTrue(editorValidation >= 0 && editorValidation < editorReturn && editorReturn < editorSave)
+        assertTrue(editorSymbols > editorSave)
+        val editorSaveBlock = editor.substring(editorSave, editorSymbols + "symbols = symbols".length)
+        assertFalse(editorSaveBlock.contains("symbols.ifEmpty"))
+        assertFalse(editorSaveBlock.contains("symbols ?: Keygrain.DEFAULT_SYMBOLS"))
+
+        val onboarding = readApprovedSource("com/secbytech/keygrain/ui/screens/OnboardingScreen.kt")
+        val previewGuard = onboarding.indexOf("!symbolsAreValid(symbols)")
+        val previewReturn = onboarding.indexOf("password = null; return@LaunchedEffect", previewGuard)
+        val previewDerive = onboarding.indexOf("Keygrain.derivePassword(", previewReturn)
+        assertTrue(previewGuard >= 0 && previewGuard < previewReturn && previewReturn < previewDerive)
+
+        val primaryGuard = onboarding.indexOf("if (!symbolsAreValid(symbols)) return@OnboardingPageLayout")
+        val primarySave = onboarding.indexOf("serviceManager.addService(", primaryGuard)
+        val onboardingSymbols = onboarding.indexOf("symbols = symbols", primaryGuard)
+        assertTrue(primaryGuard >= 0 && primaryGuard < primarySave)
+        assertTrue(onboardingSymbols > primarySave)
+        val onboardingSaveBlock = onboarding.substring(primarySave, onboardingSymbols + "symbols = symbols".length)
+        assertFalse(onboardingSaveBlock.contains("symbols.ifEmpty"))
+        assertFalse(onboardingSaveBlock.contains("symbols ?: Keygrain.DEFAULT_SYMBOLS"))
     }
 
     @Test

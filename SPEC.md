@@ -21,7 +21,7 @@ Keygrain derives unique, deterministic passwords from a master secret, an email 
 | `email` | string | Non-empty; lowercased before use | — | Per-service |
 | `site` | string | Non-empty; lowercased before use | — | Per-service |
 | `length` | integer | ≥ 8 | 20 | Per-service |
-| `symbols` | string | ≥ 1 character | `!@#$%&*-_=+?` | Per-service |
+| `symbols` | string | Non-empty; every character U+0021..U+007E | `!@#$%&*-_=+?` | Per-service |
 | `counter` | integer | ≥ 1 | 1 | Per-service |
 
 All string parameters are encoded as UTF-8 (no BOM, no null terminator) before any cryptographic operation.
@@ -166,6 +166,12 @@ Ambiguous characters (easily confused in certain fonts) are excluded.
 
 **Default symbols:** `!@#$%&*-_=+?` (12 characters)
 
+
+### 5.1 Symbol policy
+
+The current symbol policy is `ascii-printable-v1`. The `symbols` value MUST be a non-empty string containing only graphic printable ASCII characters U+0021 through U+007E inclusive. Space U+0020, C0 controls, DEL U+007F, non-ASCII characters, and JavaScript surrogate/non-BMP values are invalid and MUST be rejected; implementations MUST NOT trim, normalize, substitute, deduplicate, sort, or otherwise alter invalid input.
+
+Implementations use an internal policy selector with `ascii-printable-v1` as the omitted-policy default. Unknown policy identifiers MUST be rejected. The policy identifier selects validation/indexing behavior only and MUST NOT be included in the password HMAC message. The validated symbol sequence is passed to the existing category selection and `full_charset` construction unchanged, preserving order, duplicates, and overlap with the fixed categories. A future policy, if separately approved, MUST use a distinct identifier; no future policy is defined here.
 The `full_charset` is the concatenation: UPPER + LOWER + DIGITS + symbols (in that order). With default symbols, this is 67 characters.
 
 ---

@@ -172,3 +172,54 @@ def test_rejection_sampling_boundary():
         f"Byte 200 should be accepted but output unchanged: "
         f"base={pw_base!r}, with_200={pw_accepted!r}"
     )
+
+
+def test_ascii_printable_boundaries_and_invalid_symbols():
+    for symbols in ("!", "~", "!~", "!!A"):
+        result = derive_password(b"secret", "a@b.com", site="example.com", symbols=symbols)
+        assert len(result) == 20
+    for symbols in ("", " ", "\x1f", "\x7f", "é", "😀", None):
+        with pytest.raises(ValueError):
+            derive_password(b"secret", "a@b.com", site="example.com", symbols=symbols)
+
+
+def test_unknown_symbol_policy_rejected_before_strengthening(monkeypatch):
+    called = False
+
+    def fail_if_called(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("strengthening must not run for invalid symbols")
+
+    monkeypatch.setattr("keygrain.derive.strengthen_secret", fail_if_called)
+    with pytest.raises(ValueError, match="graphic printable ASCII"):
+        derive_password(b"secret", "a@b.com", site="example.com", symbols=" ")
+    assert not called
+    with pytest.raises(ValueError, match="Unknown symbol policy"):
+        derive_password(b"secret", "a@b.com", site="example.com", policy="future-unicode")
+    assert not called
+
+
+
+def test_symbol_sequence_semantics_have_exact_outputs():
+    expected = {
+        "!A": "Whv6dVxdG4wYAUAXF43M",
+        "A!": "Whv6dVxdG4wY!UAXF43M",
+        "!!A": "Ugs4bVwaF2wYAUAUC4yL",
+        "!1": "Whv6dVxdG4wY1UAXF43M",
+    }
+    actual = {
+        symbols: derive_password(
+            b"my-master-secret",
+            "test@gmail.com",
+            site="github.com",
+            length=20,
+            symbols=symbols,
+            counter=1,
+        )
+        for symbols in expected
+    }
+    assert actual == expected
+    assert actual["!A"] != actual["A!"]
+    assert actual["!!A"] != actual["!A"]
+    assert actual["!1"] != actual["!A"]

@@ -10,6 +10,14 @@ object Keygrain {
     const val LOWER = "abcdefghjkmnpqrstuvwxyz"
     const val DIGITS = "23456789"
     const val DEFAULT_SYMBOLS = "!@#\$%&*-_=+?"
+    private const val DEFAULT_SYMBOL_POLICY = "ascii-printable-v1"
+
+    internal fun validateSymbols(symbols: String, policy: String = DEFAULT_SYMBOL_POLICY) {
+        require(policy == DEFAULT_SYMBOL_POLICY) { "unknown symbol policy" }
+        require(symbols.isNotEmpty() && symbols.all { it.code in 0x21..0x7E }) {
+            "symbols must contain only graphic printable ASCII characters"
+        }
+    }
 
     private val cacheLock = Any()
 
@@ -79,14 +87,15 @@ object Keygrain {
         site: String,
         length: Int = 20,
         symbols: String = DEFAULT_SYMBOLS,
-        counter: Int = 1
+        counter: Int = 1,
+        policy: String = DEFAULT_SYMBOL_POLICY
     ): String {
         require(secret.isNotEmpty()) { "secret must not be empty" }
         require(email.isNotBlank()) { "email must not be empty" }
         require(length >= 8) { "length must be >= 8" }
         require(length <= 128) { "length must be <= 128" }
         require(counter >= 1) { "counter must be >= 1" }
-        require(symbols.isNotEmpty()) { "symbols must not be empty" }
+        validateSymbols(symbols, policy)
         require(UPPER.length + LOWER.length + DIGITS.length + symbols.length <= 256) { "symbols too long (full charset exceeds 256 characters)" }
         val normalizedSite = normalizeSite(site)
         require(normalizedSite.isNotEmpty()) { "site must not be empty" }
