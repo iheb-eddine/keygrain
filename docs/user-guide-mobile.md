@@ -8,7 +8,13 @@ Keygrain generates unique passwords from your secret — nothing is stored. You 
 
 ### Installing
 
-Install Keygrain from the Google Play Store (search "Keygrain"). Once installed, open the app to begin setup.
+Android is currently in closed testing:
+
+1. [Join the Keygrain tester group](https://groups.google.com/g/keygrain-testers).
+2. [Opt into closed testing](https://play.google.com/apps/testing/com.secbytech.keygrain) with your Google account.
+3. Install Keygrain through Google Play, then open the app to begin setup.
+
+No Keygrain account is required. A Google account is needed only for Play tester enrollment.
 
 ### First Launch
 

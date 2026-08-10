@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha"><img src="https://img.shields.io/chrome-web-store/v/goeemlncopfbcnppjalfmgdalbhlgdha?label=Chrome" alt="Chrome Web Store"></a>
   <a href="https://addons.mozilla.org/addon/keygrain/"><img src="https://img.shields.io/amo/v/keygrain?label=Firefox" alt="Firefox Add-ons"></a>
-  <a href="https://keygrain.com"><img src="https://img.shields.io/badge/Android-APK-green" alt="Android APK"></a>
+  <a href="https://groups.google.com/g/keygrain-testers"><img src="https://img.shields.io/badge/Android-Closed%20testing-orange" alt="Android closed testing"></a>
   <a href="https://keygrain.com/generate/"><img src="https://img.shields.io/badge/Web-PWA-blue" alt="Web Generator"></a>
   <a href="#python-cli"><img src="https://img.shields.io/badge/CLI-pip_install-orange" alt="Python CLI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT License"></a>
@@ -90,7 +90,7 @@ Keygrain derives unique, strong passwords from your master secret and site infor
 - Biometric unlock (fingerprint / face)
 - Services CRUD with search
 - Encrypted sync across devices
-- Export / import (JSON)
+- Encrypted backup export / import
 
 **Web Generator**
 - Progressive Web App — works offline
@@ -143,7 +143,7 @@ Full specification: [SPEC.md](SPEC.md)
 | Platform | Description | Access |
 |----------|-------------|--------|
 | Browser extension | Chrome (MV3) + Firefox (MV2) | [Chrome Web Store](https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha) / [Firefox Add-ons](https://addons.mozilla.org/addon/keygrain/) or build from `extension/` |
-| Android app | Kotlin + Jetpack Compose | [APK download](https://keygrain.com) |
+| Android app | Kotlin + Jetpack Compose | [Join the tester group](https://groups.google.com/g/keygrain-testers), then [opt into closed testing](https://play.google.com/apps/testing/com.secbytech.keygrain) and install through Google Play |
 | Web generator | Client-side PWA | [keygrain.com/generate](https://keygrain.com/generate/) |
 | Python library + CLI | Library and command-line tool | `pip install` from repo |
 | Sync service | End-to-end encrypted sync API | Hosted at keygrain.com |
