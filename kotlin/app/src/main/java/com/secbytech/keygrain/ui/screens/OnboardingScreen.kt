@@ -53,7 +53,12 @@ fun OnboardingWizard(
         scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
         // Page indicator
         Row(
             modifier = Modifier
@@ -114,6 +119,7 @@ fun OnboardingWizard(
                     onGetStarted = { onComplete(masterSecret) }
                 )
             }
+        }
         }
     }
 }
