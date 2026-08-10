@@ -298,24 +298,24 @@ await test('D18: computeSyncStatus no state', async () => {
 
 // --- Shortcut discoverability helpers (K1-K9) ---
 await test('K1: shortcutHintText set (non-mac) → verbatim, isSet true', async () => {
-  const r = call('shortcutHintText', {shortcut: 'Ctrl+Shift+K', isMac: false});
-  assert.equal(r.label, 'Ctrl+Shift+K');
+  const r = call('shortcutHintText', {shortcut: 'Ctrl+Shift+Y', isMac: false});
+  assert.equal(r.label, 'Ctrl+Shift+Y');
   assert.equal(r.isSet, true);
 });
 await test('K2: shortcutHintText unset (non-mac) → Ctrl fallback', async () => {
   const r = call('shortcutHintText', {shortcut: '', isMac: false});
-  assert.equal(r.label, 'Ctrl+Shift+K');
+  assert.equal(r.label, 'Ctrl+Shift+Y');
   assert.equal(r.isSet, false);
 });
 await test('K3: shortcutHintText unset (mac) → Cmd fallback', async () => {
   const r = call('shortcutHintText', {shortcut: '', isMac: true});
-  assert.equal(r.label, 'Cmd+Shift+K');
+  assert.equal(r.label, 'Cmd+Shift+Y');
   assert.equal(r.isSet, false);
 });
 await test('K4: shortcutHintText whitespace treated as unset', async () => {
   const r = call('shortcutHintText', {shortcut: '   ', isMac: false});
   assert.equal(r.isSet, false);
-  assert.equal(r.label, 'Ctrl+Shift+K');
+  assert.equal(r.label, 'Ctrl+Shift+Y');
 });
 await test('K5: shortcutHintText passthrough custom combo', async () => {
   const r = call('shortcutHintText', {shortcut: 'Alt+Shift+P', isMac: true});
@@ -343,7 +343,7 @@ await test('K8: shortcutCustomizeInfo both branches always carry instructions', 
   }
 });
 await test('K9: pickShortcut match / field-absent / empty / undefined', async () => {
-  assert.equal(call('pickShortcut', [{name: 'other'}, {name: 'fill_credentials', shortcut: 'Ctrl+Shift+K'}]), 'Ctrl+Shift+K');
+  assert.equal(call('pickShortcut', [{name: 'other'}, {name: 'fill_credentials', shortcut: 'Ctrl+Shift+Y'}]), 'Ctrl+Shift+Y');
   assert.equal(call('pickShortcut', [{name: 'fill_credentials'}]), ''); // entry present, shortcut field absent (§7.3)
   assert.equal(call('pickShortcut', []), '');
   assert.equal(call('pickShortcut', undefined), '');

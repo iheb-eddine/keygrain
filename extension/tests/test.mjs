@@ -1870,7 +1870,7 @@ await test('buildDropdownModel: non-string name does not throw, coerces (hostile
 // NOT — and cannot — verify real-browser occlusion, which needs a layout engine
 // Node lacks; the opaque pointer-events:none paint-over residual (now Chrome+Firefox
 // parity) is an accepted, documented limitation, with the toolbar popup + Ctrl/Cmd+
-// Shift+K as the unspoofable fallback. A green run here is a REVERT-GUARD (e.g. it
+// Shift+Y as the unspoofable fallback. A green run here is a REVERT-GUARD (e.g. it
 // catches a future activeIndex=0 or unarmed-activation regression), not proof
 // against a real paint-over.
 console.log('\nInline-Autofill-UI Behavioral Tests (F1 clickjacking fix — control flow only):');

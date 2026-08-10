@@ -25,7 +25,7 @@ FEATURES:
 • SSH keys — generate deterministic Ed25519 SSH keys
 • HD wallets — derive BIP-39 mnemonic seeds for cryptocurrency wallets
 • Encrypted sync — optionally sync your site list across devices (end-to-end encrypted, server sees only ciphertext)
-• Autofill — fills password fields with one click or Ctrl+Shift+K
+• Autofill — fills password fields with one click or Ctrl+Shift+Y
 • Per-site customization — adjust length, symbols, and counter
 • Visual verification — colored fingerprint confirms your secret is correct
 • Auto-lock — master secret cleared from memory after inactivity

@@ -108,7 +108,7 @@ If only one service matches the current site, a **Quick Fill** button appears at
 
 ### Keyboard Shortcut
 
-Press **Ctrl+Shift+K** (or **Cmd+Shift+K** on Mac) to autofill without opening the popup. Keygrain matches the current site and fills your credentials instantly.
+Press **Ctrl+Shift+Y** (or **Cmd+Shift+Y** on Mac) to autofill without opening the popup. Keygrain matches the current site and fills your credentials instantly.
 
 ### Right-Click Menu
 
@@ -268,7 +268,7 @@ The export is encrypted with your master secret — it's safe to store in cloud 
 
 | Shortcut | Action |
 |----------|--------|
-| Ctrl+Shift+K (Cmd+Shift+K on Mac) | Autofill current site |
+| Ctrl+Shift+Y (Cmd+Shift+Y on Mac) | Autofill current site |
 | ↓ / ↑ | Navigate service list |
 | Enter | Fill selected service |
 | Escape | Clear search → close popup |
