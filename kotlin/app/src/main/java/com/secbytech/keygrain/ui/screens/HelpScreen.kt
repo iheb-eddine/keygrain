@@ -26,7 +26,7 @@ private data class FaqItem(val title: String, val content: String)
 private val faqItems = listOf(
     FaqItem(
         "What is Keygrain?",
-        "Keygrain is a deterministic password manager. Instead of storing passwords, it generates them on the fly from your master secret + email + site name.\n\nThe same inputs always produce the same password. Nothing is stored, nothing can be stolen from a server breach."
+        "Keygrain is a deterministic password manager. Generated passwords are not stored; they are derived on demand from your master secret + email + site name.\n\nAndroid may retain local service, configuration, and sync data; service data is stored encrypted. When biometric unlock is enabled, it may also retain your master secret encrypted in Android Keystore. The sync server does not receive your master secret or generated passwords."
     ),
     FaqItem(
         "Getting started",
@@ -34,7 +34,7 @@ private val faqItems = listOf(
     ),
     FaqItem(
         "What is my master secret?",
-        "Your master secret is the single passphrase that generates all your passwords. On Android, it is stored encrypted (protected by biometric) to enable quick unlock. It is never sent to any server.\n\n⚠️ If you lose your master secret, all your passwords are lost. There is no recovery mechanism. This is by design.\n\nThe colored dots (fingerprint) help you verify you typed it correctly — same secret always shows the same colors."
+        "Your master secret is the single passphrase that generates all your passwords. When biometric unlock is enabled, it may be retained encrypted in Android Keystore. While the app is unlocked, it is held in memory; locking clears the in-memory copy, but locking does not necessarily delete the encrypted Keystore copy. It is never sent to any server.\n\n⚠️ If you lose your master secret, all your passwords are lost. There is no recovery mechanism. This is by design.\n\nThe colored dots (fingerprint) help you verify you typed it correctly — same secret always shows the same colors."
     ),
     FaqItem(
         "How does sync work?",
@@ -42,7 +42,7 @@ private val faqItems = listOf(
     ),
     FaqItem(
         "How do I rotate a password?",
-        "Edit the service and tap Rotate password. This increments an internal counter, generating a completely new password.\n\nAfter rotating, update the password on the actual website."
+        "Edit service → expand Options → change Counter → Save. Each counter value generates a different password, so update the password on the actual website."
     ),
     FaqItem(
         "How do I migrate from another manager?",
@@ -58,7 +58,7 @@ private val faqItems = listOf(
     ),
     FaqItem(
         "Troubleshooting",
-        "Wrong password generated? Check that the email and site name match exactly what you used when you created the entry. Sites are case-insensitive, but verify the exact domain matches.\n\nSync failing? Verify the server URL in Settings and ensure you're using the same email you synced with originally."
+        "Wrong password generated? Check that the email and site name match exactly what you used when you created the entry. Sites are case-insensitive, but verify the exact domain matches.\n\nSync failing? Check your internet connection and confirm that the email address and master secret match the ones used on the other device."
     )
 )
 
