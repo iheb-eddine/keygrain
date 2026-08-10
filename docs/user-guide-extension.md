@@ -1,6 +1,6 @@
 # Keygrain Browser Extension — User Guide
 
-Keygrain generates unique passwords from your secret — nothing is stored. You remember one secret, and Keygrain creates a different strong password for every site you use.
+Keygrain derives unique passwords from your master secret rather than storing generated passwords. The extension also stores service configuration and other local account/device state, including an encrypted service payload stored locally. If you enable PIN unlock, an encrypted copy of the master secret is stored locally for PIN unlock. Optional sync uploads encrypted service data; the sync server does not receive your master secret or generated passwords.
 
 ---
 
@@ -301,7 +301,7 @@ After rotating, remember to visit each affected site and update your password th
 ### Locked out
 
 - If your PIN was cleared (5 wrong attempts), enter your master secret on the lock screen
-- If you forgot your master secret, there is no recovery — Keygrain doesn't store it anywhere. This is by design for security.
+- If you forgot your master secret, there is no recovery. When PIN unlock is enabled, Keygrain keeps an encrypted local copy so the PIN can unlock the extension, but that is not a separate recovery method; clearing browser data or PIN data removes it. This is by design for security.
 
 ### Sync not working
 
