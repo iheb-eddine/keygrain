@@ -59,7 +59,3 @@ https://keygrain.com/privacy.html
 ## Single Purpose Description
 
 Derive deterministic passwords, TOTP codes, SSH keys, and wallet seeds from a master secret, with optional end-to-end encrypted sync across devices.
-
-## Version
-
-1.1.0

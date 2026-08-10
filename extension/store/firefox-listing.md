@@ -120,7 +120,3 @@ The extension makes network requests to `https://keygrain.com` for:
 - `storage` — encrypted site list and settings in local storage
 - `tabs` — read tab URL during background operations (badge updates, context menu, keyboard shortcut)
 - `https://keygrain.com/*` — sync server communication
-
-## Version
-
-1.1.0
