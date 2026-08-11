@@ -9,7 +9,7 @@
   <!-- Lock Screen -->
   <div id="lock-screen">
     <h1><img src="icons/icon-16.png" alt="" width="16" height="16" style="vertical-align:middle"> Keygrain</h1>
-    <p class="lock-explanation">Keygrain derives unique passwords from your secret — nothing is stored.</p>
+    <p class="lock-explanation">Keygrain derives unique passwords from your secret rather than storing generated passwords. The extension stores service configuration and other local account/device state, including an encrypted service payload locally. Optional PIN unlock stores an encrypted copy of your secret locally.</p>
     <label for="email">Email</label>
     <input type="email" id="email" autocomplete="email" required>
     <label for="secret">Master Secret</label>
@@ -262,7 +262,7 @@
     <p>To do that, your browser will ask permission for Keygrain to run on websites. Here's the honest version:</p>
     <ul class="consent-list">
       <li>The fill button only appears on sites you've <strong>saved in Keygrain</strong>. Keygrain does nothing on any other site.</li>
-      <li><strong>Nothing leaves your device.</strong> Keygrain still creates your passwords right here on your computer, and only when you pick an account.</li>
+      <li><strong>Generated passwords are derived on your device.</strong> Keygrain creates them here when you pick an account; they are not stored in Keygrain or uploaded by sync. If you enable sync, encrypted service data may be uploaded; your master secret and generated passwords are not uploaded.</li>
       <li>Your <strong>master secret is never entered on web pages</strong> — only here in the Keygrain popup.</li>
       <li>You can <strong>turn this off anytime</strong> in Settings, and the permission is removed with it.</li>
     </ul>
@@ -285,8 +285,8 @@
         <p>Add the sites you use — passwords are generated on the fly.</p>
       </div>
       <div class="onboarding-step hidden" id="onboarding-step-3">
-        <h2>3. Nothing is stored</h2>
-        <p>Passwords are derived, never stored. Your secret never leaves your device.</p>
+        <h2>3. What is stored</h2>
+        <p>Generated passwords are derived, not stored. The extension stores service configuration and encrypted local service data. Optional PIN unlock stores an encrypted copy of your secret locally; optional sync uploads encrypted service data, never your secret or generated passwords.</p>
       </div>
       <p class="onboarding-hint">Click anywhere to continue</p>
     </div>
