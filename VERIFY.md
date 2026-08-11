@@ -39,10 +39,10 @@ cd keygrain
 
 # Check out the tag for the version you installed. Match your browser — Chrome and
 # Firefox have separate tags — and the version it reports (see About/Help):
-git checkout chrome-v1.2.0            # or firefox-v1.2.0
+git checkout chrome-v1.3.0            # or firefox-v1.3.0 / chrome-v1.2.0 / firefox-v1.2.0
 
-# For 1.2.0 ONLY: take the fixed builder from main. Required — see the note below.
-git checkout origin/main -- extension/build.sh
+# For 1.2.0 ONLY: use the fixed builder from main. Not needed for 1.3.0 and later.
+# git checkout origin/main -- extension/build.sh
 
 bash extension/build.sh
 cd extension/dist
@@ -54,35 +54,45 @@ sha256sum keygrain-chrome-*.zip keygrain-firefox-*.zip
 > machine with a `022` umask — on any other machine it produces a *different* hash from
 > identical source, which would look like a mismatch when nothing is wrong. That is fixed on
 > `main`, and the fixed builder is a ~40-line shell script you can read in full before you run
-> it. From the next release onward the extra line is unnecessary, and these instructions will
-> drop it.
+> it. From 1.3.0 onward the extra line is unnecessary.
 
 Compare the output against `SHA256SUMS.txt` on the matching
 [GitHub Release](https://github.com/iheb-eddine/keygrain/releases) — or download that
 file into `extension/dist/` and run `sha256sum -c SHA256SUMS.txt`. If they match, the
-released zip was built from exactly this source. (You need `bash`, `zip`, and
-`sha256sum` — no other toolchain.)
+released zip was built from exactly this source. (You need `bash`, `zip`, and `sha256sum` — no
+other toolchain.)
 
-**What is covered today.** Hash verification is available for **Chrome 1.2.0 and Firefox
-1.2.0, and later**. Chrome and Firefox carry independent versions and independent tags
-(`chrome-v<version>`, `firefox-v<version>`) because store review times differ, so each
-browser's build gets its own tag when that store actually ships it. Two tags may point at the
-same commit — `chrome-v1.2.0` and `firefox-v1.2.0` both do, because both stores shipped the
-same source.
+**Published 1.3.0 release hashes:**
 
-Measured on 2026-07-30: the Chrome Web Store serves 1.2.0 (updated 2026-07-29) and Firefox
-Add-ons serves 1.2.0 (released 2026-07-28). Exactly what each store lists, per version:
-
-| Extension version | Reached a store? | Public tag | Published checksums |
+| Component | Public tag | Source commit | SHA-256 |
 |---|---|---|---|
-| 1.2.0 | both | `chrome-v1.2.0`, `firefox-v1.2.0` | **yes** |
-| 1.1.0 | both | none | none |
-| 1.0.0 | no — never published to a store | `v1.0.0` | yes (but nothing shipped to compare) |
-| 0.11.0 and earlier | yes | `v0.11.0` and earlier | none |
+| Chrome | `chrome-v1.3.0` | `22a171b7` | `e20a5100a21475fb96458bad3fac8590624d3db5c0385e4ed498dc3e2743125b` |
+| Firefox | `firefox-v1.3.0` | `22a171b7` | `d9e8143cbf604b17c397819714ff681a6f356f6196201091d3b4373ff9925420` |
 
-(Firefox Add-ons publishes a full version history, so the Firefox column is directly
-checkable: 1.2.0, 1.1.0, 0.11.0, 0.10.0, 0.9.1. The Chrome Web Store shows only the current
-version, so for Chrome we can only point you at what it serves today.)
+**What is covered today.** Hash verification is available for every browser version with a
+public component tag, GitHub Release, and published checksum asset. Store availability is
+tracked separately because store review times differ. As of **2026-08-11**:
+
+- Chrome Web Store serves `1.2.0`; Chrome `1.3.0` has a public, hash-verifiable artifact but
+  is still pending Chrome Web Store review.
+- Firefox Add-ons serves `1.3.0`, which has a public, hash-verifiable artifact.
+
+| Extension version | Store status | Public tag | Published checksums |
+|---|---|---|---|
+| 1.3.0 | Chrome: pending review; Firefox: published | `chrome-v1.3.0`, `firefox-v1.3.0` | **yes** |
+| 1.2.0 | both published | `chrome-v1.2.0`, `firefox-v1.2.0` | **yes** |
+| 1.1.0 | both published | none | none |
+| 1.0.0 | no — never published to a store | `v1.0.0` | yes (but nothing shipped to compare) |
+| 0.11.0 and earlier | published | `v0.11.0` and earlier | none |
+
+The Chrome `1.3.0` row means the public artifact is available for download and verification;
+it does not claim that the Chrome Web Store has approved or delivered that version yet. Once
+Chrome publishes it, only the store-status evidence changes. The public tag, release, checksums,
+and source mapping remain the same.
+
+(Firefox Add-ons publishes a full version history, so its store status is directly checkable.
+The Chrome Web Store shows only the current version, so Chrome store status must be measured
+from the current listing.)
 
 The gap we would rather state than hide: **1.1.0 has no tag and no checksums**, so Method A
 cannot be completed for it. Nothing was retained from that release, and a tag cut today would
@@ -237,12 +247,12 @@ certificate DN: CN=Android, OU=Android, O=Google Inc., L=Mountain View, ST=Calif
 key:            RSA 4096
 ```
 
-Measured on **2026-07-30** against the current release — **1.2.0, versionCode 10200** — using
-the universal APK that Play itself generates, fetched through the Play Developer API. It
-reports a single signer and no key-rotation lineage. The same value was measured on 2026-07-29
-against versionCode 10100 two independent ways: an APK pulled off a device with `adb`, and the
-same generated-APK route. So this fingerprint has now been confirmed on two separate releases,
-and it did **not** change when 1.2.0 was published.
+Measured on **2026-08-11** against the Play-delivered **1.3.0, versionCode 10300** using
+the base APK pulled from a connected device installed by Google Play (`installerPackageName=
+com.android.vending`). It reports a single signer and no key-rotation lineage. The same value
+was previously measured against versionCodes 10100 and 10200 through independent device and
+Play-generated-APK checks. So this fingerprint is confirmed across three releases, including
+1.3.0.
 
 A match means the APK came through our Play listing and was not modified after Google signed
 it. Anything else does not.
