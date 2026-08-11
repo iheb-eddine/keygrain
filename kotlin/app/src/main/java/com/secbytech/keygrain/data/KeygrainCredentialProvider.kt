@@ -60,16 +60,12 @@ class KeygrainCredentialProvider : CredentialProviderService() {
 
         val normalized = ServiceManager.normalizeSite(host)
         val psl = PublicSuffixList.getInstance(applicationContext)
-        val visitedRegistrable = psl.extractRegistrableDomain(normalized)
-        if (visitedRegistrable == null) {
-            callback.onResult(BeginGetCredentialResponse())
-            return
-        }
-
         val serviceManager = ServiceManager(applicationContext)
-        val matches = serviceManager.getServices().filter {
-            psl.extractRegistrableDomain(ServiceManager.normalizeSite(it.site)) == visitedRegistrable
-        }
+        val matches = AutofillMatcher.mostSpecificMatches(
+            normalized,
+            serviceManager.getServices(),
+            psl
+        )
         if (matches.isEmpty()) {
             callback.onResult(BeginGetCredentialResponse())
             return
