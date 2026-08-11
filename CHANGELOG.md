@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Components are 
 
 ## Chrome extension
 
+### [1.3.0] - 2026-08-11
+
+- You can now stop a password migration part-way through. Services you have not rotated are removed from the migration batch and that decision syncs to your other devices; their old site passwords remain unchanged, so change them if needed.
+- Migration progress stays consistent between the popup, migration page, and synced data.
+- Domain matching during migration now uses the public suffix list, improving handling of subdomains and multi-part domains.
+- Sync serialization and password-symbol validation are more consistent across Keygrain clients.
+- Additional security and reliability fixes improve migration and sync behavior.
+
 ### [1.2.0] - 2026-07-29
 
 Deletions now sync properly across your devices, and importing from another password
@@ -65,6 +73,14 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 (SPEC v4).
 
 ## Firefox extension
+
+### [1.3.0] - 2026-08-11
+
+- You can now stop a password migration part-way through. Services you have not rotated are removed from the migration batch and that decision syncs to your other devices; their old site passwords remain unchanged, so change them if needed.
+- Migration progress stays consistent between the popup, migration page, and synced data.
+- Domain matching during migration now uses the public suffix list, improving handling of subdomains and multi-part domains.
+- The keyboard shortcut no longer conflicts with Firefox's own shortcuts.
+- Sync serialization and password-symbol validation are more consistent across Keygrain clients.
 
 ### [1.2.0] - 2026-07-28
 
@@ -126,6 +142,13 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ## Android app
 
+### [1.3.0] - 2026-08-11
+
+- Autofill now chooses the most-specific saved service for a site, reducing ambiguous matches on subdomains.
+- Sync serialization is aligned with other Keygrain clients, and migration status survives sync round trips.
+- Safer sync transport rejects redirects; copied passwords are cleared safely and sensitive autofill details are no longer logged.
+- Invalid saved settings no longer break onboarding or editing.
+
 ### [1.2.0] - 2026-07-30
 
 - Deleting a service now sticks. Remove an entry on one device and it stays removed everywhere, instead of reappearing when another syncs.
@@ -166,6 +189,12 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ## Python CLI
 
+### [1.0.1] - 2026-08-11
+
+- Unsafe sync endpoints are now rejected; HTTPS is required except for loopback development endpoints.
+- Password-symbol validation is consistent with the other Keygrain clients.
+- Wallet expansion diagnostics now distinguish input mismatches from hardware faults.
+
 ### [1.0.0] - 2026-07-24
 
 Keygrain is now on PyPI: `pip install keygrain`.
@@ -181,6 +210,10 @@ Keygrain is now on PyPI: `pip install keygrain`.
 No algorithm changes — output is byte-identical across all Keygrain platforms (SPEC v4).
 
 ## Sync server
+
+### [1.1.1] - 2026-08-11
+
+- Updated website guidance to match the current browser-extension shortcut and sync behavior.
 
 ### [1.1.0] - 2026-07-27
 
