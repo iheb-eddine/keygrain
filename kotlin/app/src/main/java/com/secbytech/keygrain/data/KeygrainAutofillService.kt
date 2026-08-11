@@ -10,12 +10,14 @@ import android.widget.RemoteViews
 class KeygrainAutofillService : AutofillService() {
 
     companion object {
-        private val DEFAULT_BROWSER_PACKAGES = setOf(
+        internal val DEFAULT_BROWSER_PACKAGES = setOf(
             "com.android.chrome",
             "org.mozilla.firefox",
             "com.sec.android.app.sbrowser",
             "com.brave.browser",
-            "com.microsoft.emmx"
+            "com.microsoft.emmx",
+            "com.duckduckgo.mobile.android",
+            "com.opera.browser"
         )
         private const val PREFS_NAME = "keygrain_autofill"
         private const val KEY_BROWSERS = "trusted_browsers"
@@ -64,16 +66,12 @@ class KeygrainAutofillService : AutofillService() {
 
             val normalizedDomain = ServiceManager.normalizeSite(domain)
             val psl = PublicSuffixList.getInstance(applicationContext)
-            val visitedRegistrable = psl.extractRegistrableDomain(normalizedDomain)
-            if (visitedRegistrable == null) {
-                Log.d("KeygrainAutofill", "No registrable domain")
-                callback.onSuccess(null)
-                return
-            }
             val serviceManager = ServiceManager(applicationContext)
-            val matches = serviceManager.getServices().filter {
-                psl.extractRegistrableDomain(ServiceManager.normalizeSite(it.site)) == visitedRegistrable
-            }
+            val matches = AutofillMatcher.mostSpecificMatches(
+                normalizedDomain,
+                serviceManager.getServices(),
+                psl
+            )
 
             if (matches.isEmpty()) {
                 Log.d("KeygrainAutofill", "No matching services")
