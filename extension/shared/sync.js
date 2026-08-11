@@ -384,6 +384,59 @@ function reconcileServices(localServices, localTombstones, remoteServices, remot
  * work, so ordering and key order are fixed here. Local-only fields (synced, frecency)
  * are excluded because they never enter the blob.
  */
+// This is deliberately separate from JSON.stringify: Kotlin's Android JSON implementation
+// does not promise the same escaping or object-key order. The accepted value domain is the
+// finite, integral JSON data emitted by the sync models; malformed/non-finite values are not
+// normalized here.
+function canonicalSyncJSONString(value) {
+  let out = '"';
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    switch (code) {
+      case 0x08: out += '\\b'; continue;
+      case 0x09: out += '\\t'; continue;
+      case 0x0a: out += '\\n'; continue;
+      case 0x0c: out += '\\f'; continue;
+      case 0x0d: out += '\\r'; continue;
+      case 0x22: out += '\\\"'; continue;
+      case 0x5c: out += '\\\\'; continue;
+      default: break;
+    }
+    if (code <= 0x1f) {
+      out += '\\u00' + code.toString(16).padStart(2, '0');
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += value[i] + value[++i];
+      } else {
+        out += '\\u' + code.toString(16).padStart(4, '0');
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      out += '\\u' + code.toString(16).padStart(4, '0');
+    } else {
+      out += value[i];
+    }
+  }
+  return out + '"';
+}
+
+function canonicalSyncJSON(value) {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return canonicalSyncJSONString(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) throw new Error('canonical sync JSON requires safe integers');
+    return String(value);
+  }
+  if (Array.isArray(value)) return '[' + value.map(canonicalSyncJSON).join(',') + ']';
+  if (typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(key =>
+      canonicalSyncJSONString(key) + ':' + canonicalSyncJSON(value[key])
+    ).join(',') + '}';
+  }
+  throw new Error('unsupported canonical sync JSON value');
+}
+
 function canonicalBlobPayload(services, metadata, wallets, auditLog, syncConflicts) {
   const svcByID = new Map();
   for (let i = 0; i < metadata.length; i++) {
@@ -420,12 +473,25 @@ function canonicalBlobPayload(services, metadata, wallets, auditLog, syncConflic
     const ka = conflictKey(a), kb = conflictKey(b);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
-  return JSON.stringify({
-    services: orderedServices,
-    wallets: orderedWallets,
-    wallet_audit_log: orderedAudit,
-    sync_conflicts: orderedConflicts
-  });
+  const orderedServicePayloads = orderedServices.map(s =>
+    '{"id":' + canonicalSyncJSON(s.id) +
+    ',"updated_at":' + canonicalSyncJSON(s.updated_at) +
+    ',"name":' + canonicalSyncJSON(s.name) +
+    ',"site":' + canonicalSyncJSON(s.site) +
+    ',"email":' + canonicalSyncJSON(s.email) +
+    ',"length":' + canonicalSyncJSON(s.length) +
+    ',"symbols":' + canonicalSyncJSON(s.symbols) +
+    ',"counter":' + canonicalSyncJSON(s.counter) +
+    ',"migrating":' + canonicalSyncJSON(s.migrating) +
+    ',"totp":' + canonicalSyncJSON(s.totp) +
+    ',"ssh":' + canonicalSyncJSON(s.ssh) + '}'
+  );
+  // Top-level and service field order are part of the existing comparison contract. Every
+  // nested/variable object below is recursively canonicalized by canonicalSyncJSON.
+  return '{"services":[' + orderedServicePayloads.join(',') + ']' +
+    ',"wallets":' + canonicalSyncJSON(orderedWallets) +
+    ',"wallet_audit_log":' + canonicalSyncJSON(orderedAudit) +
+    ',"sync_conflicts":' + canonicalSyncJSON(orderedConflicts) + '}';
 }
 
 /**

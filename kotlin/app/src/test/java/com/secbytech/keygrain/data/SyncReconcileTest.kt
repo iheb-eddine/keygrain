@@ -329,6 +329,16 @@ class SyncReconcileTest {
         assertEquals("x", r.review[0].service.id)
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun canonical_rejectsLongMinValueOutsideSafeIntegerDomain() {
+        val nested = JSONObject().put("unsafe", Long.MIN_VALUE)
+        val service = ServiceEntry(
+            name = "A", site = "a.com", email = "e@x", id = "i1", updatedAt = 1,
+            totp = nested
+        )
+        SyncBlob.canonicalBlobPayload(listOf(service), emptyList(), emptyList(), emptyList())
+    }
+
     // === Frozen Req 9: canonical form drives the no-op PUT skip ===
 
     @Test

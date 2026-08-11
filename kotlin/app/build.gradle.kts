@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.Copy
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,6 +17,14 @@ require(versionParts[1].toInt() < 100 && versionParts[2].toInt() < 100) {
 val computedVersionCode = versionParts[0].toInt() * 10000 + versionParts[1].toInt() * 100 + versionParts[2].toInt()
 val suffix = findProperty("versionSuffix")?.toString()?.let { "-$it" } ?: ""
 
+val kg22Fixture = rootProject.projectDir.resolve("../sync-canonical-vectors.json")
+require(kg22Fixture.isFile) { "KG-22 fixture not found: $kg22Fixture" }
+val kg22AndroidTestAssets = layout.buildDirectory.dir("generated/kg22/androidTest/assets")
+val copyKg22Fixture = tasks.register<Copy>("copyKg22CanonicalFixture") {
+    from(kg22Fixture)
+    into(kg22AndroidTestAssets)
+}
+
 android {
     namespace = "com.secbytech.keygrain"
     compileSdk = 36
@@ -25,6 +35,11 @@ android {
         targetSdk = 36
         versionCode = computedVersionCode
         versionName = versionString + suffix
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    sourceSets {
+        getByName("androidTest").assets.srcDir(kg22AndroidTestAssets)
     }
 
     signingConfigs {
@@ -72,6 +87,10 @@ android {
     }
 }
 
+tasks.configureEach {
+    if (name == "preDebugAndroidTestBuild") dependsOn(copyKg22Fixture)
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
     implementation(composeBom)
@@ -104,6 +123,8 @@ dependencies {
     // Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20231013")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 
     // Argon2id (BouncyCastle)
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")

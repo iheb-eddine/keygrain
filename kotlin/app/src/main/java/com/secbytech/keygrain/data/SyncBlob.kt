@@ -22,54 +22,140 @@ internal object SyncBlob {
         auditLog: List<WalletAuditEntry>,
         syncConflicts: List<SyncConflict>
     ): String {
-        val sb = StringBuilder()
-        sb.append("{\"services\":[")
-        services.sortedBy { it.id ?: "" }.forEachIndexed { i, s ->
-            if (i > 0) sb.append(",")
-            sb.append("{\"id\":").append(jsonStr(s.id))
-                .append(",\"updated_at\":").append(s.updatedAt)
-                .append(",\"name\":").append(jsonStr(s.name))
-                .append(",\"site\":").append(jsonStr(s.site))
-                .append(",\"email\":").append(jsonStr(s.email))
-                .append(",\"length\":").append(s.length)
-                .append(",\"symbols\":").append(jsonStr(s.symbols))
-                .append(",\"counter\":").append(s.counter)
-                // Part of the canonical comparison because it is remote state: the extension
-                // sets it and syncs it. Omitting it made this app blind to a difference that
-                // is only in this field, so a merge that should have pushed a restored or
-                // cleared flag skipped the PUT instead.
-                //
-                // Shape matches sync.js exactly (`content.migrating ?? null`): `true` when set,
-                // `null` when absent. The extension deletes the property rather than writing
-                // `false`, so those are the only two values that occur.
-                .append(",\"migrating\":").append(if (s.migrating) "true" else "null")
-                .append(",\"totp\":").append(s.totp?.toString() ?: "null")
-                .append(",\"ssh\":").append(s.ssh?.toString() ?: "null")
-                .append("}")
-        }
-        sb.append("],\"wallets\":[")
-        wallets.sortedBy { it.walletName.lowercase() + ":" + it.chain.lowercase() }
-            .forEachIndexed { i, w ->
-                if (i > 0) sb.append(",")
-                sb.append(w.toJson().toString())
+        val orderedServices = services.sortedBy { it.id ?: "" }
+        val orderedWallets = wallets.sortedBy { it.walletName.lowercase() + ":" + it.chain.lowercase() }
+        val orderedAudit = auditLog.sortedBy { "${it.timestamp}\u0000${it.walletName}\u0000${it.chain}\u0000${it.action}" }
+        val orderedConflicts = syncConflicts.sortedBy { it.dedupeKey() }
+
+        // Top-level and service field order are an existing comparison contract. All nested
+        // and variable objects use canonicalJson, which sorts their object keys recursively.
+        return buildString {
+            append("{\"services\":[")
+            orderedServices.forEachIndexed { i, service ->
+                if (i > 0) append(",")
+                append(canonicalService(service))
             }
-        sb.append("],\"wallet_audit_log\":[")
-        auditLog.sortedBy { "${it.timestamp}\u0000${it.walletName}\u0000${it.chain}\u0000${it.action}" }
-            .forEachIndexed { i, e ->
-                if (i > 0) sb.append(",")
-                sb.append(e.toJson().toString())
-            }
-        sb.append("],\"sync_conflicts\":[")
-        syncConflicts.sortedBy { it.dedupeKey() }.forEachIndexed { i, c ->
-            if (i > 0) sb.append(",")
-            sb.append(c.toJson().toString())
+            append("],\"wallets\":")
+                .append(canonicalJson(orderedWallets.map { it.toJson() }))
+            append(",\"wallet_audit_log\":")
+                .append(canonicalJson(orderedAudit.map { it.toJson() }))
+            append(",\"sync_conflicts\":")
+                .append(canonicalJson(orderedConflicts.map { it.toJson() }))
+            append("}")
         }
-        sb.append("]}")
-        return sb.toString()
     }
 
-    private fun jsonStr(s: String?): String =
-        if (s == null) "null" else JSONObject.quote(s)
+    private fun canonicalService(service: ServiceEntry): String = buildString {
+        append("{\"id\":").append(canonicalJson(service.id))
+        append(",\"updated_at\":").append(canonicalJson(service.updatedAt))
+        append(",\"name\":").append(canonicalJson(service.name))
+        append(",\"site\":").append(canonicalJson(service.site))
+        append(",\"email\":").append(canonicalJson(service.email))
+        append(",\"length\":").append(canonicalJson(service.length))
+        append(",\"symbols\":").append(canonicalJson(service.symbols))
+        append(",\"counter\":").append(canonicalJson(service.counter))
+        append(",\"migrating\":").append(canonicalJson(if (service.migrating) true else null))
+        append(",\"totp\":").append(canonicalJson(service.totp))
+        append(",\"ssh\":").append(canonicalJson(service.ssh))
+        append("}")
+    }
+
+    private fun canonicalJson(value: Any?): String = when {
+        value == null || value === JSONObject.NULL -> "null"
+        value is String -> canonicalString(value)
+        value is Boolean -> if (value) "true" else "false"
+        value is Number -> canonicalNumber(value)
+        value is List<*> -> buildString {
+            append("[")
+            value.forEachIndexed { i, item ->
+                if (i > 0) append(",")
+                append(canonicalJson(item))
+            }
+            append("]")
+        }
+        value is JSONArray -> buildString {
+            append("[")
+            for (i in 0 until value.length()) {
+                if (i > 0) append(",")
+                append(canonicalJson(value.opt(i)))
+            }
+            append("]")
+        }
+        value is JSONObject -> {
+            val keys = mutableListOf<String>()
+            val iterator = value.keys()
+            while (iterator.hasNext()) keys += iterator.next()
+            keys.sort()
+            buildString {
+                append("{")
+                keys.forEachIndexed { i, key ->
+                    if (i > 0) append(",")
+                    append(canonicalString(key)).append(":").append(canonicalJson(value.opt(key)))
+                }
+                append("}")
+            }
+        }
+        else -> throw IllegalArgumentException("unsupported canonical sync JSON value")
+    }
+
+    private fun canonicalNumber(number: Number): String {
+        val value = when (number) {
+            is Byte, is Short, is Int, is Long -> number.toLong()
+            is Float -> {
+                require(number.isFinite() && number % 1f == 0f) {
+                    "canonical sync JSON requires finite integral numbers"
+                }
+                number.toLong()
+            }
+            is Double -> {
+                require(number.isFinite() && number % 1.0 == 0.0) {
+                    "canonical sync JSON requires finite integral numbers"
+                }
+                number.toLong()
+            }
+            else -> throw IllegalArgumentException("unsupported canonical sync number")
+        }
+        require(value in -MAX_SAFE_INTEGER..MAX_SAFE_INTEGER) {
+            "canonical sync JSON requires safe integers"
+        }
+        return value.toString()
+    }
+
+    private fun canonicalString(value: String): String = buildString {
+        append('"')
+        var i = 0
+        while (i < value.length) {
+            val code = value[i].code
+            when (code) {
+                0x08 -> append("\\b")
+                0x09 -> append("\\t")
+                0x0a -> append("\\n")
+                0x0c -> append("\\f")
+                0x0d -> append("\\r")
+                0x22 -> append("\\\"")
+                0x5c -> append("\\\\")
+                else -> when {
+                    code <= 0x1f -> append("\\u00").append(code.toString(16).padStart(2, '0'))
+                    code in 0xd800..0xdbff -> {
+                        val next = if (i + 1 < value.length) value[i + 1].code else -1
+                        if (next in 0xdc00..0xdfff) {
+                            append(value[i])
+                            append(value[++i])
+                        } else {
+                            append("\\u").append(code.toString(16).padStart(4, '0'))
+                        }
+                    }
+                    code in 0xdc00..0xdfff ->
+                        append("\\u").append(code.toString(16).padStart(4, '0'))
+                    else -> append(value[i])
+                }
+            }
+            i++
+        }
+        append('"')
+    }
+
+    private const val MAX_SAFE_INTEGER = 9007199254740991L
 
 
     data class BlobContent(

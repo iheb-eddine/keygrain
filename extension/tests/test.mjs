@@ -791,6 +791,24 @@ await test('reconcile: id-less local service survives an absent remote record', 
 
 // ---- canonicalBlobPayload (no-op skip, Frozen Req 9) ----
 
+await test('canonicalBlobPayload: shared KG-22 fixture matches extension serializer', async () => {
+  const fixture = JSON.parse(readFileSync(resolve(root, 'sync-canonical-vectors.json'), 'utf8'));
+  assert.equal(fixture.schema_version, 1);
+  assert.ok(fixture.cases.length > 0);
+  for (const vector of fixture.cases) {
+    ctx._fixtureServices = vector.services.map(s => s.content);
+    ctx._fixtureMetadata = vector.services.map(s => s.metadata);
+    ctx._fixtureWallets = vector.wallets;
+    ctx._fixtureAudit = vector.audit_log;
+    ctx._fixtureConflicts = vector.sync_conflicts;
+    const actual = runInContext(
+      'canonicalBlobPayload(_fixtureServices, _fixtureMetadata, _fixtureWallets, _fixtureAudit, _fixtureConflicts)',
+      ctx
+    );
+    assert.equal(actual, vector.expected, vector.name);
+  }
+});
+
 await test('canonicalBlobPayload: order-independent for services', async () => {
   ctx._c1 = [{ site: 'a.com' }, { site: 'b.com' }];
   ctx._m1 = [{ id: 'i1', updated_at: 1 }, { id: 'i2', updated_at: 2 }];
@@ -836,7 +854,7 @@ await test('canonicalBlobPayload: exact serialization, shared with SyncBlob.kt',
     '{"services":[{"id":"i1","updated_at":1,"name":"A","site":"a.com","email":"e@x","length":20,' +
     '"symbols":"!@","counter":1,"migrating":true,"totp":null,"ssh":null},' +
     '{"id":"i2","updated_at":2,"name":"B","site":"b.com","email":"e@x","length":20,' +
-    '"symbols":"!@","counter":1,"migrating":null,"totp":null,"ssh":null}],' +
+    '"symbols":"!@","counter":1,"migrating":null,"totp":null,"ssh":null}],'+
     '"wallets":[],"wallet_audit_log":[],"sync_conflicts":[]}');
 });
 

@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "_comment": "KG-22 shared canonical JSON fixture. Generated from extension/shared/sync.js; do not hand-edit.",
+  "cases": [
+    {
+      "name": "service-wallet-audit-conflict-edge-values",
+      "services": [
+        {
+          "metadata": {
+            "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "updated_at": 200
+          },
+          "content": {
+            "name": "punctuation     </ \" \\ \b \t \n \f \r 😀 \ud800",
+            "site": "b.example",
+            "email": "b@example.test",
+            "length": 24,
+            "symbols": "!@#$%",
+            "counter": 2,
+            "totp": {
+              "z": [
+                true,
+                null,
+                7
+              ],
+              "nested": {
+                "z": "last",
+                "a": "first"
+              },
+              "a": "punctuation     </ \" \\ \b \t \n \f \r 😀 \ud800"
+            },
+            "migrating": true
+          }
+        },
+        {
+          "metadata": {
+            "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "updated_at": 199
+          },
+          "content": {
+            "name": "Defaults",
+            "site": "a.example",
+            "email": "a@example.test",
+            "length": 20,
+            "symbols": "!@#$%",
+            "counter": 1
+          }
+        }
+      ],
+      "wallets": [
+        {
+          "wallet_name": "Z\ud800",
+          "chain": "bitcoin",
+          "counter": 1,
+          "email": "wallet@example.test",
+          "mode": "keygrain",
+          "created_at": "2026-01-02T00:00:00Z",
+          "updated_at": "2026-01-03T00:00:00Z",
+          "notes": "punctuation     </ \" \\ \b \t \n \f \r 😀 \ud800"
+        },
+        {
+          "wallet_name": "a",
+          "chain": "ethereum",
+          "counter": 3,
+          "email": "",
+          "mode": "keygrain",
+          "created_at": "",
+          "updated_at": "",
+          "notes": ""
+        }
+      ],
+      "audit_log": [
+        {
+          "action": "create",
+          "wallet_name": "Z",
+          "chain": "bitcoin",
+          "counter": 1,
+          "timestamp": "2026-01-03T00:00:00Z",
+          "verification": "punctuation     </ \" \\ \b \t \n \f \r 😀 \ud800"
+        },
+        {
+          "action": "rotate",
+          "wallet_name": "a",
+          "chain": "ethereum",
+          "counter": 3,
+          "timestamp": "2026-01-02T00:00:00Z",
+          "verification": "ok"
+        }
+      ],
+      "sync_conflicts": [
+        {
+          "winner_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "loser": {
+            "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "name": "punctuation     </ \" \\ \b \t \n \f \r 😀 \ud800",
+            "extra": {
+              "z": [
+                3,
+                2,
+                1
+              ],
+              "a": true
+            }
+          },
+          "detected_at": "2026-01-04T00:00:00Z"
+        }
+      ],
+      "expected": "{\"services\":[{\"id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"updated_at\":199,\"name\":\"Defaults\",\"site\":\"a.example\",\"email\":\"a@example.test\",\"length\":20,\"symbols\":\"!@#$%\",\"counter\":1,\"migrating\":null,\"totp\":null,\"ssh\":null},{\"id\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"updated_at\":200,\"name\":\"punctuation     </ \\\" \\\\ \\b \\t \\n \\f \\r 😀 \\ud800\",\"site\":\"b.example\",\"email\":\"b@example.test\",\"length\":24,\"symbols\":\"!@#$%\",\"counter\":2,\"migrating\":true,\"totp\":{\"a\":\"punctuation     </ \\\" \\\\ \\b \\t \\n \\f \\r 😀 \\ud800\",\"nested\":{\"a\":\"first\",\"z\":\"last\"},\"z\":[true,null,7]},\"ssh\":null}],\"wallets\":[{\"chain\":\"ethereum\",\"counter\":3,\"created_at\":\"\",\"email\":\"\",\"mode\":\"keygrain\",\"notes\":\"\",\"updated_at\":\"\",\"wallet_name\":\"a\"},{\"chain\":\"bitcoin\",\"counter\":1,\"created_at\":\"2026-01-02T00:00:00Z\",\"email\":\"wallet@example.test\",\"mode\":\"keygrain\",\"notes\":\"punctuation     </ \\\" \\\\ \\b \\t \\n \\f \\r 😀 \\ud800\",\"updated_at\":\"2026-01-03T00:00:00Z\",\"wallet_name\":\"Z\\ud800\"}],\"wallet_audit_log\":[{\"action\":\"rotate\",\"chain\":\"ethereum\",\"counter\":3,\"timestamp\":\"2026-01-02T00:00:00Z\",\"verification\":\"ok\",\"wallet_name\":\"a\"},{\"action\":\"create\",\"chain\":\"bitcoin\",\"counter\":1,\"timestamp\":\"2026-01-03T00:00:00Z\",\"verification\":\"punctuation     </ \\\" \\\\ \\b \\t \\n \\f \\r 😀 \\ud800\",\"wallet_name\":\"Z\"}],\"sync_conflicts\":[{\"detected_at\":\"2026-01-04T00:00:00Z\",\"loser\":{\"extra\":{\"a\":true,\"z\":[3,2,1]},\"id\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"name\":\"punctuation     </ \\\" \\\\ \\b \\t \\n \\f \\r 😀 \\ud800\"},\"winner_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\"}]}"
+    }
+  ]
+}
