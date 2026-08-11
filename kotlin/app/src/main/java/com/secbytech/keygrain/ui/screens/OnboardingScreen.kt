@@ -247,12 +247,7 @@ private fun FirstServicePage(
     var showAdvanced by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
     var passwordCopied by remember { mutableStateOf(false) }
-    fun symbolsAreValid(value: String): Boolean = try {
-        Keygrain.validateSymbols(value)
-        true
-    } catch (_: IllegalArgumentException) {
-        false
-    }
+    var previewError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(passwordCopied) {
         if (passwordCopied) {
             delay(1500)
@@ -266,12 +261,22 @@ private fun FirstServicePage(
     // synchronously on the main thread.
     var password by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(site, email, length, symbols, masterSecret) {
-        if (email.isBlank() || site.isBlank() || !symbolsAreValid(symbols)) { password = null; return@LaunchedEffect }
+        if (email.isBlank() || site.isBlank()) {
+            password = null
+            previewError = null
+            return@LaunchedEffect
+        }
+        val symbolsError = serviceSymbolsError(symbols)
+        if (symbolsError != null) {
+            password = null
+            previewError = symbolsError
+            return@LaunchedEffect
+        }
         delay(400)
-        val len = (length.toIntOrNull() ?: 20).coerceAtLeast(8)
+        val len = boundedServiceLength(length)
         val syms = symbols
-        password = withContext(Dispatchers.Default) {
-            try {
+        try {
+            password = withContext(Dispatchers.Default) {
                 Keygrain.derivePassword(
                     secret = masterSecret.toByteArray(),
                     email = email.trim(),
@@ -279,7 +284,11 @@ private fun FirstServicePage(
                     length = len,
                     symbols = syms
                 )
-            } catch (_: Exception) { null }
+            }
+            previewError = null
+        } catch (_: IllegalArgumentException) {
+            password = null
+            previewError = "Unable to generate a preview. Check the service settings."
         }
     }
 
@@ -287,13 +296,17 @@ private fun FirstServicePage(
         onSkip = onSkip,
         primaryLabel = "Add Service",
         onPrimary = {
-            if (!symbolsAreValid(symbols)) return@OnboardingPageLayout
+            val symbolsError = serviceSymbolsError(symbols)
+            if (symbolsError != null) {
+                previewError = symbolsError
+                return@OnboardingPageLayout
+            }
             serviceManager.addService(
                 ServiceEntry(
                     name = name.trim(),
                     site = site.trim().ifEmpty { name.trim().lowercase() },
                     email = email.trim(),
-                    length = (length.toIntOrNull() ?: 20).coerceAtLeast(8),
+                    length = boundedServiceLength(length),
                     symbols = symbols
                 )
             )
@@ -353,6 +366,15 @@ private fun FirstServicePage(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+        }
+        val error = previewError
+        if (error != null) {
+            Spacer(Modifier.height(16.dp))
+            Text(
+                error,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error
+            )
         }
         val pw = password
         if (pw != null) {

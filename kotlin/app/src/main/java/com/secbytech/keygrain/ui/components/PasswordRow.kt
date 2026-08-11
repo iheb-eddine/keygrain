@@ -22,6 +22,26 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
+internal fun derivePasswordForRow(
+    service: ServiceEntry,
+    masterSecret: String
+): Result<String> = try {
+    Result.success(
+        Keygrain.derivePassword(
+            secret = masterSecret.toByteArray(),
+            email = service.email,
+            site = service.site,
+            length = service.length,
+            symbols = service.symbols,
+            counter = service.counter
+        )
+    )
+} catch (e: kotlinx.coroutines.CancellationException) {
+    throw e
+} catch (e: Exception) {
+    Result.failure(e)
+}
+
 @Composable
 internal fun PasswordRow(
     service: ServiceEntry,
@@ -36,19 +56,27 @@ internal fun PasswordRow(
     var password by remember(
         service.email, service.site, service.length, service.symbols, service.counter, masterSecret
     ) { mutableStateOf<String?>(null) }
+    var derivationError by remember(
+        service.email, service.site, service.length, service.symbols, service.counter, masterSecret
+    ) { mutableStateOf<Throwable?>(null) }
     LaunchedEffect(
         service.email, service.site, service.length, service.symbols, service.counter, masterSecret
     ) {
-        password = withContext(Dispatchers.Default) {
-            Keygrain.derivePassword(
-                secret = masterSecret.toByteArray(),
-                email = service.email,
-                site = service.site,
-                length = service.length,
-                symbols = service.symbols,
-                counter = service.counter
-            )
+        password = null
+        derivationError = null
+        val result = withContext(Dispatchers.Default) {
+            derivePasswordForRow(service, masterSecret)
         }
+        result.fold(
+            onSuccess = {
+                password = it
+                derivationError = null
+            },
+            onFailure = {
+                password = null
+                derivationError = it
+            }
+        )
     }
     var visible by remember { mutableStateOf(false) }
     var passwordCopied by remember { mutableStateOf(false) }
@@ -59,11 +87,13 @@ internal fun PasswordRow(
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = when {
-                password == null -> "Generating…"
+                password == null && derivationError == null -> "Generating…"
+                derivationError != null -> "Unable to generate password. Edit service settings to repair."
                 visible -> password!!
                 else -> "••••••••••••"
             },
             style = MaterialTheme.typography.bodyLarge,
+            color = if (derivationError != null) MaterialTheme.colorScheme.error else LocalContentColor.current,
             fontFamily = if (visible && password != null) FontFamily.Monospace else FontFamily.Default,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
