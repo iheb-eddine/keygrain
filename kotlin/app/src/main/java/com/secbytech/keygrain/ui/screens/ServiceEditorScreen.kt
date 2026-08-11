@@ -31,6 +31,20 @@ import com.secbytech.keygrain.ui.components.QrScannerDialog
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
+internal fun boundedServiceLength(raw: String, fallback: Int = 20): Int =
+    (raw.toIntOrNull() ?: fallback).coerceIn(8, 128)
+
+internal fun serviceSymbolsError(symbols: String): String? {
+    try {
+        Keygrain.validateSymbols(symbols)
+    } catch (_: IllegalArgumentException) {
+        return "Symbols must be non-empty graphic printable ASCII."
+    }
+    return if (
+        Keygrain.UPPER.length + Keygrain.LOWER.length + Keygrain.DIGITS.length + symbols.length <= 256
+    ) null else "Symbols set is too large for password generation."
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ServiceEditorScreen(
@@ -143,10 +157,9 @@ internal fun ServiceEditorScreen(
                     TextButton(
                         enabled = name.isNotBlank() && email.isNotBlank(),
                         onClick = {
-                            try {
-                                Keygrain.validateSymbols(symbols)
-                            } catch (_: IllegalArgumentException) {
-                                scope.launch { snackbarHostState.showSnackbar("Symbols must be non-empty graphic printable ASCII.") }
+                            val symbolsError = serviceSymbolsError(symbols)
+                            if (symbolsError != null) {
+                                scope.launch { snackbarHostState.showSnackbar(symbolsError) }
                                 return@TextButton
                             }
                             val totpJson = when (totpModeIndex) {
@@ -186,7 +199,7 @@ internal fun ServiceEditorScreen(
                                 name = name.trim(),
                                 site = site.trim().ifEmpty { name.trim().lowercase() },
                                 email = email.trim(),
-                                length = (length.toIntOrNull() ?: 20).coerceAtLeast(8),
+                                length = boundedServiceLength(length),
                                 symbols = symbols,
                                 counter = (counter.toIntOrNull() ?: 1).coerceAtLeast(1),
                                 totp = totpJson,

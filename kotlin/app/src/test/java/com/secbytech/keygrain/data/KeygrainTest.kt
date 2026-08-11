@@ -1,5 +1,8 @@
 package com.secbytech.keygrain.data
 
+import com.secbytech.keygrain.ui.components.derivePasswordForRow
+import com.secbytech.keygrain.ui.screens.boundedServiceLength
+import com.secbytech.keygrain.ui.screens.serviceSymbolsError
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -175,42 +178,91 @@ class KeygrainTest {
     }
 
     @Test
-    fun testEditorAndOnboardingRejectInvalidSymbolsBeforeSaveOrPreviewWithoutSubstitution() {
+    fun testServiceWriterBoundsAndRejectsInvalidSymbolsBeforePersistence() {
+        assertEquals(8, boundedServiceLength("7"))
+        assertEquals(8, boundedServiceLength("8"))
+        assertEquals(128, boundedServiceLength("128"))
+        assertEquals(128, boundedServiceLength("129"))
+        assertEquals(20, boundedServiceLength("not-a-number"))
+
         val invalid = listOf("", " ", "\u001F", "\u007F", "é", "😀")
         for (symbols in invalid) {
-            try {
-                Keygrain.validateSymbols(symbols)
-                throw AssertionError("Expected invalid symbols to be rejected: $symbols")
-            } catch (_: IllegalArgumentException) {
-                // expected
-            }
+            assertTrue("invalid symbols must be rejected: $symbols", serviceSymbolsError(symbols) != null)
         }
+        assertEquals(null, serviceSymbolsError("!A"))
+        assertEquals(null, serviceSymbolsError("!".repeat(201)))
+        assertTrue(serviceSymbolsError("!".repeat(202)) != null)
 
         val editor = readApprovedSource("com/secbytech/keygrain/ui/screens/ServiceEditorScreen.kt")
-        val editorValidation = editor.indexOf("Keygrain.validateSymbols(symbols)")
-        val editorReturn = editor.indexOf("return@TextButton", editorValidation)
-        val editorSave = editor.indexOf("onSave(ServiceEntry(", editorReturn)
-        val editorSymbols = editor.indexOf("symbols = symbols", editorReturn)
-        assertTrue(editorValidation >= 0 && editorValidation < editorReturn && editorReturn < editorSave)
-        assertTrue(editorSymbols > editorSave)
+        val editorSave = editor.indexOf("onSave(ServiceEntry(")
+        val editorLength = editor.indexOf("length = boundedServiceLength(length)", editorSave)
+        val editorSymbols = editor.indexOf("symbols = symbols", editorSave)
+        val editorGuard = editor.lastIndexOf("val symbolsError = serviceSymbolsError(symbols)", editorSave)
+        val editorReturn = editor.indexOf("return@TextButton", editorGuard)
+        assertTrue(editorGuard >= 0 && editorGuard < editorReturn && editorReturn < editorSave)
+        assertTrue(editorLength > editorSave && editorLength < editorSymbols)
         val editorSaveBlock = editor.substring(editorSave, editorSymbols + "symbols = symbols".length)
+        assertFalse(editorSaveBlock.contains("symbols.trim"))
         assertFalse(editorSaveBlock.contains("symbols.ifEmpty"))
         assertFalse(editorSaveBlock.contains("symbols ?: Keygrain.DEFAULT_SYMBOLS"))
 
         val onboarding = readApprovedSource("com/secbytech/keygrain/ui/screens/OnboardingScreen.kt")
-        val previewGuard = onboarding.indexOf("!symbolsAreValid(symbols)")
-        val previewReturn = onboarding.indexOf("password = null; return@LaunchedEffect", previewGuard)
+        val previewGuard = onboarding.indexOf("val symbolsError = serviceSymbolsError(symbols)")
+        val previewError = onboarding.indexOf("previewError = symbolsError", previewGuard)
+        val previewReturn = onboarding.indexOf("return@LaunchedEffect", previewError)
         val previewDerive = onboarding.indexOf("Keygrain.derivePassword(", previewReturn)
-        assertTrue(previewGuard >= 0 && previewGuard < previewReturn && previewReturn < previewDerive)
+        assertTrue(previewGuard >= 0 && previewGuard < previewError && previewError < previewReturn && previewReturn < previewDerive)
+        assertTrue(onboarding.contains("length = boundedServiceLength(length)"))
 
-        val primaryGuard = onboarding.indexOf("if (!symbolsAreValid(symbols)) return@OnboardingPageLayout")
-        val primarySave = onboarding.indexOf("serviceManager.addService(", primaryGuard)
-        val onboardingSymbols = onboarding.indexOf("symbols = symbols", primaryGuard)
-        assertTrue(primaryGuard >= 0 && primaryGuard < primarySave)
+        val primary = onboarding.indexOf("onPrimary = {")
+        val primaryGuard = onboarding.indexOf("val symbolsError = serviceSymbolsError(symbols)", primary)
+        val primaryReturn = onboarding.indexOf("return@OnboardingPageLayout", primaryGuard)
+        val primarySave = onboarding.indexOf("serviceManager.addService(", primaryReturn)
+        val onboardingSymbols = onboarding.indexOf("symbols = symbols", primarySave)
+        assertTrue(primaryGuard >= 0 && primaryGuard < primaryReturn && primaryReturn < primarySave)
         assertTrue(onboardingSymbols > primarySave)
         val onboardingSaveBlock = onboarding.substring(primarySave, onboardingSymbols + "symbols = symbols".length)
+        assertFalse(onboardingSaveBlock.contains("symbols.trim"))
         assertFalse(onboardingSaveBlock.contains("symbols.ifEmpty"))
         assertFalse(onboardingSaveBlock.contains("symbols ?: Keygrain.DEFAULT_SYMBOLS"))
+    }
+
+    @Test
+    fun testMalformedPersistedSettingsFailAtPasswordRenderBoundary() {
+        val valid = ServiceEntry(
+            name = "Example",
+            site = "example.com",
+            email = "user@example.com",
+            length = 20,
+            symbols = "!A",
+            counter = 1
+        )
+        val expected = Keygrain.derivePassword(
+            secret = "master-secret".toByteArray(),
+            email = valid.email,
+            site = valid.site,
+            length = valid.length,
+            symbols = valid.symbols,
+            counter = valid.counter
+        )
+        assertEquals(expected, derivePasswordForRow(valid, "master-secret").getOrThrow())
+
+        val malformed = listOf(
+            valid.copy(length = 0),
+            valid.copy(length = 129),
+            valid.copy(symbols = "é"),
+            valid.copy(symbols = "!".repeat(202))
+        )
+        malformed.forEach { entry ->
+            val result = derivePasswordForRow(entry, "master-secret")
+            assertTrue("malformed entry must become an error result: $entry", result.isFailure)
+        }
+
+        val passwordRow = readApprovedSource("com/secbytech/keygrain/ui/components/PasswordRow.kt")
+        assertTrue(passwordRow.contains("derivePasswordForRow(service, masterSecret)"))
+        assertTrue(passwordRow.contains("Unable to generate password. Edit service settings to repair."))
+        assertTrue(passwordRow.contains("enabled = password != null"))
+        assertTrue(passwordRow.contains("CancellationException"))
     }
 
     @Test
