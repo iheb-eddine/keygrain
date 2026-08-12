@@ -18,15 +18,18 @@ function validateSymbols(symbols, policy = DEFAULT_SYMBOL_POLICY) {
 // Argon2id strengthen cache (single entry — one active session)
 let _strengthenCache = null;
 let _strengthenQueue = null;
+let _strengthenGeneration = 0;
 
 async function strengthenSecret(secret, email) {
   const emailLower = (email || "").toLowerCase();
   if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
     return new Uint8Array(_strengthenCache.result);
   }
-  // Serialize concurrent calls: if a computation is in-flight, wait then re-check cache
+  // Serialize concurrent calls: if a computation is in-flight, wait then re-check cache.
+  // A rejected queue must propagate to current waiters but must not poison later calls.
   if (_strengthenQueue) {
-    await _strengthenQueue;
+    const pending = _strengthenQueue;
+    await pending;
     if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
       return new Uint8Array(_strengthenCache.result);
     }
@@ -34,27 +37,52 @@ async function strengthenSecret(secret, email) {
   const enc = new TextEncoder();
   const salt = enc.encode("keygrain-strengthen:" + emailLower);
   const secretBytes = enc.encode(secret);
-  _strengthenQueue = hashwasm.argon2id({
-    password: secretBytes,
-    salt: salt,
-    parallelism: 1,
-    iterations: 3,
-    memorySize: 65536,
-    hashLength: 32,
-    outputType: "binary",
-  });
-  const hash = await _strengthenQueue;
-  _strengthenQueue = null;
-  const result = new Uint8Array(hash);
-  _strengthenCache = { secret, email: emailLower, result };
-  return result;
+  const operationGeneration = _strengthenGeneration;
+  let pending;
+  try {
+    pending = Promise.resolve(hashwasm.argon2id({
+      password: secretBytes,
+      salt: salt,
+      parallelism: 1,
+      iterations: 3,
+      memorySize: 65536,
+      hashLength: 32,
+      outputType: "binary",
+    }));
+    _strengthenQueue = pending;
+    const hash = await pending;
+    const result = new Uint8Array(hash);
+    if (operationGeneration !== _strengthenGeneration) {
+      result.fill(0);
+      throw new Error("stale strengthen operation");
+    }
+    const output = new Uint8Array(result);
+    _strengthenCache = { secret, email: emailLower, result };
+    return output;
+  } finally {
+    secretBytes.fill(0);
+    salt.fill(0);
+    if (_strengthenQueue === pending) _strengthenQueue = null;
+  }
 }
 
 function clearStrengthenCache() {
+  _strengthenGeneration++;
   if (_strengthenCache) {
     _strengthenCache.result.fill(0);
   }
   _strengthenCache = null;
+}
+
+function getStrengthenGeneration() {
+  return _strengthenGeneration;
+}
+
+function assertStrengthenGeneration(generation) {
+  if (generation !== _strengthenGeneration) {
+    throw new Error("stale strengthen operation");
+  }
+  return true;
 }
 
 async function hmacSHA256(key, message) {
@@ -120,19 +148,25 @@ async function derivePassword(secret, email, { site, length = 20, symbols = DEFA
   if (counter < 1) throw new RangeError("counter must be at least 1");
   if (UPPER.length + LOWER.length + DIGITS.length + symbols.length > 256) throw new RangeError("symbols too long (full charset exceeds 256 characters)");
   const enc = new TextEncoder();
+  const strengthenGeneration = getStrengthenGeneration();
   const strengthened = await strengthenSecret(secret, email);
+  assertStrengthenGeneration(strengthenGeneration);
   const normalized = normalizeSite(site);
   if (!normalized) throw new RangeError("site must not be empty");
   const message = enc.encode(normalized + ":" + email.toLowerCase() + ":" + length + ":" + counter);
   const stream = await buildStream(strengthened, message, length * 8);
+  assertStrengthenGeneration(strengthenGeneration);
   return buildPassword(stream, length, symbols);
 }
 
 async function deriveAuthPassword(secret, email) {
   const enc = new TextEncoder();
+  const strengthenGeneration = getStrengthenGeneration();
   const strengthened = await strengthenSecret(secret, email);
+  assertStrengthenGeneration(strengthenGeneration);
   const message = enc.encode(email.toLowerCase() + ":32:keygrain-auth");
   const stream = await buildStream(strengthened, message, 256);
+  assertStrengthenGeneration(strengthenGeneration);
   return buildPassword(stream, 32, "!@#$%&*-_=+?");
 }
 

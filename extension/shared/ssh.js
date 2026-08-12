@@ -7,9 +7,12 @@ async function deriveSshKeypair(secret, email, { keyName, counter = 1 }) {
   if (/[\x00-\x1f\x7f]/.test(email)) throw new Error("email must not contain control characters");
 
   const enc = new TextEncoder();
+  const strengthenGeneration = getStrengthenGeneration();
   const strengthened = await strengthenSecret(secret, email);
+  assertStrengthenGeneration(strengthenGeneration);
   const message = enc.encode(email.toLowerCase() + ":" + keyName.toLowerCase() + ":" + counter + ":keygrain-ssh");
   const seed = await hmacSHA256(strengthened, message);
+  assertStrengthenGeneration(strengthenGeneration);
 
   // tweetnacl: nacl.sign.keyPair.fromSeed(seed) returns {publicKey, secretKey}
   const keypair = nacl.sign.keyPair.fromSeed(seed);

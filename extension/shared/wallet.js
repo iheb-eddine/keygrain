@@ -24,11 +24,15 @@ async function deriveWalletEntropy(secret, email, { walletName, chain, counter =
   if (counter < 1) throw new Error("counter must be >= 1");
 
   const enc = new TextEncoder();
+  const strengthenGeneration = getStrengthenGeneration();
   const strengthened = await strengthenSecret(secret, email);
+  assertStrengthenGeneration(strengthenGeneration);
   const message = enc.encode(
     email.toLowerCase() + ":" + walletName + ":" + chain + ":" + counter + ":keygrain-wallet"
   );
-  return await hmacSHA256(strengthened, message);
+  const entropy = await hmacSHA256(strengthened, message);
+  assertStrengthenGeneration(strengthenGeneration);
+  return entropy;
 }
 
 async function entropyToMnemonic(entropy) {

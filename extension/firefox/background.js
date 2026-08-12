@@ -1,6 +1,16 @@
 // background.js — Firefox MV2 background page
 let sessionSecret = null;
 let sessionEmail = null;
+const unlockState = new KGUnlockStateManager();
+
+function getAuthorizedCredentials() {
+  const secrets = unlockState.getSecrets();
+  const email = unlockState.email;
+  sessionSecret = secrets?.secret || null;
+  sessionEmail = email || null;
+  if (!sessionSecret || !sessionEmail) return null;
+  return {secret: sessionSecret, email: sessionEmail, generation: unlockState.capture()};
+}
 
 const DEFAULT_LOCK_MINUTES = 15;
 
@@ -37,38 +47,48 @@ function base64ToArrayBuffer(b64) {
 }
 
 async function updateBadge(tabId) {
-  if (!sessionSecret || !sessionEmail) {
+  const auth = getAuthorizedCredentials();
+  const {secret, email, generation} = auth || {};
+  if (!secret || !email || generation === undefined) {
     browser.browserAction.setBadgeText({text: "", tabId});
     return;
   }
-  const data = await browser.storage.local.get("services");
-  if (!data.services || data.services.version !== 2) {
-    browser.browserAction.setBadgeText({text: "", tabId});
-    return;
-  }
-  let tab;
-  try { tab = await browser.tabs.get(tabId); } catch { return; }
-  if (!tab.url) { browser.browserAction.setBadgeText({text: "", tabId}); return; }
-  let host;
-  try { host = new URL(tab.url).hostname.replace(/^www\./, "").toLowerCase(); } catch { return; }
-  if (!host) { browser.browserAction.setBadgeText({text: "", tabId}); return; }
-
-  const enc = new TextEncoder();
-  const strengthened = await strengthenSecret(sessionSecret, sessionEmail);
-  const storageKey = await hmacSHA256(strengthened, enc.encode(sessionEmail.toLowerCase() + ":keygrain-local-storage"));
+  const assertGeneration = () => unlockState.assertCurrent(generation);
   try {
+    const data = await browser.storage.local.get("services");
+    assertGeneration();
+    if (!data.services || data.services.version !== 2) {
+      browser.browserAction.setBadgeText({text: "", tabId});
+      return;
+    }
+    const tab = await browser.tabs.get(tabId);
+    assertGeneration();
+    if (!tab.url) { browser.browserAction.setBadgeText({text: "", tabId}); return; }
+    let host;
+    try { host = new URL(tab.url).hostname.replace(/^www\./, "").toLowerCase(); } catch { return; }
+    if (!host) { browser.browserAction.setBadgeText({text: "", tabId}); return; }
+
+    const enc = new TextEncoder();
+    const strengthened = await strengthenSecret(secret, email);
+    assertGeneration();
+    const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+    assertGeneration();
     const iv = base64ToArrayBuffer(data.services.iv);
     const ciphertext = base64ToArrayBuffer(data.services.ciphertext);
-    const aad = enc.encode(sessionEmail.toLowerCase());
+    const aad = enc.encode(email.toLowerCase());
     const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["decrypt"]);
+    assertGeneration();
     const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
+    assertGeneration();
     const services = JSON.parse(new TextDecoder().decode(decrypted)).services || [];
     const count = services.filter(s => {
       const site = serviceSite(s);
       return domainMatches(site, host);
     }).length;
+    assertGeneration();
     browser.browserAction.setBadgeText({text: count > 0 ? String(count) : "", tabId});
   } catch {
+    try { assertGeneration(); } catch { return; }
     browser.browserAction.setBadgeText({text: "", tabId});
   }
 }
@@ -87,6 +107,7 @@ let bgSyncInProgress = false;
 let lockDeferred = false;
 
 async function backgroundSync() {
+  getAuthorizedCredentials();
   if (!sessionSecret || !sessionEmail) return;
   const {popupActiveUntil, offlineMode} = await browser.storage.local.get(["popupActiveUntil", "offlineMode"]);
   // Lease, not a boolean: the popup refreshes popupActiveUntil via its heartbeat. A
@@ -162,6 +183,7 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
     }
     lockDeferred = false;
     browser.alarms.clear("syncAlarm");
+    unlockState.clearGeneralSensitive({retainTotp: true});
     clearStrengthenCache();
     sessionSecret = null;
     sessionEmail = null;
@@ -180,9 +202,10 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 
 browser.runtime.onMessage.addListener((msg) => {
   if (msg.action === "getSecret") {
-    return Promise.resolve({secret: sessionSecret});
+    return Promise.resolve({secret: unlockState.getSecrets()?.secret || null});
   }
   if (msg.action === "setSecret") {
+    unlockState.setSecrets({secret: msg.secret}, null);
     sessionSecret = msg.secret;
     resetAutoLock();
     browser.alarms.create("syncAlarm", {periodInMinutes: 5});
@@ -190,10 +213,16 @@ browser.runtime.onMessage.addListener((msg) => {
     return Promise.resolve({ok: true});
   }
   if (msg.action === "heartbeat") {
-    resetAutoLock();
+    // Heartbeats are retained as a compatibility no-op. They never renew security leases.
+    return Promise.resolve({ok: true});
+  }
+  if (msg.action === "extendSensitive") {
+    if (getAuthorizedCredentials()) resetAutoLock();
     return Promise.resolve({ok: true});
   }
   if (msg.action === "clearSecret") {
+    unlockState.lockSecrets();
+    clearStrengthenCache();
     sessionSecret = null;
     browser.alarms.clear("autoLock");
     browser.alarms.clear("syncAlarm");
@@ -211,14 +240,17 @@ browser.runtime.onMessage.addListener((msg) => {
     return Promise.resolve({ok: true});
   }
   if (msg.action === "getEmail") {
-    return Promise.resolve({email: sessionEmail});
+    return Promise.resolve({email: unlockState.email || null});
   }
   if (msg.action === "setEmail") {
+    unlockState.setEmail(msg.email);
     sessionEmail = msg.email;
     registerInline().catch(() => {});
     return Promise.resolve({ok: true});
   }
   if (msg.action === "clearEmail") {
+    unlockState.lockEverything();
+    clearStrengthenCache();
     sessionEmail = null;
     return Promise.resolve({ok: true});
   }
@@ -279,6 +311,7 @@ async function afGetFillContext(tabId) {
 // to the popup. storageKey is zeroed in the finally (preserving + extending the
 // pattern that previously lived only in the context-menu path).
 async function autofillForTab(tab, fillAction) {
+  getAuthorizedCredentials();
   if (!sessionSecret || !sessionEmail) { openPopupSafe(); return; }
   if (!tab?.url) { openPopupSafe(); return; }
   let host;
@@ -347,6 +380,7 @@ async function autofillForTab(tab, fillAction) {
 // popup (§D7 Layer 3). storageKey is zeroed in the finally (FF invariant). Callers: the
 // context-aware fill_credentials shortcut (focused-OTP branch) + the keygrain-fill-otp item.
 async function autofillOtpForTab(tab) {
+  getAuthorizedCredentials();
   if (!sessionSecret || !sessionEmail) { openPopupSafe(); return; }
   if (!tab?.url) { openPopupSafe(); return; }
   let host;
@@ -414,6 +448,7 @@ async function autofillOtpForTab(tab) {
 // failure, absent/hung content script, getFillContext timeout, non-OTP / no focused field)
 // returns false -> the UNCHANGED credentials path (Frozen Req 9). No decrypt -> no finally.
 async function focusedFieldIsOtp(tab) {
+  getAuthorizedCredentials();
   if (!sessionSecret || !sessionEmail) return false;
   if (!tab?.url) return false;
   try {
@@ -480,6 +515,7 @@ function inlineUnlocked() {
 // zeroing pattern. Returns the services array, or null when locked / no v2 store
 // / decrypt fails. NEVER returns the secret.
 async function decryptServices() {
+  getAuthorizedCredentials();
   if (!sessionSecret || !sessionEmail) return null;
   const data = await browser.storage.local.get("services");
   if (!data.services || data.services.version !== 2) return null;
@@ -688,7 +724,8 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         if (!sender.tab || !sender.tab.url) return;
         if (!(await inlineEnabled()) || !inlineUnlocked()) return;
         const host = new URL(sender.tab.url).hostname.replace(/^www\./, "").toLowerCase();
-        if (!sessionSecret || !sessionEmail) return;
+        getAuthorizedCredentials();
+  if (!sessionSecret || !sessionEmail) return;
         const services = await decryptServices();
         if (!services) return;
         const svc = services.find(s => s.id === msg.token && domainMatches(serviceSite(s), host));
@@ -705,7 +742,8 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         if (!sender.tab || !sender.tab.url) return;
         if (!(await inlineEnabled()) || !inlineUnlocked()) return;
         const host = new URL(sender.tab.url).hostname.replace(/^www\./, "").toLowerCase();
-        if (!sessionSecret || !sessionEmail) return;
+        getAuthorizedCredentials();
+  if (!sessionSecret || !sessionEmail) return;
         const services = await decryptServices();
         if (!services) return;
         // Server-authoritative: re-verify id===token && domainMatches && s.totp; the seed

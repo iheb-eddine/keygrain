@@ -1,5 +1,14 @@
 // background.js — Chrome MV3 service worker
-importScripts("lib/public_suffix_list.js", "public-suffix.js", "lib/hash-wasm-argon2.js", "keygrain.js", "totp.js", "sync.js", "autofill.js", "inline-autofill.js");
+importScripts("lib/public_suffix_list.js", "public-suffix.js", "lib/hash-wasm-argon2.js", "keygrain.js", "unlock-state.js", "totp.js", "sync.js", "autofill.js", "inline-autofill.js");
+
+const unlockState = new KGUnlockStateManager();
+
+function getAuthorizedCredentials() {
+  const secrets = unlockState.getSecrets();
+  const email = unlockState.email;
+  if (!secrets || typeof secrets.secret !== "string" || !secrets.secret || !email) return null;
+  return {secret: secrets.secret, email, generation: unlockState.capture()};
+}
 
 const DEFAULT_LOCK_MINUTES = 15;
 
@@ -36,39 +45,48 @@ function base64ToArrayBuffer(b64) {
 }
 
 async function updateBadge(tabId) {
-  const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
-  if (!secret || !email) {
+  const auth = getAuthorizedCredentials();
+  const {secret, email, generation} = auth || {};
+  if (!secret || !email || generation === undefined) {
     chrome.action.setBadgeText({text: "", tabId});
     return;
   }
-  const data = await chrome.storage.local.get("services");
-  if (!data.services || data.services.version !== 2) {
-    chrome.action.setBadgeText({text: "", tabId});
-    return;
-  }
-  let tab;
-  try { tab = await chrome.tabs.get(tabId); } catch { return; }
-  if (!tab.url) { chrome.action.setBadgeText({text: "", tabId}); return; }
-  let host;
-  try { host = new URL(tab.url).hostname.replace(/^www\./, "").toLowerCase(); } catch { return; }
-  if (!host) { chrome.action.setBadgeText({text: "", tabId}); return; }
-
-  const enc = new TextEncoder();
-  const strengthened = await strengthenSecret(secret, email);
-  const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+  const assertGeneration = () => unlockState.assertCurrent(generation);
   try {
+    const data = await chrome.storage.local.get("services");
+    assertGeneration();
+    if (!data.services || data.services.version !== 2) {
+      chrome.action.setBadgeText({text: "", tabId});
+      return;
+    }
+    const tab = await chrome.tabs.get(tabId);
+    assertGeneration();
+    if (!tab.url) { chrome.action.setBadgeText({text: "", tabId}); return; }
+    let host;
+    try { host = new URL(tab.url).hostname.replace(/^www\./, "").toLowerCase(); } catch { return; }
+    if (!host) { chrome.action.setBadgeText({text: "", tabId}); return; }
+
+    const enc = new TextEncoder();
+    const strengthened = await strengthenSecret(secret, email);
+    assertGeneration();
+    const storageKey = await hmacSHA256(strengthened, enc.encode(email.toLowerCase() + ":keygrain-local-storage"));
+    assertGeneration();
     const iv = base64ToArrayBuffer(data.services.iv);
     const ciphertext = base64ToArrayBuffer(data.services.ciphertext);
     const aad = enc.encode(email.toLowerCase());
     const cryptoKey = await crypto.subtle.importKey("raw", storageKey, {name: "AES-GCM"}, false, ["decrypt"]);
+    assertGeneration();
     const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
+    assertGeneration();
     const services = JSON.parse(new TextDecoder().decode(decrypted)).services || [];
     const count = services.filter(s => {
       const site = serviceSite(s);
       return domainMatches(site, host);
     }).length;
+    assertGeneration();
     chrome.action.setBadgeText({text: count > 0 ? String(count) : "", tabId});
   } catch {
+    try { assertGeneration(); } catch { return; }
     chrome.action.setBadgeText({text: "", tabId});
   }
 }
@@ -87,7 +105,7 @@ let bgSyncInProgress = false;
 let lockDeferred = false;
 
 async function backgroundSync() {
-  const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+  const {secret, email} = getAuthorizedCredentials() || {};
   if (!secret || !email) return;
   const {popupActiveUntil, offlineMode} = await chrome.storage.local.get(["popupActiveUntil", "offlineMode"]);
   // Lease, not a boolean: the popup refreshes popupActiveUntil via its heartbeat. A
@@ -164,8 +182,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
     lockDeferred = false;
     chrome.alarms.clear("syncAlarm");
+    unlockState.clearGeneralSensitive({retainTotp: true});
     clearStrengthenCache();
-    chrome.storage.session.remove(["secret", "email"]);
     await unregisterInline();
     broadcastInline({action: "inlineLockChanged", locked: true});
     const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
@@ -181,34 +199,36 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "getSecret") {
-    chrome.storage.session.get("secret", (data) => {
-      sendResponse({secret: data.secret || null});
-    });
+    sendResponse({secret: unlockState.getSecrets()?.secret || null});
     return true;
   }
   if (msg.action === "setSecret") {
-    chrome.storage.session.set({secret: msg.secret}, () => {
-      resetAutoLock();
-      chrome.alarms.create("syncAlarm", {periodInMinutes: 5});
-      registerInline().catch(() => {});
-      sendResponse({ok: true});
-    });
+    unlockState.setSecrets({secret: msg.secret}, null);
+    resetAutoLock();
+    chrome.alarms.create("syncAlarm", {periodInMinutes: 5});
+    registerInline().catch(() => {});
+    sendResponse({ok: true});
     return true;
   }
   if (msg.action === "heartbeat") {
-    resetAutoLock();
+    // Heartbeats are retained as a compatibility no-op. They never renew security leases.
+    sendResponse({ok: true});
+    return true;
+  }
+  if (msg.action === "extendSensitive") {
+    if (getAuthorizedCredentials()) resetAutoLock();
     sendResponse({ok: true});
     return true;
   }
   if (msg.action === "clearSecret") {
+    unlockState.lockSecrets();
+    clearStrengthenCache();
     chrome.alarms.clear("autoLock");
     chrome.alarms.clear("syncAlarm");
     unregisterInline();
     broadcastInline({action: "inlineLockChanged", locked: true});
-    chrome.storage.session.remove("secret", () => {
-      chrome.tabs.query({active: true, currentWindow: true}, ([tab]) => {
-        if (tab) chrome.action.setBadgeText({text: "", tabId: tab.id});
-      });
+    chrome.tabs.query({active: true, currentWindow: true}, ([tab]) => {
+      if (tab) chrome.action.setBadgeText({text: "", tabId: tab.id});
       sendResponse({ok: true});
     });
     return true;
@@ -221,22 +241,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.action === "getEmail") {
-    chrome.storage.session.get("email", (data) => {
-      sendResponse({email: data.email || null});
-    });
+    sendResponse({email: unlockState.email || null});
     return true;
   }
   if (msg.action === "setEmail") {
-    chrome.storage.session.set({email: msg.email}, () => {
-      registerInline().catch(() => {});
-      sendResponse({ok: true});
-    });
+    unlockState.setEmail(msg.email);
+    registerInline().catch(() => {});
+    sendResponse({ok: true});
     return true;
   }
   if (msg.action === "clearEmail") {
-    chrome.storage.session.remove("email", () => {
-      sendResponse({ok: true});
-    });
+    unlockState.lockEverything();
+    clearStrengthenCache();
+    sendResponse({ok: true});
     return true;
   }
   if (msg.action === "scheduleSyncRetry") {
@@ -297,7 +314,7 @@ async function afGetFillContext(tabId) {
 // BOTH the shortcut and the context menu -- content.js's {action:"fill"} handler
 // (performFill) fills the username + password together.
 async function autofillForTab(tab, fillAction) {
-  const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+  const {secret, email} = getAuthorizedCredentials() || {};
   if (!secret || !email) { openPopupSafe(); return; }
   if (!tab?.url) { openPopupSafe(); return; }
   let host;
@@ -359,7 +376,7 @@ async function autofillForTab(tab, fillAction) {
 // the popup (the email-labelled chooser, §D7 Layer 3). Callers: the context-aware
 // fill_credentials shortcut (focused-OTP branch) and the keygrain-fill-otp context item.
 async function autofillOtpForTab(tab) {
-  const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+  const {secret, email} = getAuthorizedCredentials() || {};
   if (!secret || !email) { openPopupSafe(); return; }
   if (!tab?.url) { openPopupSafe(); return; }
   let host;
@@ -421,7 +438,7 @@ async function autofillOtpForTab(tab) {
 // injection failure, absent/hung content script, getFillContext timeout, or a non-OTP /
 // no focused field) returns false -> the UNCHANGED credentials path (Frozen Req 9).
 async function focusedFieldIsOtp(tab) {
-  const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+  const {secret, email} = getAuthorizedCredentials() || {};
   if (!secret || !email) return false;
   if (!tab?.url) return false;
   try { await chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["lib/public_suffix_list.js", "public-suffix.js", "autofill.js", "content.js"]}); }
@@ -468,7 +485,7 @@ async function inlineEnabled() {
 }
 
 async function inlineUnlocked() {
-  const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+  const {secret, email} = getAuthorizedCredentials() || {};
   return !!(secret && email);
 }
 
@@ -476,7 +493,7 @@ async function inlineUnlocked() {
 // autofillForTab). Returns the services array, or null when locked / no v2
 // store / decrypt fails. NEVER returns the secret.
 async function decryptServices() {
-  const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+  const {secret, email} = getAuthorizedCredentials() || {};
   if (!secret || !email) return null;
   const data = await chrome.storage.local.get("services");
   if (!data.services || data.services.version !== 2) return null;
@@ -681,7 +698,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!sender.tab || !sender.tab.url) return;
         if (!(await inlineEnabled()) || !(await inlineUnlocked())) return;
         const host = new URL(sender.tab.url).hostname.replace(/^www\./, "").toLowerCase();
-        const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+        const {secret, email} = getAuthorizedCredentials() || {};
         if (!secret || !email) return;
         const services = await decryptServices();
         if (!services) return;
@@ -699,7 +716,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!sender.tab || !sender.tab.url) return;
         if (!(await inlineEnabled()) || !(await inlineUnlocked())) return;
         const host = new URL(sender.tab.url).hostname.replace(/^www\./, "").toLowerCase();
-        const {secret, email} = await chrome.storage.session.get(["secret", "email"]);
+        const {secret, email} = getAuthorizedCredentials() || {};
         if (!secret || !email) return;
         const services = await decryptServices();
         if (!services) return;
