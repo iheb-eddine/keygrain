@@ -19,7 +19,7 @@ internal object SyncReconciler {
     /**
      * Sync v3 deletion reconciliation — MUST stay behaviourally identical to
      * reconcileServices() in extension/shared/sync.js. See
-     * designs/sync-deletion-reconciliation.md §2.
+     * the sync v3 reconciliation contract §2.
      */
     internal fun reconcileServices(
         local: List<ServiceEntry>,

@@ -226,7 +226,7 @@ function parseBlobContent(parsed) {
 
 /**
  * Sync v3 deletion reconciliation.
- * See designs/sync-deletion-reconciliation.md §2.
+ * See the sync v3 reconciliation contract §2.
  *
  * The central invariant: `synced === true` means a record bearing this id has been
  * confirmed present on the server at least once. It is a property of IDENTITY, not of

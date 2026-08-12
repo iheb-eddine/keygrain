@@ -1,4 +1,4 @@
-"""Deterministic Ed25519 SSH key derivation. See designs/ssh-key-derivation.md."""
+"""Deterministic Ed25519 SSH key derivation. See the public SSH-key documentation."""
 
 import base64
 import hashlib

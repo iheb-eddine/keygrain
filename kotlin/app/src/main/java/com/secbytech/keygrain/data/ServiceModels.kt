@@ -33,7 +33,7 @@ data class ServiceEntry(
     val totp: JSONObject? = null,
     val ssh: JSONObject? = null,
     val frecency: Double = 0.0,
-    // Sync v3 (designs/sync-deletion-reconciliation.md): true iff a record bearing this
+    // Sync v3 (the sync v3 reconciliation contract): true iff a record bearing this
     // id has been confirmed present on the server at least once. A property of IDENTITY,
     // not of content — editing MUST NOT clear it, or a remote deletion of an edited
     // record becomes undetectable and the service resurrects. Local-only: never synced.

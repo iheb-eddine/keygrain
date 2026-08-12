@@ -1,4 +1,4 @@
-"""HD wallet derivation. See designs/hd-wallet-derivation.md."""
+"""HD wallet derivation. See the public wallet documentation."""
 
 import hashlib
 import hmac

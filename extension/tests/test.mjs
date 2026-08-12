@@ -541,7 +541,7 @@ await test('bip85DeriveMnemonic: 12-word index 0', async () => {
 // ============================================================
 // Supersedes the v2 mergeServices tests: mergeServices was replaced by
 // reconcileServices, which adds tombstones, the synced flag and the
-// lastSuccessfulSyncAt barrier. See designs/sync-deletion-reconciliation.md.
+// lastSuccessfulSyncAt barrier. See the sync v3 reconciliation contract.
 console.log('\nSync Reconciliation Tests:');
 
 // Helper: reconcileServices(local, tombstones, remoteServices, remoteMeta, lastSyncAt, remoteExists)
@@ -553,7 +553,7 @@ function reconcile(ctx, local, tombstones, remote, meta, lastSyncAt = 0, remoteE
 
 // Cross-platform reconcile oracle (sync-reconcile-vectors.json) — the SAME table drives
 // the Kotlin SyncReconcileTest. Normalizes reconcile output to a platform-neutral shape so
-// any JS/Kotlin divergence is a test failure. See designs/sync-deletion-reconciliation.md.
+// any JS/Kotlin divergence is a test failure. See the sync v3 reconciliation contract.
 function normReconcile(r) {
   const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   return {

@@ -1,4 +1,4 @@
-"""TOTP generation, parsing, and derivation. See designs/totp-derivation.md."""
+"""TOTP generation, parsing, and derivation. See the public TOTP documentation."""
 
 import base64
 import hashlib

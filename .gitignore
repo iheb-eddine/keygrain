@@ -1,9 +1,9 @@
 *.apk
 build/
-server/keygrain-server
 dist/
 *.egg-info/
 .env
+*.key
 generate_og_images.py
 .gradle/
 kotlin/release.keystore
@@ -13,7 +13,5 @@ og_images/
 __pycache__/
 .pytest_cache/
 release.keystore
-server/keygrain-server
-server/tools/rules-signing.key
 SESSION_HANDOVER.md
 .kiro/

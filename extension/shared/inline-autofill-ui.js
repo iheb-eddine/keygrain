@@ -6,7 +6,7 @@
 // and alongside content.js (whose existing {action:"fill"} handler performs the
 // actual fill). Self-executing, guarded against re-injection (mirrors content.js).
 //
-// SECURITY MODEL (see designs/extension-native-infield-autofill.md):
+// SECURITY MODEL:
 //   - A single body-appended host carries a CLOSED shadow root created with the
 //     NATIVE Element.prototype.attachShadow captured at load, in the ISOLATED
 //     world — the page can neither read our shadow (closed) nor capture our root

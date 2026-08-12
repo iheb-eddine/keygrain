@@ -19,7 +19,7 @@ import com.secbytech.keygrain.data.DeletionReviewEntry
  * Sync v3 deletion review (Frozen Req 7). Surfaces services this device had unsynced
  * changes to that were deleted on another device. Per-item Restore (re-create under the
  * original id) / Discard (accept the deletion), plus Dismiss all (stop nagging, keep the
- * list). Mirrors the extension's deletion-review UI (designs/sync-deletion-reconciliation.md §7).
+ * list). Mirrors the extension's deletion-review UI (the sync v3 reconciliation contract §7).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

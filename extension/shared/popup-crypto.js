@@ -33,7 +33,7 @@ async function deriveStorageKey(secret, email) {
 }
 
 // Local encrypted payload, version 2 (Sync v3 — see
-// designs/sync-deletion-reconciliation.md §1). Adds, relative to version 1:
+// the sync v3 reconciliation contract §1). Adds, relative to version 1:
 //   - services[].synced   : identity has been confirmed on the server at least once
 //   - tombstones          : [{id, deleted_at}] pending deletions, local-only
 //   - deletion_review     : [{service, deleted_at, seen}] conflict cases, local-only

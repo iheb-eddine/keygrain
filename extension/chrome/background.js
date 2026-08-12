@@ -261,7 +261,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // === Autofill: shared resolver + bounded settle loop ===
-// Provably-bounded constants (see designs/extension-shortcut-robustness.md).
+// Provably-bounded constants (see the adjacent guards and tests).
 const SETTLE_MAX_TRIES = 4;
 const GETCONTEXT_TIMEOUT_MS = 300;   // per-try; guards a hung/absent content script
 const INTER_TRY_SLEEP_MS = 200;
@@ -457,7 +457,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // Scoped content-script registration lifecycle + stateless,
 // server-authoritative fill. In Increment A the registered js list is
 // ["autofill.js","content.js"] — the inline UI files are added in
-// Increment B. See designs/extension-native-infield-autofill.md.
+// Increment B. See the inline security comments and tests.
 // ===================================================================
 const INLINE_SCRIPT_ID = "keygrain-inline";
 const INLINE_JS = ["lib/public_suffix_list.js", "public-suffix.js", "autofill.js", "inline-autofill.js", "inline-autofill-ui.js", "content.js"];

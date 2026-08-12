@@ -5,8 +5,8 @@ set -e
 #
 # Each client component owns its version in its own ecosystem manifest. There is NO
 # shared VERSION file and NO cross-component equality requirement — components release
-# on independent cadences (chrome/firefox/android/cli each version separately; the
-# server versions in the private ops repo via server/VERSION).
+# on independent cadences (chrome/firefox/android/cli each version separately).
+# Deployment-side version checks are maintained by the deployment system separately.
 #
 # Sources of truth:
 #   chrome  -> extension/chrome/manifest.json
@@ -15,8 +15,8 @@ set -e
 #   android -> kotlin/VERSION   (drives versionName + versionCode in app/build.gradle.kts)
 #
 # This script runs INSIDE the public keygrain/ repo (GitLab CI + GitHub Actions) and
-# therefore cannot see the private ops release-notes/. The "a release-notes file exists
-# for this version" gate lives in the ops release pipeline, not here.
+# validates only public client manifests. Deployment and release-coordination checks
+# live in their respective deployment workflows.
 
 ERR=0
 

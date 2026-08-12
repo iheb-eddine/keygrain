@@ -9,10 +9,10 @@
 #   1. a tag on the PUBLIC repo, and
 #   2. a published GitHub Release for it, carrying SHA256SUMS.txt.
 #
-# Ops tags are invisible to users and do not count.
+# Operations-only tags are invisible to users and do not count.
 #
 # This broke once already: decoupling per-component versions (4c96317, 2026-07-25)
-# moved tagging to the private ops repo, the public repo stopped getting tags, and
+# moved tagging outside the public repo, the public repo stopped getting tags, and
 # extension 1.1.0 shipped with no anchor at all — while VERIFY.md still told people
 # to `git checkout v<version>`. Nothing detected it; a human noticed weeks later.
 # This script is that detector.
@@ -45,7 +45,7 @@ api() {
 # Legacy `vX.Y.Z` tags are deliberately NOT checked: they predate per-component
 # versioning, and v0.11.0 was published with no assets at all. Enforcing the rule
 # retroactively would mean either a permanently red pipeline or back-filling
-# checksums we cannot prove — see release-notes/README.md.
+# checksums we cannot prove.
 COMPONENT_TAG_RE='^(chrome|firefox)-v[0-9]+\.[0-9]+\.[0-9]+$'
 
 if [ "$#" -gt 0 ]; then
@@ -114,6 +114,6 @@ else
   echo "✗ At least one shipped client version has no usable public verification anchor."
   echo "  VERIFY.md promises users they can verify by hash. Fix the release, or"
   echo "  correct VERIFY.md's coverage section — do not leave the promise unbacked."
-  echo "  Procedure: release-notes/README.md, 'Public verification anchors'."
+  echo "  Procedure: restore the public tag/release/checksum anchor or correct VERIFY.md's coverage."
 fi
 exit $status

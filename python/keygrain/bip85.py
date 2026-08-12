@@ -1,4 +1,4 @@
-"""BIP-85 deterministic entropy from BIP-32 keychains. See designs/hd-wallet-derivation.md §11."""
+"""BIP-85 deterministic entropy from BIP-32 keychains. See the public BIP-85 documentation."""
 
 import hashlib
 import hmac

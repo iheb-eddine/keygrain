@@ -9,7 +9,7 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Sync v3 deletion reconciliation (designs/sync-deletion-reconciliation.md).
+ * Sync v3 deletion reconciliation (the sync v3 reconciliation contract).
  *
  * These MUST stay behaviourally identical to the `reconcile*` tests in
  * extension/tests/test.mjs — the two platforms share one algorithm and any divergence is
@@ -474,7 +474,7 @@ class SyncReconcileTest {
     // Drives reconcileServices from the SAME sync-reconcile-vectors.json that the JS suite
     // (extension/tests/test.mjs) consumes. Any JS/Kotlin divergence fails here — this is
     // the mechanical guard that closes the "no cross-platform integration test for sync"
-    // drift vector (designs/sync-deletion-reconciliation.md, Test Plan).
+    // drift vector (the sync v3 reconciliation contract, Test Plan).
 
     private fun findVectorsFile(): File {
         var dir: File? = File(System.getProperty("user.dir") ?: ".")

@@ -1,4 +1,4 @@
-"""Tests for SSH key derivation. Vectors from designs/ssh-key-derivation.md §10."""
+"""Tests for SSH key derivation. Vectors from the public SSH-key specification."""
 
 import pytest
 from keygrain.ssh import derive_ssh_keypair, format_openssh_private_key, format_authorized_keys

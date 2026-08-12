@@ -16,14 +16,12 @@ closed source.
 - `hash-wasm-argon2.js` — vendored Argon2id (WASM loader), same as the extension uses
 - `manifest.json`, `sw.js` — PWA manifest + service worker (offline caching only)
 - `icon-128.png` — app icon
-- `test.html` — in-browser test harness
 
 ## How it's served
 
-The production server (private) assembles this directory verbatim into its static
-files at build time (`server/assemble-web.sh` copies `keygrain/web/` →
-`server/static/generate/`). Nothing is transformed — what's served at
-`keygrain.com/generate/` is exactly these files.
+The hosting deployment copies this directory verbatim into the public generator
+path. Nothing is transformed — what's served at `keygrain.com/generate/` is
+exactly these files.
 
 ## Verifying it
 
