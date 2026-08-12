@@ -16,7 +16,6 @@ closed source.
 - `hash-wasm-argon2.js` — vendored Argon2id (WASM loader), same as the extension uses
 - `manifest.json`, `sw.js` — PWA manifest + service worker (offline caching only)
 - `icon-128.png` — app icon
-- `test.html` — in-browser test harness
 
 ## How it's served
 
