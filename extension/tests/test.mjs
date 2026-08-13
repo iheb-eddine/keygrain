@@ -1111,6 +1111,109 @@ await test('decryptBlob recovers fixture services (AAD=lookup_id)', async () => 
   }
 });
 
+await test('v3 foundation: canonical defaults are sorted, compact, and JSON-escaped', async () => {
+  const escapedSymbols = String.fromCharCode(0x22, 0x5c, 0x21);
+  ctx._defaults = {symbols: escapedSymbols, policy: 'ascii-printable-v1', schema: 1, length: 32};
+  assert.equal(runInContext('canonicalAccountDefaultsJSON(_defaults)', ctx),
+    '{"length":32,"policy":"ascii-printable-v1","schema":1,"symbols":"\\\"\\\\!"}');
+});
+
+await test('v3 foundation: canonical defaults reject malformed or non-canonical inputs', async () => {
+  const valid = {schema: 1, length: 20, symbols: '!@#$%&*-_=+?', policy: 'ascii-printable-v1'};
+  const invalid = [
+    null, [],
+    Object.assign({}, valid, {extra: 1}),
+    Object.assign(Object.create({schema: 1}), {length: 20, symbols: valid.symbols, policy: valid.policy}),
+    Object.defineProperty({...valid}, 'extra', {value: 1, enumerable: false}),
+    {...valid, schema: 1.5}, {...valid, schema: Number.MAX_SAFE_INTEGER + 1},
+    {...valid, length: 7}, {...valid, length: 129}, {...valid, length: 20.5},
+    {...valid, policy: 'ascii-printable-v2'}, {...valid, symbols: ''},
+    {...valid, symbols: 'bad space'}, {...valid, symbols: String.fromCharCode(0x7f)},
+    {...valid, symbols: '!'.repeat(203)},
+  ];
+  for (const candidate of invalid) {
+    ctx._candidate = candidate;
+    assert.throws(() => runInContext('canonicalAccountDefaultsJSON(_candidate)', ctx),
+      undefined, JSON.stringify(candidate));
+  }
+  const symbolKey = Symbol('extra');
+  const withSymbol = {...valid};
+  withSymbol[symbolKey] = 1;
+  ctx._candidate = withSymbol;
+  assert.throws(() => runInContext('canonicalAccountDefaultsJSON(_candidate)', ctx));
+});
+
+await test('v3 foundation: commitment vector is deterministic and sensitive', async () => {
+  const key = hexToBytes('d7b935b8298f476c6046cb71501fcb8c9a53327df3cc4e05c696fea7ef3d035a');
+  const defaults = {schema: 1, length: 20, symbols: '!@#$%&*-_=+?', policy: 'ascii-printable-v1'};
+  const expected = '44d37dd56a969d6e4f88886827063e9cbcf44576e8b606e24e588e94e809296f';
+  assert.equal(await call('deriveDefaultsCommitment', key, 'test@gmail.com', defaults), expected);
+  assert.equal(await call('deriveDefaultsCommitment', new Uint8Array(key), 'test@gmail.com', defaults), expected);
+  assert.notEqual(await call('deriveDefaultsCommitment', key, 'other@gmail.com', defaults), expected);
+  assert.notEqual(await call('deriveDefaultsCommitment', key, 'test@gmail.com', {...defaults, length: 21}), expected);
+});
+
+await test('v3 foundation: commitment inputs are strict and do not coerce', async () => {
+  const key = hexToBytes('d7b935b8298f476c6046cb71501fcb8c9a53327df3cc4e05c696fea7ef3d035a');
+  const defaults = {schema: 1, length: 20, symbols: '!@#$%&*-_=+?', policy: 'ascii-printable-v1'};
+  for (const badKey of [new Uint8Array(31), new Uint8Array(33), new Array(32).fill(0), '00'.repeat(32)]) {
+    await assert.rejects(() => call('deriveDefaultsCommitment', badKey, 'test@gmail.com', defaults));
+  }
+  for (const badEmail of [
+    'Test@gmail.com', ' test@gmail.com', 'test@gmail.com ', 'test@例子.com',
+    'test@x.com' + String.fromCharCode(0), 'test@x.com' + String.fromCharCode(0xd800),
+  ]) {
+    await assert.rejects(() => call('deriveDefaultsCommitment', key, badEmail, defaults));
+  }
+});
+
+await test('v3 foundation: AAD encodes exact state/commitment bytes', async () => {
+  const lookupId = '0123456789abcdef'.repeat(4);
+  const commitment = 'ab'.repeat(32);
+  const expected = state => Buffer.from(
+    `keygrain-sync-v3\0${lookupId}\0${state}\0${state === 'PRESENT' ? commitment : ''}`,
+    'utf8'
+  ).toString('hex');
+  for (const [state, commitmentArg] of [['UNSEALED', null], ['ABSENT', null], ['PRESENT', commitment]]) {
+    const aad = call('buildV3SyncAAD', lookupId, state, commitmentArg);
+    assert.equal(Buffer.from(aad).toString('hex'), expected(state));
+    aad[0] ^= 0xff;
+    assert.equal(Buffer.from(call('buildV3SyncAAD', lookupId, state, commitmentArg)).toString('hex'), expected(state));
+  }
+});
+
+await test('v3 foundation: AAD rejects malformed lookup/state/commitment tuples', async () => {
+  const lookupId = '0123456789abcdef'.repeat(4);
+  const validCommitment = 'ab'.repeat(32);
+  for (const badLookup of ['', lookupId.toUpperCase(), lookupId.slice(1), lookupId + '0', lookupId.slice(0, 63) + '!', lookupId.slice(0, 32) + String.fromCharCode(0) + lookupId.slice(33)]) {
+    assert.throws(() => call('buildV3SyncAAD', badLookup, 'ABSENT', null));
+  }
+  for (const badState of ['unsealed', 'ABSENT ', 'PRESENT' + String.fromCharCode(0), '', null]) {
+    assert.throws(() => call('buildV3SyncAAD', lookupId, badState, null));
+  }
+  for (const [state, badCommitment] of [
+    ['UNSEALED', undefined], ['UNSEALED', validCommitment], ['ABSENT', ''],
+    ['PRESENT', null], ['PRESENT', validCommitment.toUpperCase()],
+    ['PRESENT', validCommitment.slice(1)], ['PRESENT', validCommitment + '0'],
+  ]) {
+    assert.throws(() => call('buildV3SyncAAD', lookupId, state, badCommitment));
+  }
+});
+
+await test('v2 regression anchors remain lookup-id AAD and current derivations', async () => {
+  assert.equal(await call('deriveLookupId', syncVectors.secret, syncVectors.email), syncVectors.lookup_id);
+  assert.equal(Buffer.from(await call('deriveEncryptionKey', syncVectors.secret, syncVectors.email)).toString('hex'), syncVectors.encryption_key_hex);
+  ctx._secret = syncVectors.secret;
+  ctx._email = syncVectors.email;
+  ctx._blobB64 = syncVectors.server_response.encrypted_blob;
+  const decrypted = await runInContext(`(async () => {
+    const key = await deriveEncryptionKey(_secret, _email);
+    const lookupId = await deriveLookupId(_secret, _email);
+    return new TextDecoder().decode(await decryptBlob(key, base64ToArrayBuffer(_blobB64), new TextEncoder().encode(lookupId)));
+  })()`, ctx);
+  assert.equal(JSON.parse(decrypted).services.length, syncVectors.services.length);
+});
+
 // Derive each password service through the REAL keygrain.js derivePassword and
 // assert it equals the pinned expected value.
 for (const fsvc of syncVectors.services.filter(s => s.expected && s.expected.password)) {
