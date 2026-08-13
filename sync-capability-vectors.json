@@ -1,0 +1,192 @@
+{
+  "fixture": "keygrain-sync-capability-contract",
+  "fixture_version": 1,
+  "status": "frozen_public_contract_not_runtime_support_claim",
+  "scope": "KG-29 strict capability envelope, immutable defaults lock, transition, ETag, and HTTP errors",
+  "capability": "account_defaults_immutable_v1",
+  "protocol": {
+    "legacy_v2": {
+      "request_fields": ["services", "encrypted_blob", "checksum", "deleted_ids"],
+      "response_body_fields": ["version", "services", "encrypted_blob", "checksum"],
+      "response_headers": ["ETag"],
+      "etag": "HTTP ETag header: lowercase_hex(SHA-256(decoded_encrypted_blob)[0:16]); there is no GET-body etag field",
+      "writer_protocol": null,
+      "min_writer_protocol": null,
+      "capabilities": null
+    },
+    "strict_v3": {
+      "request_fields": [
+        "services",
+        "encrypted_blob",
+        "checksum",
+        "deleted_ids",
+        "payload_version",
+        "writer_protocol",
+        "capabilities",
+        "defaults_state",
+        "defaults_commitment"
+      ],
+      "request_required": [
+        "payload_version",
+        "writer_protocol",
+        "capabilities",
+        "defaults_state",
+        "defaults_commitment"
+      ],
+      "response_body_fields": [
+        "version",
+        "services",
+        "encrypted_blob",
+        "checksum",
+        "etag",
+        "payload_version",
+        "min_writer_protocol",
+        "capabilities",
+        "defaults_state",
+        "defaults_commitment",
+        "generation"
+      ],
+      "response_headers": ["ETag"],
+      "response_etag_rule": "PUT response body etag is unquoted; the HTTP ETag header carries the same value quoted",
+      "payload_version": 3,
+      "writer_protocol": 3,
+      "min_writer_protocol": 3,
+      "capabilities": ["account_defaults_immutable_v1"],
+      "writer_protocol_is_request_only": true,
+      "min_writer_protocol_is_get_and_record_metadata": true,
+      "runtime_status": "future_strict_implementation_contract; current_server_response_generation_exposure_is_pending"
+    }
+  },
+  "get_response_semantics": {
+    "payload_version": "The stored encrypted payload protocol version. Legacy v2 responses omit it; strict v3 responses carry integer 3.",
+    "min_writer_protocol": "The minimum PUT writer protocol accepted for this record. It is record/GET metadata, not the incoming PUT writer_protocol field.",
+    "capabilities": "The server-advertised exact capability token set. Strict v3 uses the singleton account_defaults_immutable_v1.",
+    "defaults_state": "Opaque lock state: UNSEALED before the first accepted non-empty strict service metadata write, then ABSENT or PRESENT permanently.",
+    "defaults_commitment": "Opaque lowercase 64-hex commitment for PRESENT; null for UNSEALED and ABSENT. It never contains or reveals the defaults value.",
+    "generation": "Unsigned 64-bit strict record generation included in the v3 ETag contract; a new live record starts at 1, each accepted live PUT increments once, deletion retains a sealed tombstone generation, and recreation increments it. This field is part of the frozen contract; current response structs do not yet expose it."
+  },
+  "put_response_semantics": {
+    "request": {
+      "payload_version": 3,
+      "writer_protocol": 3,
+      "capabilities": ["account_defaults_immutable_v1"],
+      "defaults_state": "UNSEALED | ABSENT | PRESENT",
+      "defaults_commitment": "null for UNSEALED/ABSENT; JSON string matching ^[0-9a-f]{64}$ for PRESENT"
+    },
+    "response": "201 for a new live record or sealed-tombstone recreation; 200 for an accepted update of an existing live record; return the strict capability/lock metadata, checksum, and the new v3 ETag. A strict response must not be described as deployed merely because this contract is documented.",
+    "replacement_rule": "After sealing, a PUT must repeat the exact defaults_state and defaults_commitment. A missing, changed, or contradictory tuple is rejected before replacing the stored record."
+  },
+  "lock_states": [
+    {
+      "state": "UNSEALED",
+      "commitment": null,
+      "meaning": "Strict record has not yet accepted non-empty service metadata; defaults may still be edited locally by the client.",
+      "allowed_transition": "UNSEALED -> UNSEALED on empty-service PUT; UNSEALED -> ABSENT or PRESENT atomically on first non-empty service metadata PUT"
+    },
+    {
+      "state": "ABSENT",
+      "commitment": null,
+      "meaning": "The first non-empty strict service metadata write carried no account-defaults object. Absence is now immutable.",
+      "allowed_transition": "ABSENT -> ABSENT only"
+    },
+    {
+      "state": "PRESENT",
+      "commitment": "lowercase 64-hex opaque commitment",
+      "meaning": "The first non-empty strict service metadata write carried an account-defaults value; the server retains only its opaque commitment.",
+      "allowed_transition": "PRESENT -> PRESENT only, with the exact same commitment"
+    }
+  ],
+  "sealing": {
+    "event": "first accepted authenticated strict v3 PUT with services.length > 0",
+    "server_knowledge": "The server seals based on non-empty service metadata, not by decrypting the blob or inspecting account defaults.",
+    "commitment_rule": "The client computes the secret-derived opaque commitment from the canonical four-field defaults value; the server compares opaque lowercase 64-hex strings only.",
+    "leakage": [
+      "UNSEALED/ABSENT/PRESENT state",
+      "whether a defaults value is present",
+      "stable equality of a commitment for the account",
+      "capability and generation transitions"
+    ],
+    "not_leaked": ["length", "symbols", "policy", "defaults plaintext", "master secret"]
+  },
+  "tombstone_recreation": {
+    "delete": "Deleting a sealed record retains an authenticated opaque tombstone containing the sealed lock tuple, strict capability metadata, and generation; repeated DELETE does not clear or reset it.",
+    "recreate": "A sealed tombstone is not a no-record first PUT. Only an authenticated exact strict v3 PUT matching its lock tuple may recreate a live record, using generation tombstone_generation + 1.",
+    "reject": "Unauthenticated, legacy, non-strict, or lock-mismatched recreation is rejected without creating or replacing a record."
+  },
+  "etag_contract": {
+    "v2": {
+      "definition": "lowercase_hex(SHA-256(B)[0:16])",
+      "B": "decoded raw encrypted_blob bytes",
+      "boundary": "The current v2 ETag may be supplied exactly once, on the authenticated v2-to-v3 migration PUT; the accepted result returns a v3 ETag."
+    },
+    "v3": {
+      "inputs": {
+        "domain": "UTF-8 bytes of keygrain-sync-v3-etag\\0",
+        "version": "U32BE(3)",
+        "generation": "U64BE(G)",
+        "state_byte": "U8(S): UNSEALED=0, ABSENT=1, PRESENT=2",
+        "commitment_length": "U32BE(len(C))",
+        "commitment": "lowercase ASCII commitment bytes; zero bytes for UNSEALED/ABSENT",
+        "blob_length": "U64BE(len(B))",
+        "blob": "decoded raw encrypted_blob bytes"
+      },
+      "encoding": "E = domain || version || generation || state_byte || commitment_length || commitment || blob_length || blob",
+      "etag": "lowercase_hex(SHA-256(E)[0:16])",
+      "forbidden_variants": ["JSON serialization", "implicit delimiters", "host-endian integers", "blob-only hashing"]
+    },
+    "examples": [
+      {
+        "generation": 1,
+        "defaults_state": "PRESENT",
+        "defaults_commitment": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "blob_utf8": "opaque-encrypted-blob",
+        "blob_hex": "6f70617175652d656e637279707465642d626c6f62",
+        "etag": "caec38fc7b2b7ff005a0f1be4bc3f36c"
+      },
+      {
+        "generation": 1,
+        "defaults_state": "UNSEALED",
+        "defaults_commitment": null,
+        "blob_utf8": "opaque-encrypted-blob",
+        "blob_hex": "6f70617175652d656e637279707465642d626c6f62",
+        "etag": "696c517f48aa4910e986cdf33fc3797f"
+      }
+    ]
+  },
+  "transition": {
+    "old_server": {
+      "legacy_v2_no_defaults": "Ordinary authenticated no-default v2 accounts may continue the existing v2 GET/merge/PUT/ETag/409 flow.",
+      "defaults_bearing": "A defaults-bearing account is read-only for remote sync until strict support; no service-only, deletion, attachment, or retry PUT is allowed.",
+      "legacy_local_defaults_pending": "LEGACY_LOCAL_DEFAULTS_PENDING is read-only for remote sync, including attachment and service-only writes, when local defaults await a strict-capability server.",
+      "capability_absence": "Missing payload_version, min_writer_protocol, or capabilities is positive legacy classification, not evidence of strict support."
+    },
+    "strict_server": {
+      "old_writer": "A PUT lacking the complete strict envelope is rejected with HTTP 426 Upgrade Required before record replacement.",
+      "migration": "A live v2 record is readable; the first authenticated strict PUT uses the current v2 ETag, preserves the authenticated defaults value or absence, seeds the lock, and returns a v3 ETag.",
+      "post_migration": "After strict migration, every PUT requires writer_protocol 3, capability account_defaults_immutable_v1, the current v3 ETag, and the exact lock tuple."
+    }
+  },
+  "error_examples": [
+    {
+      "status": 426,
+      "reason": "upgrade_required",
+      "headers": {"Content-Type": "application/json"},
+      "body": {"error": "upgrade required"},
+      "safety": "The old writer is rejected before replacement; the client must not retry the same v2 shape."
+    },
+    {
+      "status": 409,
+      "reason": "conflict",
+      "headers": {"Content-Type": "application/json"},
+      "body": {"error": "conflict", "current_etag": "0123456789abcdef0123456789abcdef"},
+      "safety": "Re-fetch and reconcile against current state; do not overwrite using a stale ETag."
+    },
+    {
+      "status": 422,
+      "reason": "validation_failed",
+      "headers": {"Content-Type": "application/json"},
+      "body": {"error": "validation failed", "detail": "checksum mismatch"},
+      "safety": "Reject the payload locally and preserve the previous accepted record."
+    }
+  ]
+}

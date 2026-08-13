@@ -26,7 +26,235 @@ The server stores a bcrypt hash (cost 12) of the auth_password on first PUT. Sub
 
 The complete byte-level algorithm and the `DEFAULT_SYMBOLS` value are normative in `SPEC.md` §6. Do not implement this contract as a raw-secret HMAC or as an undefined `derive_password_v1` function.
 
+## KG-29 strict capability envelope (v3 contract; implementation pending)
+
+This section freezes the public HTTP contract for the KG-29 immutable account-defaults
+protocol. It documents a future strict capability rollout; it does **not** claim that the
+current deployed server or any released client implements v3. The machine-readable contract
+fixture is `sync-capability-vectors.json` and is covered by `.fixtures-checksum`.
+
+### Legacy v2 and strict v3 envelopes
+
+Legacy v2 remains the existing transport until a successful v2-to-v3 migration boundary:
+
+| Shape | JSON request/body fields | HTTP response metadata |
+|---|---|---|
+| Legacy v2 PUT | `services`, `encrypted_blob`, `checksum`, optional `deleted_ids` | `ETag` header; 201/200 body contains `services`, `checksum`, and unquoted `etag` |
+| Legacy v2 GET | — | `ETag` header; 200 body contains `version`, `services`, `encrypted_blob`, and `checksum` (no GET-body `etag`) |
+| Strict v3 PUT | All v2 fields plus `payload_version`, `writer_protocol`, `capabilities`, `defaults_state`, and `defaults_commitment` | Quoted `ETag` header and a 200/201 body carrying the strict metadata and new `etag` |
+| Strict v3 GET | — | Quoted `ETag` header and a 200 body carrying the strict metadata, including `generation` |
+
+The exact strict capability token is **`account_defaults_immutable_v1`**. A strict writer
+sends `payload_version: 3`, `writer_protocol: 3`, and the capability token in the
+`capabilities` array. `writer_protocol` is an incoming **PUT request** field. In contrast,
+`min_writer_protocol` is a **GET/record response** field describing the minimum writer
+protocol accepted for that stored record; it is not a request-field alias and must not be
+substituted for `writer_protocol`.
+
+Strict response example (illustrative contract, not evidence of current runtime output):
+
+```json
+{
+  "version": 1,
+  "services": [{"id": "550e8400-e29b-41d4-a716-446655440000", "updated_at": 1715000000}],
+  "encrypted_blob": "<base64-encoded ciphertext>",
+  "checksum": "<sha256-hex-of-decoded-blob>",
+  "payload_version": 3,
+  "min_writer_protocol": 3,
+  "capabilities": ["account_defaults_immutable_v1"],
+  "defaults_state": "PRESENT",
+  "defaults_commitment": "<lowercase 64-hex opaque commitment>",
+  "generation": 1
+}
+```
+
+`generation` is part of the frozen v3 response and ETag contract. The current server record
+format retains generation internally, but its current GET/PUT response structs do not yet
+expose the JSON field; that implementation exposure is a separate future unit. This document
+must not be read as a deployment or strict-client support claim.
+
+### Strict GET and PUT fields
+
+For strict GET responses:
+
+- `payload_version` is integer `3`, identifying the stored encrypted payload protocol.
+- `min_writer_protocol` is integer `3`, identifying the minimum accepted PUT writer for the
+  record. It is record metadata, not the request's `writer_protocol`.
+- `capabilities` is the server-advertised capability set. The strict contract uses the exact
+  singleton `["account_defaults_immutable_v1"]`.
+- `defaults_state` is `UNSEALED`, `ABSENT`, or `PRESENT`.
+- `defaults_commitment` is `null` for `UNSEALED` and `ABSENT`, or an opaque lowercase
+  64-hex string for `PRESENT`.
+- `generation` is an unsigned 64-bit generation used by the v3 ETag envelope. A new live
+  record starts at 1; each accepted live PUT increments it once. A sealed deletion retains a
+  tombstone generation, and recreation uses the next generation.
+
+A strict PUT request must contain:
+
+```json
+{
+  "services": [],
+  "encrypted_blob": "<base64-encoded ciphertext>",
+  "checksum": "<sha256-hex-of-decoded-blob>",
+  "payload_version": 3,
+  "writer_protocol": 3,
+  "capabilities": ["account_defaults_immutable_v1"],
+  "defaults_state": "UNSEALED",
+  "defaults_commitment": null
+}
+```
+
+For `PRESENT`, `defaults_commitment` is a JSON string matching `^[0-9a-f]{64}$`. It is
+opaque server metadata: the server compares its exact bytes and never decrypts, parses, or
+semantically validates the account-defaults object. The client computes the commitment from
+the canonical four-field defaults value and must recompute and compare it after decryption.
+The commitment must not contain the defaults plaintext, master secret, or a reversible encoding
+of `length`, `symbols`, or `policy`. The server necessarily exposes only the lock state,
+presence/absence, stable equality of the commitment, capability metadata, and generation
+transitions.
+
+A strict 201 response creates a new live record or recreates one from a sealed tombstone; a
+strict 200 response updates an existing live record. Both return the new checksum, ETag,
+strict capability metadata, lock tuple, and generation.
+After sealing, every PUT must repeat the exact stored `defaults_state` and
+`defaults_commitment`. A missing, changed, or contradictory tuple is rejected before record
+replacement; it is not a defaults merge or timestamp conflict.
+
+### Lock states, sealing, and tombstones
+
+The lock state is established by the first accepted authenticated strict PUT whose `services`
+metadata array is non-empty:
+
+| State | Commitment | Meaning and allowed transition |
+|---|---|---|
+| `UNSEALED` | `null` | No non-empty strict service metadata has been accepted. Empty-service PUTs may keep it `UNSEALED` while the ETag advances. The first non-empty PUT changes it atomically to `ABSENT` or `PRESENT`. |
+| `ABSENT` | `null` | The first non-empty strict service metadata write carried no defaults object. Absence is immutable; only the same `ABSENT`/`null` tuple is accepted thereafter. |
+| `PRESENT` | lowercase 64-hex opaque value | The first non-empty strict service metadata write carried defaults. Only the same `PRESENT` commitment is accepted thereafter. |
+
+The server seals from service metadata, not by inspecting encrypted plaintext. For `PRESENT`,
+client-side validation must establish the relationship between the decrypted defaults value
+and the commitment; opaque server equality alone cannot prove that relationship against a
+malicious authenticated writer.
+
+Deleting an unsealed record may permit a fresh unsealed creation. Deleting a sealed record
+removes live ciphertext and service metadata but retains an authenticated opaque tombstone
+with the bcrypt verifier, strict capability/minimum-writer metadata, sealed lock tuple, and
+generation. The tombstone contains no live payload, plaintext, services, or service metadata.
+An authenticated GET of a sealed tombstone remains a compatibility-safe 404.
+
+A sealed tombstone is not an unauthenticated no-record first PUT. Only an authenticated exact
+strict v3 PUT matching the retained lock tuple may recreate the live record; it uses no
+`If-Match` because no live blob exists and receives a fresh generation and v3 ETag. A legacy,
+non-strict, unauthenticated, or lock-mismatched PUT is rejected without creating a record.
+Repeated DELETE does not erase or reset the sealed tombstone, commitment, or generation.
+
+### ETags and the one-time v2-to-v3 boundary
+
+Before migration, the v2 ETag remains the existing blob-only value:
+
+```text
+v2 ETag = lowercase_hex(SHA-256(B)[0:16])
+B = decoded raw encrypted_blob bytes
+```
+
+For a live v2 record, the first authenticated strict v3 migration PUT may use the current v2
+ETag exactly once. It must decrypt and validate the v2 payload, preserve its defaults value or
+absence, atomically seed the strict lock, and return the v3 ETag. This is the only boundary
+where a current v2 ETag is accepted for a strict write. After it succeeds, all PUTs require the
+current v3 ETag and exact strict lock tuple. A v2 writer never writes a sealed v3 record.
+
+The v3 ETag is the first 16 bytes of SHA-256 over this exact byte sequence, rendered as
+lowercase 32-hex characters:
+
+```text
+E = UTF8("keygrain-sync-v3-etag\0")
+    || U32BE(3)
+    || U64BE(G)
+    || U8(S)                         // UNSEALED=0, ABSENT=1, PRESENT=2
+    || U32BE(len(C)) || C            // C is empty for UNSEALED/ABSENT
+    || U64BE(len(B)) || B            // B is decoded raw encrypted_blob bytes
+v3 ETag = lowercase_hex(SHA-256(E)[0:16])
+```
+
+There is no JSON serialization, implicit delimiter, platform string encoding, host-endian
+integer, or blob-only variant in this calculation. For example, with `G=1`, state `PRESENT`,
+commitment `0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`, and UTF-8 blob
+`opaque-encrypted-blob`, the v3 ETag is
+`caec38fc7b2b7ff005a0f1be4bc3f36c`. The corresponding `UNSEALED` example is
+`696c517f48aa4910e986cdf33fc3797f`. Both examples are in
+`sync-capability-vectors.json`.
+
+### Old-server transition and HTTP errors
+
+During the old-server phase, absence of `payload_version`, `min_writer_protocol`, or
+`capabilities` is positive legacy classification. It is not evidence of strict support and
+must not be inferred from HTTP 200/201, a successful checksum, an ETag, or opaque storage.
+
+- An ordinary authenticated no-default v2 account may continue the existing v2
+  GET/merge/PUT/ETag/409 flow.
+- A defaults-bearing account read from the old server is remote-sync read-only until strict
+  support: no defaults PUT, service-only PUT, deletion PUT, attachment PUT, or retry PUT.
+- `LEGACY_LOCAL_DEFAULTS_PENDING`—local defaults exist but the old server returns 404 or an
+  authenticated empty/unsealed record before the first non-empty service sync—is likewise
+  read-only for remote sync, including attachment and service-only writes. Defaults remain
+  locally editable while pre-sync; attachment waits for strict capability.
+- A new client never strips defaults to make an old-server PUT succeed, silently downgrades a
+  sealed payload, or treats a successful old-server response as strict migration.
+- On a strict server, any old writer missing the complete protocol-3 envelope is rejected with
+  **HTTP 426 Upgrade Required before record replacement**. The client must not retry the same
+  v2 shape. GET of a legacy v2 record remains available for the authenticated migration path.
+
+The exact public error shapes are intentionally safe and contain no credentials, plaintext,
+server internals, or defaults values:
+
+**426 Upgrade Required — old writer against strict server**
+
+```http
+HTTP/1.1 426 Upgrade Required
+Content-Type: application/json
+```
+
+```json
+{"error":"upgrade required"}
+```
+
+**409 Conflict — stale or missing ETag on an existing live record**
+
+```http
+HTTP/1.1 409 Conflict
+Content-Type: application/json
+```
+
+```json
+{"error":"conflict","current_etag":"0123456789abcdef0123456789abcdef"}
+```
+
+Re-fetch and reconcile; do not overwrite using the stale ETag. The current ETag is a bounded
+opaque token, not a secret or a substitute for lock validation.
+
+**422 Unprocessable Entity — malformed or invalid payload**
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json
+```
+
+```json
+{"error":"validation failed","detail":"checksum mismatch"}
+```
+
+The server must preserve the prior accepted record on validation failure. Other existing 422
+details remain those listed in the PUT section below.
+
+The strict contract is staged and independently testable; this documentation and fixture do
+not claim strict v3 client support, deployment, release publication, or server enforcement.
+
 ## Endpoints
+
+> Unless explicitly marked as strict v3 above, the endpoint examples and legacy ETag/first-PUT
+> wording in the following sections describe the legacy v2 contract. In particular, the v2
+> blob-only ETag and ordinary no-record creation rules do not override strict v3 lock,
+> tombstone, generation, or 426 behavior.
 
 ### GET /api/sync/:lookup_id
 
