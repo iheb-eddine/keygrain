@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import json
 import re
+from enum import Enum
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -69,6 +70,76 @@ class NetworkError(SyncError):
 
 class ServerError(SyncError):
     """Server returned an unexpected (non-2xx, non-mapped) status."""
+
+
+class CapabilityMetadataClassification(str, Enum):
+    """Classification of the optional server capability envelope."""
+
+    LEGACY_ABSENT = "legacy_absent"
+    STRICT = "strict"
+    PARTIAL = "partial"
+    MALFORMED = "malformed"
+    CONTRADICTORY = "contradictory"
+    UNSUPPORTED = "unsupported"
+
+
+class UpgradeRequired(SyncError):
+    """The server response requires a newer client and must not be retried."""
+
+    def __init__(self, reason: str | CapabilityMetadataClassification | None = None):
+        self.reason = reason
+        # Keep exception text generic; CLI callers use fixed safe upgrade copy.
+        super().__init__("Upgrade required.")
+
+
+_CAPABILITY_FIELDS = ("payload_version", "min_writer_protocol", "capabilities")
+_STRICT_CAPABILITY = "account_defaults_immutable_v1"
+
+
+def classify_capability_metadata(payload) -> CapabilityMetadataClassification:
+    """Classify the optional three-field server capability envelope.
+
+    Presence is checked separately from value validity. This ensures that null,
+    floating-point, boolean, string, non-array, or mixed-element values are
+    malformed rather than being mistaken for an absent or partial envelope.
+    """
+    if not isinstance(payload, dict):
+        return CapabilityMetadataClassification.MALFORMED
+    if not any(key in payload for key in _CAPABILITY_FIELDS):
+        return CapabilityMetadataClassification.LEGACY_ABSENT
+
+    payload_version = payload.get("payload_version")
+    min_writer_protocol = payload.get("min_writer_protocol")
+    capabilities = payload.get("capabilities")
+
+    def valid_protocol(value, key):
+        return key not in payload or (isinstance(value, int) and not isinstance(value, bool))
+
+    valid_capabilities = (
+        "capabilities" not in payload
+        or isinstance(capabilities, list)
+        and all(isinstance(item, str) for item in capabilities)
+    )
+    if (
+        not valid_protocol(payload_version, "payload_version")
+        or not valid_protocol(min_writer_protocol, "min_writer_protocol")
+        or not valid_capabilities
+    ):
+        return CapabilityMetadataClassification.MALFORMED
+
+    if any(key not in payload for key in _CAPABILITY_FIELDS):
+        return CapabilityMetadataClassification.PARTIAL
+
+    strict = (
+        payload_version == 3
+        and min_writer_protocol == 3
+        and capabilities == [_STRICT_CAPABILITY]
+    )
+    if strict:
+        return CapabilityMetadataClassification.STRICT
+    if min_writer_protocol == 3:
+        return CapabilityMetadataClassification.CONTRADICTORY
+    return CapabilityMetadataClassification.UNSUPPORTED
 
 
 # --- Bit-for-bit password/stream primitives (mirror keygrain.js) ---
@@ -294,6 +365,8 @@ def _http_get(url: str, lookup_id: str, auth_password: str, timeout: int):
                 f"Server attempted an HTTP {exc.code} redirect; refusing to follow "
                 "(protects the Authorization header from being sent to another host)."
             ) from exc
+        if exc.code == 426:
+            raise UpgradeRequired("http_426") from exc
         if exc.code == 401:
             raise AuthError("Authentication failed (check secret/email).") from exc
         if exc.code == 404:
@@ -401,6 +474,10 @@ def download_sync_content(
         payload = json.loads(body.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
         raise SyncError("Malformed server response (not valid JSON).") from exc
+
+    capability_classification = classify_capability_metadata(payload)
+    if capability_classification != CapabilityMetadataClassification.LEGACY_ABSENT:
+        raise UpgradeRequired(capability_classification)
 
     if not isinstance(payload, dict) or "encrypted_blob" not in payload or "checksum" not in payload:
         raise SyncError("Malformed server response (missing fields).")

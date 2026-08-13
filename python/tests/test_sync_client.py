@@ -284,6 +284,63 @@ def _server_payload(content: dict):
     ).encode()
 
 
+@pytest.mark.parametrize("payload, expected", [
+    ({"services": []}, sc.CapabilityMetadataClassification.LEGACY_ABSENT),
+    (
+        {"payload_version": 3, "min_writer_protocol": 3,
+         "capabilities": ["account_defaults_immutable_v1"]},
+        sc.CapabilityMetadataClassification.STRICT,
+    ),
+    ({"payload_version": 3}, sc.CapabilityMetadataClassification.PARTIAL),
+    ({"payload_version": None, "min_writer_protocol": 3, "capabilities": []},
+     sc.CapabilityMetadataClassification.MALFORMED),
+    ({"payload_version": 3.0, "min_writer_protocol": 3, "capabilities": []},
+     sc.CapabilityMetadataClassification.MALFORMED),
+    ({"payload_version": 3, "min_writer_protocol": 3, "capabilities": ["ok", 4]},
+     sc.CapabilityMetadataClassification.MALFORMED),
+    ({"payload_version": 2, "min_writer_protocol": 3, "capabilities": []},
+     sc.CapabilityMetadataClassification.CONTRADICTORY),
+    ({"payload_version": 3, "min_writer_protocol": 3,
+      "capabilities": ["account_defaults_immutable_v1", "unexpected"]},
+     sc.CapabilityMetadataClassification.CONTRADICTORY),
+    ({"payload_version": 2, "min_writer_protocol": 2, "capabilities": ["other"]},
+     sc.CapabilityMetadataClassification.UNSUPPORTED),
+])
+def test_classify_capability_metadata(payload, expected):
+    assert sc.classify_capability_metadata(payload) == expected
+
+
+def test_classify_non_dict_as_malformed():
+    assert sc.classify_capability_metadata([]) == sc.CapabilityMetadataClassification.MALFORMED
+
+
+def test_incompatible_metadata_rejected_before_blob_access(monkeypatch):
+    class ExplodingBlobPayload(dict):
+        def __contains__(self, key):
+            if key in {"encrypted_blob", "checksum"}:
+                raise AssertionError(f"incompatible response touched {key}")
+            return super().__contains__(key)
+
+    payload = ExplodingBlobPayload({
+        "payload_version": 3,
+        "min_writer_protocol": 3,
+        "capabilities": ["account_defaults_immutable_v1"],
+    })
+    monkeypatch.setattr(sc.json, "loads", lambda _body: payload)
+    monkeypatch.setattr(sc, "_urlopen", lambda req, timeout=None: _FakeResponse(b"ignored"))
+    with pytest.raises(sc.UpgradeRequired) as exc_info:
+        sc.download_sync_content("https://keygrain.com", SECRET, EMAIL)
+    assert exc_info.value.reason == sc.CapabilityMetadataClassification.STRICT
+
+
+def test_download_426_maps_to_terminal_upgrade_required(monkeypatch):
+    monkeypatch.setattr(sc, "_urlopen", _raise_http(426))
+    with pytest.raises(sc.UpgradeRequired) as exc_info:
+        sc.download_sync_content("https://keygrain.com", SECRET, EMAIL)
+    assert exc_info.value.reason == "http_426"
+    assert str(exc_info.value) == "Upgrade required."
+
+
 def test_download_enriches_id_and_updated_at(monkeypatch):
     # Real server ids are UUIDs (extension uses crypto.randomUUID); the choke
     # point now validates UUID shape, so fixtures use real UUIDs.

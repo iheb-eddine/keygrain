@@ -380,6 +380,9 @@ def _cmd_sync(args):
         hint = f" Retry after {e.retry_after}s." if e.retry_after else ""
         print(f"Error: Rate limited by server.{hint}", file=sys.stderr)
         sys.exit(1)
+    except sync_client.UpgradeRequired:
+        print("Update Keygrain to continue syncing this account.", file=sys.stderr)
+        sys.exit(1)
     except (sync_client.NetworkError, sync_client.ServerError,
             sync_client.ChecksumMismatchError, sync_client.BlobDecryptError,
             sync_client.SyncError) as e:
