@@ -105,6 +105,13 @@ async function resetAutoLock() {
 
 let bgSyncInProgress = false;
 let lockDeferred = false;
+const UPGRADE_REQUIRED_MESSAGE = "Update Keygrain to continue syncing this account.";
+
+async function clearSyncRetry() {
+  await browser.storage.local.remove("syncRetryState");
+  browser.alarms.clear("syncRetry");
+  browser.alarms.clear("syncAlarm");
+}
 
 async function backgroundSync() {
   getAuthorizedCredentials();
@@ -150,7 +157,10 @@ async function backgroundSync() {
       browser.alarms.clear("syncAlarm");
     }
     const errType = e?.message;
-    if (errType === "rate_limited") {
+    if (errType === "upgrade_required") {
+      await clearSyncRetry();
+      await browser.storage.local.set({lastSyncError: {type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE}});
+    } else if (errType === "rate_limited") {
       const delay = (e.retryAfter || 60) / 60;
       await browser.storage.local.set({lastSyncError: {type: "rate_limited", message: "Rate limited. Retrying soon."}});
       browser.alarms.create("syncRetry", {delayInMinutes: delay});
@@ -253,6 +263,9 @@ browser.runtime.onMessage.addListener((msg) => {
     clearStrengthenCache();
     sessionEmail = null;
     return Promise.resolve({ok: true});
+  }
+  if (msg.action === "clearSyncRetry") {
+    return clearSyncRetry().then(() => ({ok: true}), () => ({ok: false}));
   }
   if (msg.action === "scheduleSyncRetry") {
     return (async () => {

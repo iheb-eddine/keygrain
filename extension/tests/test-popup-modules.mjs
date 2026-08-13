@@ -285,6 +285,15 @@ await test('D16: computeSyncStatus string error (legacy)', async () => {
   const result = call('computeSyncStatus', false, 'something broke', null, null);
   assert(result.errorHtml.includes('something broke'));
 });
+await test('D16b: computeSyncStatus upgrade-required always uses safe actionable copy', async () => {
+  for (const message of [undefined, '', 'upgrade_required', 'server says protocol 3']) {
+    const result = call('computeSyncStatus', false, {type: 'upgrade_required', message}, null, {attempt: 1, nextRetryAt: Date.now() + 60000});
+    assert.equal(result.errorText, 'Update Keygrain to continue syncing this account.');
+    assert(result.errorHtml.includes('Update Keygrain to continue syncing this account.'));
+    assert(!result.errorHtml.includes('upgrade_required'));
+    assert(!result.errorHtml.includes('server says protocol 3'));
+  }
+});
 await test('D17: computeSyncStatus last sync time shown', async () => {
   const result = call('computeSyncStatus', false, null, Date.now()-60000, null);
   assert(result.visible);

@@ -787,12 +787,16 @@
         errorObj = {type: "server", message: "Server error"};
       } else if (msg === "auth_failed") {
         errorObj = {type: "auth", message: "Authentication failed"};
+      } else if (msg === "upgrade_required") {
+        errorObj = {type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE};
       } else {
         errorObj = {type: "other", message: msg || "Sync failed"};
       }
       lastSyncError = errorObj;
       await chrome.storage.local.set({lastSyncError: errorObj});
-      if (errorObj.type === "network" || errorObj.type === "server" || errorObj.type === "rate_limited") {
+      if (errorObj.type === "upgrade_required") {
+        sendMsg({action: "clearSyncRetry"}).catch(() => {});
+      } else if (errorObj.type === "network" || errorObj.type === "server" || errorObj.type === "rate_limited") {
         sendMsg({action: "scheduleSyncRetry", errorType: errorObj.type, retryAfter: errorObj.retryAfter});
       }
     } finally {
@@ -1481,7 +1485,18 @@
           tombstones = result.tombstones;
           await saveServices();
         }
-      } catch { /* server unreachable or 404 — new user */ }
+      } catch (error) {
+        if (error?.message === "upgrade_required") {
+          lastSyncError = {type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE};
+          await chrome.storage.local.set({lastSyncError});
+          sendMsg({action: "clearSyncRetry"}).catch(() => {});
+          showStatus(statusEl, UPGRADE_REQUIRED_MESSAGE, statusTimerState, 8000);
+          currentSecret = null;
+          currentEmail = null;
+          return;
+        }
+        /* server unreachable or 404 — new user */
+      }
     }
     // If still no services (new user), ask to confirm secret
     if (services.length === 0) {

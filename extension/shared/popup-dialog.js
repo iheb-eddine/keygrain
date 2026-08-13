@@ -1,3 +1,5 @@
+const UPGRADE_REQUIRED_MESSAGE = "Update Keygrain to continue syncing this account.";
+
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
 function nextTimestamp(services) {
@@ -21,7 +23,9 @@ function computeSyncStatus(syncInProgress, lastSyncError, lastSyncTime, retrySta
   if (lastSyncError) {
     const errObj = typeof lastSyncError === "object" ? lastSyncError : {type: "other", message: lastSyncError};
     let msg;
-    if ((errObj.type === "network" || errObj.type === "server") && retryState && retryState.nextRetryAt && retryState.nextRetryAt > Date.now()) {
+    if (errObj.type === "upgrade_required") {
+      msg = UPGRADE_REQUIRED_MESSAGE;
+    } else if ((errObj.type === "network" || errObj.type === "server") && retryState && retryState.nextRetryAt && retryState.nextRetryAt > Date.now()) {
       const secs = Math.ceil((retryState.nextRetryAt - Date.now()) / 1000);
       msg = (errObj.type === "network" ? "Connection error" : "Server error") + ". Retrying in " + secs + "s...";
     } else if (errObj.type === "network" || errObj.type === "server") {

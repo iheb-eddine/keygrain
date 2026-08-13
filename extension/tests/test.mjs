@@ -3892,6 +3892,48 @@ await test('sync GET: empty absent-capability blob/checksum is malformed, not le
   }
 });
 
+await test('KG-29 upgrade-required handling is safe and equivalent in both background owners', async () => {
+  const owners = [
+    readFileSync(resolve(root, 'extension', 'chrome', 'background.js'), 'utf8'),
+    readFileSync(resolve(root, 'extension', 'firefox', 'background.js'), 'utf8'),
+  ];
+  for (const owner of owners) {
+    assert.match(owner, /const UPGRADE_REQUIRED_MESSAGE = "Update Keygrain to continue syncing this account\.";/);
+    assert.match(owner, /async function clearSyncRetry\(\) \{[\s\S]*?storage\.local\.remove\("syncRetryState"\)[\s\S]*?alarms\.clear\("syncRetry"\)[\s\S]*?alarms\.clear\("syncAlarm"\)/,
+      'upgrade cancellation must only remove retry state and clear the two sync alarms');
+    assert.match(owner, /if \(errType === "upgrade_required"\) \{[\s\S]*?await clearSyncRetry\(\);[\s\S]*?lastSyncError: \{type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE\}/,
+      'background capability failure is stored as a distinct safe state');
+    assert.match(owner, /if \(msg\.action === "clearSyncRetry"\)/,
+      'popup cancellation action is not exposed');
+    assert.match(owner, /if \(errType === "rate_limited"\) \{[\s\S]*?alarms\.create\("syncRetry"/,
+      'rate-limit retry path disappeared');
+    assert.match(owner, /else if \(errType === "network_error" \|\| errType === "server_error"\)/,
+      'network/server retry classification changed');
+    assert.doesNotMatch(owner, /upgrade_required[\s\S]{0,500}offlineMode/,
+      'upgrade handling must not alter offline mode');
+  }
+  const popup = sourceOf('popup.js');
+  assert.match(popup, /msg === "upgrade_required"\) \{[\s\S]*?type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE/);
+  assert.match(popup, /errorObj\.type === "upgrade_required"\) \{[\s\S]*?action: "clearSyncRetry"/);
+  const upgradeStart = popup.indexOf('if (errorObj.type === "upgrade_required")');
+  const upgradeEnd = popup.indexOf('} else if (errorObj.type === "network"', upgradeStart);
+  const upgradeBranch = popup.slice(upgradeStart, upgradeEnd);
+  assert.doesNotMatch(upgradeBranch, /scheduleSyncRetry/,
+    'upgrade-required popup failures must never schedule a retry');
+  const initialSyncStart = popup.indexOf('const result = await syncWithServer(s, e, services, [], [], tombstones);');
+  const initialSyncEnd = popup.indexOf('// If still no services', initialSyncStart);
+  const initialSync = popup.slice(initialSyncStart, initialSyncEnd);
+  assert.match(initialSync, /error\?\.message === "upgrade_required"/,
+    'initial popup sync must handle the terminal capability block');
+  assert.match(initialSync, /lastSyncError = \{type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE\}/);
+  assert.match(initialSync, /action: "clearSyncRetry"/);
+  assert.match(initialSync, /showStatus\(statusEl, UPGRADE_REQUIRED_MESSAGE/);
+  assert.match(initialSync, /currentSecret = null;[\s\S]*?currentEmail = null;[\s\S]*?return;/,
+    'upgrade-required initial sync must not continue into account setup');
+  assert.match(initialSync, /catch \(error\) \{[\s\S]*?\/\* server unreachable or 404 — new user \*\//,
+    'ordinary initial sync failures must remain new-user compatible');
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================
