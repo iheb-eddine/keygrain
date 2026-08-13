@@ -44,15 +44,32 @@ def test_sync_capability_fixture_contract():
     assert legacy["response_headers"] == ["ETag"]
     assert "etag" not in legacy["response_body_fields"]
     assert "etag" not in legacy["response_headers"]
-    assert "etag" not in strict["response_headers"]
-    assert strict["response_body_fields"][-5:] == [
+    assert strict["get_response_body_fields"] == [
+        "version",
+        "services",
+        "encrypted_blob",
+        "checksum",
+        "payload_version",
         "min_writer_protocol",
         "capabilities",
         "defaults_state",
         "defaults_commitment",
         "generation",
     ]
+    assert strict["put_response_body_fields"] == [
+        "services",
+        "checksum",
+        "etag",
+        "payload_version",
+        "min_writer_protocol",
+        "capabilities",
+        "defaults_state",
+        "defaults_commitment",
+    ]
+    assert "etag" not in strict["get_response_body_fields"]
+    assert "etag" in strict["put_response_body_fields"]
     assert strict["response_headers"] == ["ETag"]
+    assert "etag" not in strict["response_headers"]
     assert strict["request_required"] == [
         "payload_version",
         "writer_protocol",

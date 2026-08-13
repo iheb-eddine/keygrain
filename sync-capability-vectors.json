@@ -33,18 +33,27 @@
         "defaults_state",
         "defaults_commitment"
       ],
-      "response_body_fields": [
+      "get_response_body_fields": [
         "version",
         "services",
         "encrypted_blob",
         "checksum",
-        "etag",
         "payload_version",
         "min_writer_protocol",
         "capabilities",
         "defaults_state",
         "defaults_commitment",
         "generation"
+      ],
+      "put_response_body_fields": [
+        "services",
+        "checksum",
+        "etag",
+        "payload_version",
+        "min_writer_protocol",
+        "capabilities",
+        "defaults_state",
+        "defaults_commitment"
       ],
       "response_headers": ["ETag"],
       "response_etag_rule": "PUT response body etag is unquoted; the HTTP ETag header carries the same value quoted",
