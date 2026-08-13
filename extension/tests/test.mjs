@@ -952,6 +952,90 @@ await test('mergeAuditLog: unions distinct entries', async () => {
   assert.equal(result.length, 2);
 });
 
+await test('classifySyncCapabilities: absent metadata preserves legacy v2 classification', async () => {
+  const legacy = {version: 1, services: [], encrypted_blob: 'opaque', checksum: 'hash'};
+  ctx._capMetadata = legacy;
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.deepEqual(result, {
+    status: 'legacy', writer_status: 'legacy_v2', reason: 'capability_metadata_absent'
+  });
+  assert.deepEqual(legacy, {version: 1, services: [], encrypted_blob: 'opaque', checksum: 'hash'});
+});
+
+await test('classifySyncCapabilities: exact strict metadata is recognized but requires upgrade', async () => {
+  const metadata = {
+    payload_version: 3,
+    min_writer_protocol: 3,
+    capabilities: ['account_defaults_immutable_v1']
+  };
+  ctx._capMetadata = metadata;
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.equal(result.status, 'strict_compatible');
+  assert.equal(result.writer_status, 'upgrade_required');
+  assert.equal(result.reason, 'strict_account_requires_protocol_3');
+  assert.deepEqual(result.capabilities, ['account_defaults_immutable_v1']);
+  result.capabilities.push('mutated');
+  assert.deepEqual(metadata.capabilities, ['account_defaults_immutable_v1']);
+});
+
+await test('classifySyncCapabilities: wrong capability fails closed', async () => {
+  ctx._capMetadata = {
+    payload_version: 3, min_writer_protocol: 3, capabilities: ['account_defaults_v1']
+  };
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.deepEqual(result, {
+    status: 'unsafe', writer_status: 'blocked', reason: 'min_writer_protocol_contradiction'
+  });
+});
+
+await test('classifySyncCapabilities: wrong protocol fails closed', async () => {
+  ctx._capMetadata = {
+    payload_version: 2, min_writer_protocol: 2, capabilities: ['account_defaults_immutable_v1']
+  };
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.deepEqual(result, {
+    status: 'unsafe', writer_status: 'blocked', reason: 'payload_version_unsupported'
+  });
+});
+
+await test('classifySyncCapabilities: contradictory minimum writer metadata fails closed', async () => {
+  ctx._capMetadata = {
+    payload_version: 2, min_writer_protocol: 3, capabilities: ['account_defaults_immutable_v1']
+  };
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.deepEqual(result, {
+    status: 'unsafe', writer_status: 'blocked', reason: 'min_writer_protocol_contradiction'
+  });
+});
+
+await test('classifySyncCapabilities: malformed and partial metadata never becomes legacy', async () => {
+  for (const metadata of [
+    {payload_version: null, min_writer_protocol: 3, capabilities: ['account_defaults_immutable_v1']},
+    {payload_version: 3, min_writer_protocol: 3, capabilities: null},
+    {payload_version: 3, min_writer_protocol: 3, capabilities: ['account_defaults_immutable_v1', 'unknown']},
+    {payload_version: 3, min_writer_protocol: 3},
+    null,
+    []
+  ]) {
+    ctx._capMetadata = metadata;
+    const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+    assert.equal(result.status, 'unsafe');
+    assert.equal(result.writer_status, 'blocked');
+  }
+});
+
+await test('classifySyncCapabilities: present null or empty fields are not legacy absence', async () => {
+  for (const metadata of [
+    {payload_version: null, min_writer_protocol: null, capabilities: null},
+    {payload_version: 3, min_writer_protocol: 3, capabilities: []}
+  ]) {
+    ctx._capMetadata = metadata;
+    const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+    assert.notEqual(result.status, 'legacy');
+    assert.equal(result.writer_status, 'blocked');
+  }
+});
+
 await test('parseBlobContent: legacy flat array', async () => {
   const result = runInContext(`JSON.parse(JSON.stringify(parseBlobContent([{site:"a.com"}])))`, ctx);
   assert.deepEqual(result.services, [{ site: 'a.com' }]);

@@ -1,6 +1,84 @@
 // sync.js — Sync v2: per-service merge (depends on keygrain.js)
 const DEFAULT_SYNC_SERVER = "https://keygrain.com";
 
+// The strict protocol token is defined by Design 0 Amendment A.9 and the
+// enforcing server. This classifier is intentionally not wired into the v2
+// sync path yet: its only job in this phase is to make the future write guard
+// distinguish safe legacy reads from strict or unsafe metadata.
+const STRICT_SYNC_CAPABILITY = "account_defaults_immutable_v1";
+const STRICT_SYNC_PAYLOAD_VERSION = 3;
+const STRICT_SYNC_MIN_WRITER_PROTOCOL = 3;
+
+function unsafeSyncCapability(reason) {
+  return {status: "unsafe", writer_status: "blocked", reason};
+}
+
+/**
+ * Classify the capability envelope returned by the sync server.
+ *
+ * An entirely absent envelope is the only legacy result. A complete exact
+ * strict envelope is recognized, but this existing v2 writer cannot satisfy
+ * its protocol-3 minimum and therefore must not write it. Every partial,
+ * malformed, or contradictory envelope is unsafe rather than a reason to
+ * fall back to a v2 PUT.
+ */
+function classifySyncCapabilities(metadata) {
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return unsafeSyncCapability("capability_metadata_malformed");
+  }
+
+  const hasPayloadVersion = "payload_version" in metadata;
+  const hasMinWriterProtocol = "min_writer_protocol" in metadata;
+  const hasCapabilities = "capabilities" in metadata;
+  const presentCount = [hasPayloadVersion, hasMinWriterProtocol, hasCapabilities]
+    .filter(Boolean).length;
+
+  if (presentCount === 0) {
+    return {
+      status: "legacy",
+      writer_status: "legacy_v2",
+      reason: "capability_metadata_absent"
+    };
+  }
+  if (presentCount !== 3) {
+    return unsafeSyncCapability("capability_metadata_incomplete");
+  }
+
+  const payloadVersion = metadata.payload_version;
+  const minWriterProtocol = metadata.min_writer_protocol;
+  const capabilities = metadata.capabilities;
+  if (!Number.isSafeInteger(payloadVersion) ||
+      !Number.isSafeInteger(minWriterProtocol) ||
+      !Array.isArray(capabilities) ||
+      capabilities.some(capability => typeof capability !== "string")) {
+    return unsafeSyncCapability("capability_metadata_malformed");
+  }
+
+  const exactCapability = capabilities.length === 1 && capabilities[0] === STRICT_SYNC_CAPABILITY;
+  if (minWriterProtocol === STRICT_SYNC_MIN_WRITER_PROTOCOL &&
+      (payloadVersion !== STRICT_SYNC_PAYLOAD_VERSION || !exactCapability)) {
+    return unsafeSyncCapability("min_writer_protocol_contradiction");
+  }
+  if (payloadVersion !== STRICT_SYNC_PAYLOAD_VERSION) {
+    return unsafeSyncCapability("payload_version_unsupported");
+  }
+  if (minWriterProtocol !== STRICT_SYNC_MIN_WRITER_PROTOCOL) {
+    return unsafeSyncCapability("min_writer_protocol_unsupported");
+  }
+  if (!exactCapability) {
+    return unsafeSyncCapability("capability_unsupported");
+  }
+
+  return {
+    status: "strict_compatible",
+    writer_status: "upgrade_required",
+    reason: "strict_account_requires_protocol_3",
+    payload_version: payloadVersion,
+    min_writer_protocol: minWriterProtocol,
+    capabilities: [...capabilities]
+  };
+}
+
 async function getSyncServer() {
   const data = await chrome.storage.local.get("settings");
   return (data.settings && data.settings.serverUrl) || DEFAULT_SYNC_SERVER;
