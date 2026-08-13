@@ -1,7 +1,8 @@
 package com.secbytech.keygrain.data
 
 import android.content.Context
-import android.util.Base64
+import android.util.Base64 as AndroidBase64
+import java.util.Base64
 import java.io.IOException
 import javax.crypto.AEADBadTagException
 import kotlinx.coroutines.Dispatchers
@@ -13,7 +14,11 @@ import org.json.JSONObject
 class SyncManager(
     private val baseUrl: String = "https://keygrain.com"
 ) {
-    private val transport = SyncTransport(baseUrl)
+    private var transport: SyncTransportApi = SyncTransport(baseUrl)
+
+    internal constructor(injectedTransport: SyncTransportApi) : this() {
+        transport = injectedTransport
+    }
 
     // --- Facade over SyncStore, kept so UI call sites are unchanged --------------------
 
@@ -89,12 +94,32 @@ class SyncManager(
         serviceManager: ServiceManager,
         context: Context,
         retryCount: Int = 0
+    ): SyncResult = syncInternal(secret, email, serviceManager, context, retryCount)
+
+    /**
+     * Exercises the same fetch/terminal-result path without constructing Android storage.
+     * It is intentionally usable only for an incompatible GET: any compatible response
+     * reaches requireNotNull below the fetch boundary and fails the test rather than hiding
+     * missing local-state setup.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal suspend fun syncWithoutLocalStateForTesting(
+        secret: ByteArray,
+        email: String
+    ): SyncResult = syncInternal(secret, email, null, null, 0)
+
+    private suspend fun syncInternal(
+        secret: ByteArray,
+        email: String,
+        serviceManager: ServiceManager?,
+        context: Context?,
+        retryCount: Int
     ): SyncResult = withContext(Dispatchers.IO) {
         val lookupId = Keygrain.deriveLookupId(secret, email)
         val authPassword = Keygrain.deriveAuthPassword(secret, email)
         val encryptionKey = Keygrain.deriveEncryptionKey(secret, email)
-        val authHeader = "Basic " + Base64.encodeToString(
-            "$lookupId:$authPassword".toByteArray(), Base64.NO_WRAP
+        val authHeader = "Basic " + Base64.getEncoder().encodeToString(
+            "$lookupId:$authPassword".toByteArray(Charsets.UTF_8)
         )
 
         try {
@@ -106,8 +131,13 @@ class SyncManager(
                 is FetchOutcome.Fetched -> outcome.remote
             }
 
+            // No incompatible GET can reach this point. The test-only no-state seam relies
+            // on that ordering; compatible responses still require real local dependencies.
+            val localServiceManager = requireNotNull(serviceManager)
+            val appContext = requireNotNull(context)
+
             // Step 2: Reconcile
-            val m = reconcile(remote, serviceManager, context)
+            val m = reconcile(remote, localServiceManager, appContext)
 
             // Empty-push protection: an empty push is legitimate only when every remote
             // id it drops is explicitly declared as deleted.
@@ -120,10 +150,10 @@ class SyncManager(
             }
 
             // Merge conflicts: remote + new, dedup by key, cap at 50
-            val syncConflicts = mergeConflicts(context, remote.conflicts, m.rec.syncConflicts)
+            val syncConflicts = mergeConflicts(appContext, remote.conflicts, m.rec.syncConflicts)
 
             // Step 3b: no-op skip (Frozen Req 9).
-            trySkipPush(remote, m, syncConflicts, serviceManager, context)
+            trySkipPush(remote, m, syncConflicts, localServiceManager, appContext)
                 ?.let { return@withContext it }
 
             // Step 3: Build push payload
@@ -134,7 +164,7 @@ class SyncManager(
 
             when (putResult) {
                 is PutResult.Success -> {
-                    val confirmed = persistPushed(putResult, remote, m, serviceManager, context)
+                    val confirmed = persistPushed(putResult, remote, m, localServiceManager, appContext)
                     SyncResult.Success(confirmed, m.wallets, m.auditLog, syncConflicts, remote.status)
                 }
                 is PutResult.Conflict -> {
@@ -143,12 +173,13 @@ class SyncManager(
                         // requests in milliseconds against the per-lookup bucket and
                         // self-inflict a 429.
                         delay(conflictBackoffMs(retryCount))
-                        sync(secret, email, serviceManager, context, retryCount + 1)
+                        sync(secret, email, localServiceManager, appContext, retryCount + 1)
                     } else {
                         SyncResult.ConflictError
                     }
                 }
                 is PutResult.AuthError -> SyncResult.AuthError(putResult.code)
+                is PutResult.UpgradeRequired -> SyncResult.UpgradeRequired
                 is PutResult.Error -> SyncResult.ServerError(putResult.code, putResult.body)
                 is PutResult.NetworkError -> SyncResult.NetworkError(putResult.cause)
             }
@@ -172,13 +203,15 @@ class SyncManager(
         lookupId: String,
         authHeader: String,
         encryptionKey: ByteArray,
-        serviceManager: ServiceManager,
-        context: Context
+        serviceManager: ServiceManager?,
+        context: Context?
     ): FetchOutcome {
         when (val getResult = transport.doGet(lookupId, authHeader)) {
             is GetResult.Success -> {
+                val localServiceManager = requireNotNull(serviceManager)
+                val appContext = requireNotNull(context)
                 // Validate checksum
-                val blobBytes = Base64.decode(getResult.encryptedBlob, Base64.DEFAULT)
+                val blobBytes = AndroidBase64.decode(getResult.encryptedBlob, AndroidBase64.DEFAULT)
                 val checksum = SyncIntegrity.sha256Hex(blobBytes)
                 if (checksum != getResult.checksum) {
                     return FetchOutcome.Failed(SyncResult.IntegrityError("checksum mismatch"))
@@ -188,14 +221,14 @@ class SyncManager(
                 val aad = lookupId.toByteArray(Charsets.UTF_8)
                 val plaintext = try {
                     SyncCrypto.decrypt(encryptionKey, blobBytes, aad).also {
-                        SyncStore.setAadEnabled(context, true)
+                        SyncStore.setAadEnabled(appContext, true)
                     }
                 } catch (e: AEADBadTagException) {
-                    if (SyncStore.isAadEnabled(context)) throw e
+                    if (SyncStore.isAadEnabled(appContext)) throw e
                     SyncCrypto.decrypt(encryptionKey, blobBytes)
                 }
                 val json = String(plaintext, Charsets.UTF_8)
-                val blobContent = SyncBlob.parseBlobContent(json, serviceManager)
+                val blobContent = SyncBlob.parseBlobContent(json, localServiceManager)
                 val remoteMetadata = getResult.services
 
                 // Validate length
@@ -204,7 +237,7 @@ class SyncManager(
                 }
 
                 // Validate metadata integrity
-                val cachedMeta = SyncStore.getMetadataCache(context)
+                val cachedMeta = SyncStore.getMetadataCache(appContext)
                 if (cachedMeta != null) {
                     val violation = SyncIntegrity.validateMetadataIntegrity(remoteMetadata, cachedMeta)
                     if (violation != null) {
@@ -222,15 +255,16 @@ class SyncManager(
                         etag = getResult.etag,
                         status = "synced",
                         exists = true,
-                        knownWalletKeys = SyncStore.getKnownWalletKeys(context)
+                        knownWalletKeys = SyncStore.getKnownWalletKeys(appContext)
                     )
                 )
             }
             is GetResult.NotFound -> {
+                val appContext = requireNotNull(context)
                 // Frozen Req 11: no remote record. NEVER inferred as deletions — see
                 // SyncReconciler.reconcileServices(remoteExists=false). Wallet known-keys are also
                 // reset so local wallets are not read as "deleted remotely".
-                SyncStore.setKnownWalletKeys(context, emptySet())
+                SyncStore.setKnownWalletKeys(appContext, emptySet())
                 return FetchOutcome.Fetched(
                     RemoteState(
                         services = emptyList(),
@@ -246,6 +280,7 @@ class SyncManager(
                 )
             }
             is GetResult.AuthError -> return FetchOutcome.Failed(SyncResult.AuthError(getResult.code))
+            is GetResult.UpgradeRequired -> return FetchOutcome.Failed(SyncResult.UpgradeRequired)
             is GetResult.Error ->
                 return FetchOutcome.Failed(SyncResult.ServerError(getResult.code, getResult.body))
             is GetResult.NetworkError ->
@@ -361,7 +396,7 @@ class SyncManager(
         val plaintext = blobPayload.toString().toByteArray(Charsets.UTF_8)
         val aadEnc = lookupId.toByteArray(Charsets.UTF_8)
         val encrypted = SyncCrypto.encrypt(encryptionKey, plaintext, aadEnc)
-        val encryptedB64 = Base64.encodeToString(encrypted, Base64.NO_WRAP)
+        val encryptedB64 = AndroidBase64.encodeToString(encrypted, AndroidBase64.NO_WRAP)
         val checksum = SyncIntegrity.sha256Hex(encrypted)
 
         return JSONObject().apply {
@@ -418,8 +453,8 @@ class SyncManager(
         withContext(Dispatchers.IO) {
             val lookupId = Keygrain.deriveLookupId(secret, email)
             val authPassword = Keygrain.deriveAuthPassword(secret, email)
-            val authHeader = "Basic " + Base64.encodeToString(
-                "$lookupId:$authPassword".toByteArray(), Base64.NO_WRAP
+            val authHeader = "Basic " + Base64.getEncoder().encodeToString(
+                "$lookupId:$authPassword".toByteArray(Charsets.UTF_8)
             )
             transport.doDelete(lookupId, authHeader)
         }

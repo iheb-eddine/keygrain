@@ -85,6 +85,7 @@ internal fun ServiceListScreen(
     var syncEmail by remember { mutableStateOf("") }
     var isSyncing by remember { mutableStateOf(false) }
     var syncFailed by remember { mutableStateOf(false) }
+    var syncUpgradeRequired by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     // Survivor scope for clipboard 30s auto-clears. Owned by ServiceListScreen so it
@@ -122,6 +123,7 @@ internal fun ServiceListScreen(
         val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
         if (email.isBlank()) return
         isSyncing = true
+        syncUpgradeRequired = false
         val gen = syncGeneration
         scope.launch {
             try {
@@ -136,8 +138,16 @@ internal fun ServiceListScreen(
                             deletionReview = serviceManager.getDeletionReview()
                             lastSyncTime = System.currentTimeMillis()
                             syncFailed = false
+                            syncUpgradeRequired = false
                         }
-                        else -> { syncFailed = true }
+                        is SyncResult.UpgradeRequired -> {
+                            syncFailed = true
+                            syncUpgradeRequired = true
+                        }
+                        else -> {
+                            syncFailed = true
+                            syncUpgradeRequired = false
+                        }
                     }
                 } finally { secretBytes.fill(0) }
             } catch (_: Exception) { }
@@ -561,6 +571,19 @@ internal fun ServiceListScreen(
                 )
             }
         }
+        AnimatedVisibility(visible = syncUpgradeRequired) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    UserMessages.SYNC_UPGRADE_REQUIRED,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
         // Sync v3 deletion-review banner (Frozen Req 7). Non-blocking: shown only when
         // this device held unsynced changes to services that were deleted elsewhere.
         val pendingReview = deletionReview.filter { !it.seen }
@@ -659,6 +682,7 @@ internal fun ServiceListScreen(
                 showSyncEmailDialog = false
                 if (offlineMode) return@SyncEmailDialog
                 isSyncing = true
+                syncUpgradeRequired = false
                 val secretBytes = masterSecret.toByteArray()
                 scope.launch {
                     val msg = try {
@@ -669,7 +693,12 @@ internal fun ServiceListScreen(
                                 services = serviceManager.getServices()
                                 deletionReview = serviceManager.getDeletionReview()
                                 lastSyncTime = System.currentTimeMillis()
+                                syncUpgradeRequired = false
                                 UserMessages.syncSuccess(r.services.size)
+                            }
+                            is SyncResult.UpgradeRequired -> {
+                                syncUpgradeRequired = true
+                                UserMessages.SYNC_UPGRADE_REQUIRED
                             }
                             is SyncResult.AuthError -> UserMessages.AUTH_ERROR
                             is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR

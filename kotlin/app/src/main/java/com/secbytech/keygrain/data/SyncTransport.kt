@@ -1,20 +1,26 @@
 package com.secbytech.keygrain.data
 
-import android.util.Base64
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
 
+/** Narrow transport seam used by SyncManager and its JVM contract tests. */
+internal interface SyncTransportApi {
+    fun doGet(lookupId: String, authHeader: String): GetResult
+    fun doPut(lookupId: String, authHeader: String, body: String, etag: String?): PutResult
+    fun doDelete(lookupId: String, authHeader: String): DeleteResult
+}
+
 /**
  * HTTP layer for the sync API. Split out of [SyncManager] so the orchestration in
- * [SyncManager.sync] is readable and so the status-code -> result mapping can be driven
- * against an embedded HttpServer without a Context.
+ * [SyncManager.sync] is readable and so status-code -> result mapping can be tested
+ * against an embedded socket server without a Context.
  *
  * Every call: HttpURLConnection, 15s connect/read timeouts, disconnect in `finally`.
  */
-internal class SyncTransport(private val baseUrl: String) {
-    fun doGet(lookupId: String, authHeader: String): GetResult {
+internal class SyncTransport(private val baseUrl: String) : SyncTransportApi {
+    override fun doGet(lookupId: String, authHeader: String): GetResult {
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL("$baseUrl/api/sync/$lookupId").openConnection() as HttpURLConnection).apply {
@@ -28,6 +34,12 @@ internal class SyncTransport(private val baseUrl: String) {
                 200 -> {
                     val body = conn.inputStream.bufferedReader().readText()
                     val json = JSONObject(body)
+                    val capabilityClass = CapabilityMetadataClassifier.classify(json)
+                    if (capabilityClass != CapabilityMetadataClassification.LegacyAbsent) {
+                        return GetResult.UpgradeRequired(
+                            CapabilityMetadataClassifier.reasonFor(capabilityClass)
+                        )
+                    }
                     val svcs = json.getJSONArray("services")
                     val services = (0 until svcs.length()).map { i ->
                         val obj = svcs.getJSONObject(i)
@@ -39,6 +51,7 @@ internal class SyncTransport(private val baseUrl: String) {
                 }
                 404 -> GetResult.NotFound("not found")
                 401, 403 -> GetResult.AuthError(code)
+                426 -> GetResult.UpgradeRequired(UpgradeRequiredReason.Http426)
                 else -> GetResult.Error(code, conn.errorStream?.bufferedReader()?.readText() ?: "")
             }
         } catch (e: IOException) {
@@ -49,7 +62,7 @@ internal class SyncTransport(private val baseUrl: String) {
     }
 
 
-    fun doPut(lookupId: String, authHeader: String, body: String, etag: String?): PutResult {
+    override fun doPut(lookupId: String, authHeader: String, body: String, etag: String?): PutResult {
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL("$baseUrl/api/sync/$lookupId").openConnection() as HttpURLConnection).apply {
@@ -81,6 +94,7 @@ internal class SyncTransport(private val baseUrl: String) {
                     PutResult.Conflict(currentEtag)
                 }
                 401, 403 -> PutResult.AuthError(code)
+                426 -> PutResult.UpgradeRequired()
                 else -> PutResult.Error(code, conn.errorStream?.bufferedReader()?.readText() ?: "")
             }
         } catch (e: IOException) {
@@ -92,14 +106,12 @@ internal class SyncTransport(private val baseUrl: String) {
 
 
     /**
-     * HTTP layer for [deleteServerData]. Mirrors [doGet]/[doPut]
-     * (HttpURLConnection, 15s timeouts, disconnect in finally). Internal rather
-     * than private so the plain-JVM unit test can drive the full
-     * status-code -> DeleteResult mapping against an embedded HttpServer without
-     * touching android.util.Base64 (which is not available in unit tests).
+     * HTTP layer for [SyncManager.deleteServerData]. Internal rather than private so
+     * the plain-JVM unit test can drive status-code mapping against an embedded socket
+     * server without touching Android-only auth helpers.
      */
     @androidx.annotation.VisibleForTesting
-    internal fun doDelete(lookupId: String, authHeader: String): DeleteResult {
+    override fun doDelete(lookupId: String, authHeader: String): DeleteResult {
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL("$baseUrl/api/sync/$lookupId").openConnection() as HttpURLConnection).apply {
@@ -131,6 +143,7 @@ internal sealed class GetResult {
         val checksum: String,
         val etag: String
     ) : GetResult()
+    data class UpgradeRequired(val reason: UpgradeRequiredReason) : GetResult()
     data class NotFound(val msg: String) : GetResult()
     data class AuthError(val code: Int) : GetResult()
     data class Error(val code: Int, val body: String) : GetResult()
@@ -141,6 +154,7 @@ internal sealed class GetResult {
 internal sealed class PutResult {
     data class Success(val services: List<Pair<String?, Long>>, val etag: String) : PutResult()
     data class Conflict(val currentEtag: String) : PutResult()
+    data class UpgradeRequired(val reason: UpgradeRequiredReason = UpgradeRequiredReason.Http426) : PutResult()
     data class AuthError(val code: Int) : PutResult()
     data class Error(val code: Int, val body: String) : PutResult()
     data class NetworkError(val cause: Throwable) : PutResult()
