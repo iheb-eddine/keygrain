@@ -3665,6 +3665,234 @@ await test('live web derivation rejects invalid symbols before strengthen and ac
 });
 
 // ============================================================
+// Sync capability GET boundary tests
+// ============================================================
+function syncResponse(status, body, etag = 'legacy-etag') {
+  return {
+    status,
+    headers: {get: name => name === 'ETag' ? `"${etag}"` : null},
+    json: async () => body
+  };
+}
+
+function installSyncHarness(getResponse, putResponse = syncResponse(201, {services: [], etag: 'put-etag'})) {
+  const state = {fetches: [], writes: [], gets: [], putResponse};
+  ctx.chrome = {
+    storage: {
+      local: {
+        get: async key => {
+          state.gets.push(key);
+          if (key === 'settings') return {settings: {serverUrl: 'https://sync.test'}};
+          if (key === 'syncMetadataCache') return {syncMetadataCache: null};
+          if (key === 'syncKnownWalletKeys') return {syncKnownWalletKeys: []};
+          if (key === 'lastSuccessfulSyncAt') return {lastSuccessfulSyncAt: 0};
+          if (key === 'conflictsDismissed') return {conflictsDismissed: false};
+          return {};
+        },
+        set: async value => { state.writes.push(value); },
+      }
+    }
+  };
+  ctx.fetch = async (url, options) => {
+    state.fetches.push({url, method: options.method});
+    return options.method === 'PUT' ? state.putResponse : getResponse;
+  };
+  return state;
+}
+
+function installSyncInstrumentation() {
+  runInContext(`
+    _syncDecryptCalls = 0;
+    _syncEncryptCalls = 0;
+    _syncAtobCalls = 0;
+    if (typeof _syncOriginalDecryptBlob === 'undefined') _syncOriginalDecryptBlob = decryptBlob;
+    if (typeof _syncOriginalEncryptBlob === 'undefined') _syncOriginalEncryptBlob = encryptBlob;
+    if (typeof _syncOriginalAtob === 'undefined') _syncOriginalAtob = atob;
+    decryptBlob = async (...args) => { _syncDecryptCalls++; return _syncOriginalDecryptBlob(...args); };
+    encryptBlob = async (...args) => { _syncEncryptCalls++; return _syncOriginalEncryptBlob(...args); };
+    atob = value => { _syncAtobCalls++; return _syncOriginalAtob(value); };
+  `, ctx);
+}
+
+function resetSyncInstrumentation() {
+  runInContext(`
+    if (typeof _syncOriginalDecryptBlob !== 'undefined') decryptBlob = _syncOriginalDecryptBlob;
+    if (typeof _syncOriginalEncryptBlob !== 'undefined') encryptBlob = _syncOriginalEncryptBlob;
+    if (typeof _syncOriginalAtob !== 'undefined') atob = _syncOriginalAtob;
+  `, ctx);
+}
+
+function syncCounters() {
+  return JSON.parse(runInContext(`JSON.stringify({decrypt: _syncDecryptCalls, encrypt: _syncEncryptCalls, atob: _syncAtobCalls})`, ctx));
+}
+
+function responseWithUnreadableBlob(fields) {
+  let blobReads = 0;
+  const body = {...fields};
+  Object.defineProperty(body, 'encrypted_blob', {
+    enumerable: true,
+    get() { blobReads++; return 'must-not-be-consumed'; }
+  });
+  return {body, get blobReads() { return blobReads; }};
+}
+
+await test('sync GET: valid legacy envelope keeps the existing decrypt/no-op path', async () => {
+  resetSyncInstrumentation();
+  const legacy = await runInContext(`(async () => {
+    const lookup = await deriveLookupId('my-master-secret', 'test@gmail.com');
+    const key = await deriveEncryptionKey('my-master-secret', 'test@gmail.com');
+    const blob = await encryptBlob(key, new TextEncoder().encode(JSON.stringify({
+      services: [], wallets: [], wallet_audit_log: [], sync_conflicts: []
+    })), new TextEncoder().encode(lookup));
+    return {
+      version: 1, services: [], encrypted_blob: arrayBufferToBase64(blob),
+      checksum: await sha256Hex(blob)
+    };
+  })()`, ctx);
+  const harness = installSyncHarness(syncResponse(200, legacy));
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], []);
+    assert.equal(result.status, 'unchanged');
+    assert.equal(result.skippedPut, true);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 0);
+    const counters = syncCounters();
+    assert.ok(counters.decrypt > 0, 'legacy response must still decrypt');
+    assert.ok(counters.atob > 0, 'legacy response must still consume its blob');
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('sync GET: valid legacy 200 preserves the existing v2 write path', async () => {
+  resetSyncInstrumentation();
+  const legacy = await runInContext(`(async () => {
+    const lookup = await deriveLookupId('my-master-secret', 'test@gmail.com');
+    const key = await deriveEncryptionKey('my-master-secret', 'test@gmail.com');
+    const blob = await encryptBlob(key, new TextEncoder().encode(JSON.stringify({
+      services: [], wallets: [], wallet_audit_log: [], sync_conflicts: []
+    })), new TextEncoder().encode(lookup));
+    return {
+      version: 1, services: [], encrypted_blob: arrayBufferToBase64(blob),
+      checksum: await sha256Hex(blob)
+    };
+  })()`, ctx);
+  const put = syncResponse(200, {services: [{id: 'local-1', updated_at: 2}], etag: 'updated-etag'});
+  const harness = installSyncHarness(syncResponse(200, legacy), put);
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [{
+      id: 'local-1', site: 'example.com', name: 'example.com', email: 'a@b.com',
+      length: 20, symbols: '!', counter: 1, updated_at: 2, synced: false
+    }], [], []);
+    assert.equal(result.status, 'synced');
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 1);
+    assert.ok(syncCounters().encrypt > 0, 'legacy v2 write must still encrypt for PUT');
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+for (const [label, fields] of [
+  ['strict-compatible metadata', {
+    version: 3, services: [], payload_version: 3, min_writer_protocol: 3,
+    capabilities: ['account_defaults_immutable_v1'], checksum: 'unused'
+  }],
+  ['wrong capability token', {
+    version: 3, services: [], payload_version: 3, min_writer_protocol: 3,
+    capabilities: ['account_defaults_v1'], checksum: 'unused'
+  }],
+  ['partial capability metadata', {
+    version: 1, services: [], payload_version: 3, checksum: 'unused'
+  }],
+  ['contradictory capability metadata', {
+    version: 3, services: [], payload_version: 2, min_writer_protocol: 3,
+    capabilities: ['account_defaults_immutable_v1'], checksum: 'unused'
+  }],
+  ['malformed capability metadata', {
+    version: 3, services: [], payload_version: 3, min_writer_protocol: 3,
+    capabilities: 'account_defaults_immutable_v1', checksum: 'unused'
+  }],
+]) {
+  await test(`sync GET: ${label} fails before blob/decrypt/storage mutation/PUT`, async () => {
+    resetSyncInstrumentation();
+    const guarded = responseWithUnreadableBlob(fields);
+    const harness = installSyncHarness(syncResponse(200, guarded.body));
+    installSyncInstrumentation();
+    try {
+      await assert.rejects(
+        () => call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], []),
+        error => error && error.message === 'upgrade_required'
+      );
+      assert.equal(guarded.blobReads, 0, 'guard must not consume encrypted_blob');
+      assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 0);
+      assert.equal(harness.writes.length, 0, 'guard must not mutate local storage');
+      assert.deepEqual(syncCounters(), {decrypt: 0, encrypt: 0, atob: 0});
+    } finally {
+      resetSyncInstrumentation();
+    }
+  });
+}
+
+await test('sync GET: malformed absent-capability response is not treated as legacy', async () => {
+  resetSyncInstrumentation();
+  const malformed = responseWithUnreadableBlob({version: 1, services: []});
+  const harness = installSyncHarness(syncResponse(200, malformed.body));
+  installSyncInstrumentation();
+  try {
+    await assert.rejects(
+      () => call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], []),
+      error => error && error.message === 'upgrade_required'
+    );
+    assert.equal(malformed.blobReads, 0);
+    assert.equal(harness.writes.length, 0);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 0);
+    assert.deepEqual(syncCounters(), {decrypt: 0, encrypt: 0, atob: 0});
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('sync GET: 404 still performs the existing first-sync PUT path', async () => {
+  resetSyncInstrumentation();
+  const put = syncResponse(201, {services: [{id: 'local-1', updated_at: 1}], etag: 'created-etag'});
+  const harness = installSyncHarness(syncResponse(404, {error: 'not found'}), put);
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [{
+      id: 'local-1', site: 'example.com', name: 'example.com', email: 'a@b.com',
+      length: 20, symbols: '!', counter: 1, updated_at: 1, synced: false
+    }], [], []);
+    assert.equal(result.status, 'created');
+    assert.equal(harness.fetches.filter(r => r.method === 'GET').length, 1);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 1);
+    assert.ok(syncCounters().encrypt > 0, '404 first sync must still encrypt for PUT');
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+
+await test('sync GET: empty absent-capability blob/checksum is malformed, not legacy', async () => {
+  resetSyncInstrumentation();
+  const harness = installSyncHarness(syncResponse(200, {
+    version: 1, services: [], encrypted_blob: '', checksum: ''
+  }));
+  installSyncInstrumentation();
+  try {
+    await assert.rejects(
+      () => call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], []),
+      error => error && error.message === 'upgrade_required'
+    );
+    assert.equal(harness.writes.length, 0);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 0);
+    assert.deepEqual(syncCounters(), {decrypt: 0, encrypt: 0, atob: 0});
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+// ============================================================
 // SUMMARY
 // ============================================================
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);

@@ -2,15 +2,24 @@
 const DEFAULT_SYNC_SERVER = "https://keygrain.com";
 
 // The strict protocol token is defined by Design 0 Amendment A.9 and the
-// enforcing server. This classifier is intentionally not wired into the v2
-// sync path yet: its only job in this phase is to make the future write guard
-// distinguish safe legacy reads from strict or unsafe metadata.
+// enforcing server. The pure classifier is wired into the GET boundary so the
+// current v2 writer continues only for valid legacy metadata and fails closed
+// before any strict/unsafe response can reach the write path.
 const STRICT_SYNC_CAPABILITY = "account_defaults_immutable_v1";
 const STRICT_SYNC_PAYLOAD_VERSION = 3;
 const STRICT_SYNC_MIN_WRITER_PROTOCOL = 3;
 
 function unsafeSyncCapability(reason) {
   return {status: "unsafe", writer_status: "blocked", reason};
+}
+
+function hasLegacySyncResponseShape(response) {
+  if (response === null || typeof response !== "object" || Array.isArray(response) ||
+      !Number.isSafeInteger(response.version) || !Array.isArray(response.services)) return false;
+  const blob = Object.getOwnPropertyDescriptor(response, "encrypted_blob");
+  const checksum = Object.getOwnPropertyDescriptor(response, "checksum");
+  return !!blob && typeof blob.value === "string" && blob.value.length > 0 &&
+    !!checksum && typeof checksum.value === "string" && /^[0-9a-f]{64}$/.test(checksum.value);
 }
 
 /**
@@ -647,6 +656,10 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     if (getResp.status === 200) {
       remoteExists = true;
       const remote = await getResp.json();
+      const capabilityStatus = classifySyncCapabilities(remote);
+      if (capabilityStatus.status !== "legacy" || !hasLegacySyncResponseShape(remote)) {
+        throw new Error("upgrade_required");
+      }
       etag = (getResp.headers.get("ETag") || "").replace(/"/g, "");
       remoteMetadata = remote.services;
 
