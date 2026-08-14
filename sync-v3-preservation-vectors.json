@@ -1,0 +1,257 @@
+{
+  "fixture": "keygrain-sync-v3-preservation-contract",
+  "fixture_version": 1,
+  "status": "frozen_public_contract_not_runtime_support_claim",
+  "runtime_support": false,
+  "scope": "future v3 encrypted plaintext, strict envelope lock metadata, and local-only separation",
+  "partitions": {
+    "encrypted_plaintext": [
+      "version",
+      "services",
+      "wallets",
+      "wallet_audit_log",
+      "account_defaults",
+      "sync_conflicts"
+    ],
+    "envelope_only": [
+      "payload_version",
+      "writer_protocol",
+      "min_writer_protocol",
+      "capabilities",
+      "defaults_state",
+      "defaults_commitment",
+      "generation",
+      "lookup_id",
+      "blob_hex",
+      "checksum",
+      "aad_hex",
+      "etag"
+    ],
+    "local_only": [
+      "tombstones",
+      "deletion_review",
+      "security_settings"
+    ]
+  },
+  "canonical_rules": {
+    "encoding": "UTF-8",
+    "objects": "keys sorted by Unicode code point recursively",
+    "whitespace": "none",
+    "numbers": "finite safe integers in decimal",
+    "arrays": "services by id (null as empty); wallets by lowercase wallet_name:chain; audit by timestamp, wallet_name, chain, action; conflicts by conflict_id",
+    "absent_defaults": "account_defaults is required in the payload and is JSON null for ABSENT; omission is not equivalent"
+  },
+  "cases": [
+    {
+      "name": "present-defaults-with-conflict-and-escaping",
+      "encrypted_plaintext_source": {
+        "version": 3,
+        "sync_conflicts": [
+          {
+            "status": "unresolved",
+            "remote": {
+              "policy": "ascii-printable-v1",
+              "schema": 1,
+              "symbols": "!@#$%&*-_=+?",
+              "length": 24
+            },
+            "detected_at": 123,
+            "kind": "account_defaults",
+            "conflict_id": "0000000000000000000000000000000000000000000000000000000000000001",
+            "base": {
+              "schema": 1,
+              "length": 20,
+              "symbols": "!@#$%&*-_=+?",
+              "policy": "ascii-printable-v1"
+            },
+            "local": {
+              "schema": 1,
+              "length": 22,
+              "symbols": "!@#$%&*-_=+?",
+              "policy": "ascii-printable-v1"
+            },
+            "resolution": null,
+            "resolved": null
+          }
+        ],
+        "wallet_audit_log": [
+          {
+            "action": "rotate",
+            "wallet_name": "Main",
+            "chain": "ethereum",
+            "counter": 2,
+            "timestamp": 20,
+            "verification": "ok"
+          },
+          {
+            "action": "create",
+            "wallet_name": "main",
+            "chain": "Bitcoin",
+            "counter": 1,
+            "timestamp": 10,
+            "verification": "quote \" slash \\ backspace \b tab \t line\nfeed\f return\r U+2028   U+2029   😀 \ud800"
+          }
+        ],
+        "wallets": [
+          {
+            "notes": "quote \" slash \\ backspace \b tab \t line\nfeed\f return\r U+2028   U+2029   😀 \ud800",
+            "updated_at": 4,
+            "wallet_name": "Zed",
+            "chain": "bitcoin",
+            "counter": 1,
+            "email": "wallet@example.test",
+            "mode": "keygrain",
+            "created_at": 3
+          },
+          {
+            "notes": "",
+            "updated_at": 2,
+            "wallet_name": "main",
+            "chain": "Ethereum",
+            "counter": 2,
+            "email": "",
+            "mode": "keygrain",
+            "created_at": 1
+          }
+        ],
+        "services": [
+          {
+            "ssh": null,
+            "name": "B",
+            "site": "b.example",
+            "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "email": "b@example.test",
+            "length": 24,
+            "symbols": "!@#$%",
+            "counter": 2,
+            "updated_at": 20,
+            "defaults_mode": "snapshot",
+            "defaults_revision": 4,
+            "migrating": true,
+            "totp": {
+              "z": [
+                true,
+                null,
+                7
+              ],
+              "nested": {
+                "z": "last",
+                "a": "first"
+              },
+              "a": "quote \" slash \\ backspace \b tab \t line\nfeed\f return\r U+2028   U+2029   😀 \ud800"
+            }
+          },
+          {
+            "ssh": null,
+            "name": "A",
+            "site": "a.example",
+            "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "email": "a@example.test",
+            "length": 20,
+            "symbols": "!@#$%",
+            "counter": 1,
+            "updated_at": 19,
+            "defaults_mode": "explicit",
+            "defaults_revision": null,
+            "migrating": null,
+            "totp": null
+          }
+        ],
+        "account_defaults": {
+          "policy": "ascii-printable-v1",
+          "symbols": "!@#$%&*-_=+?",
+          "length": 20,
+          "schema": 1
+        }
+      },
+      "server_envelope": {
+        "payload_version": 3,
+        "writer_protocol": 3,
+        "min_writer_protocol": 3,
+        "capabilities": [
+          "account_defaults_immutable_v1"
+        ],
+        "defaults_state": "PRESENT",
+        "defaults_commitment": "abababababababababababababababababababababababababababababababab",
+        "generation": 7,
+        "lookup_id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "blob_hex": "00010203040506070809",
+        "checksum": "1f825aa2f0020ef7cf91dfa30da4668d791c5d4824fc8e41354b89ec05795ab3",
+        "aad_hex": "6b6579677261696e2d73796e632d763300303132333435363738396162636465663031323334353637383961626364656630313233343536373839616263646566303132333435363738396162636465660050524553454e540061626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162",
+        "etag": "d1a3fb8a9ce84d185ba90cea0cd33caf"
+      },
+      "local_only": {
+        "tombstones": [
+          {
+            "id": "local-only"
+          }
+        ],
+        "deletion_review": [
+          {
+            "id": "review-only",
+            "deleted_at": 99
+          }
+        ],
+        "security_settings": {
+          "version": 1,
+          "fullLeaseSeconds": 60
+        }
+      },
+      "expected_canonical_utf8": "{\"account_defaults\":{\"length\":20,\"policy\":\"ascii-printable-v1\",\"schema\":1,\"symbols\":\"!@#$%&*-_=+?\"},\"services\":[{\"counter\":1,\"defaults_mode\":\"explicit\",\"defaults_revision\":null,\"email\":\"a@example.test\",\"id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"length\":20,\"migrating\":null,\"name\":\"A\",\"site\":\"a.example\",\"ssh\":null,\"symbols\":\"!@#$%\",\"totp\":null,\"updated_at\":19},{\"counter\":2,\"defaults_mode\":\"snapshot\",\"defaults_revision\":4,\"email\":\"b@example.test\",\"id\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"length\":24,\"migrating\":true,\"name\":\"B\",\"site\":\"b.example\",\"ssh\":null,\"symbols\":\"!@#$%\",\"totp\":{\"a\":\"quote \\\" slash \\\\ backspace \\b tab \\t line\\nfeed\\f return\\r U+2028   U+2029   😀 \\ud800\",\"nested\":{\"a\":\"first\",\"z\":\"last\"},\"z\":[true,null,7]},\"updated_at\":20}],\"sync_conflicts\":[{\"base\":{\"length\":20,\"policy\":\"ascii-printable-v1\",\"schema\":1,\"symbols\":\"!@#$%&*-_=+?\"},\"conflict_id\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"detected_at\":123,\"kind\":\"account_defaults\",\"local\":{\"length\":22,\"policy\":\"ascii-printable-v1\",\"schema\":1,\"symbols\":\"!@#$%&*-_=+?\"},\"remote\":{\"length\":24,\"policy\":\"ascii-printable-v1\",\"schema\":1,\"symbols\":\"!@#$%&*-_=+?\"},\"resolution\":null,\"resolved\":null,\"status\":\"unresolved\"}],\"version\":3,\"wallet_audit_log\":[{\"action\":\"create\",\"chain\":\"Bitcoin\",\"counter\":1,\"timestamp\":10,\"verification\":\"quote \\\" slash \\\\ backspace \\b tab \\t line\\nfeed\\f return\\r U+2028   U+2029   😀 \\ud800\",\"wallet_name\":\"main\"},{\"action\":\"rotate\",\"chain\":\"ethereum\",\"counter\":2,\"timestamp\":20,\"verification\":\"ok\",\"wallet_name\":\"Main\"}],\"wallets\":[{\"chain\":\"Ethereum\",\"counter\":2,\"created_at\":1,\"email\":\"\",\"mode\":\"keygrain\",\"notes\":\"\",\"updated_at\":2,\"wallet_name\":\"main\"},{\"chain\":\"bitcoin\",\"counter\":1,\"created_at\":3,\"email\":\"wallet@example.test\",\"mode\":\"keygrain\",\"notes\":\"quote \\\" slash \\\\ backspace \\b tab \\t line\\nfeed\\f return\\r U+2028   U+2029   😀 \\ud800\",\"updated_at\":4,\"wallet_name\":\"Zed\"}]}",
+      "expected_canonical_hex": "7b226163636f756e745f64656661756c7473223a7b226c656e677468223a32302c22706f6c696379223a2261736369692d7072696e7461626c652d7631222c22736368656d61223a312c2273796d626f6c73223a222140232425262a2d5f3d2b3f227d2c227365727669636573223a5b7b22636f756e746572223a312c2264656661756c74735f6d6f6465223a226578706c69636974222c2264656661756c74735f7265766973696f6e223a6e756c6c2c22656d61696c223a2261406578616d706c652e74657374222c226964223a2261616161616161612d616161612d346161612d386161612d616161616161616161616161222c226c656e677468223a32302c226d6967726174696e67223a6e756c6c2c226e616d65223a2241222c2273697465223a22612e6578616d706c65222c22737368223a6e756c6c2c2273796d626f6c73223a222140232425222c22746f7470223a6e756c6c2c22757064617465645f6174223a31397d2c7b22636f756e746572223a322c2264656661756c74735f6d6f6465223a22736e617073686f74222c2264656661756c74735f7265766973696f6e223a342c22656d61696c223a2262406578616d706c652e74657374222c226964223a2262626262626262622d626262622d346262622d386262622d626262626262626262626262222c226c656e677468223a32342c226d6967726174696e67223a747275652c226e616d65223a2242222c2273697465223a22622e6578616d706c65222c22737368223a6e756c6c2c2273796d626f6c73223a222140232425222c22746f7470223a7b2261223a2271756f7465205c2220736c617368205c5c206261636b7370616365205c6220746162205c74206c696e655c6e666565645c662072657475726e5c7220552b3230323820e280a820552b3230323920e280a920f09f9880205c7564383030222c226e6573746564223a7b2261223a226669727374222c227a223a226c617374227d2c227a223a5b747275652c6e756c6c2c375d7d2c22757064617465645f6174223a32307d5d2c2273796e635f636f6e666c69637473223a5b7b2262617365223a7b226c656e677468223a32302c22706f6c696379223a2261736369692d7072696e7461626c652d7631222c22736368656d61223a312c2273796d626f6c73223a222140232425262a2d5f3d2b3f227d2c22636f6e666c6963745f6964223a2230303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303031222c2264657465637465645f6174223a3132332c226b696e64223a226163636f756e745f64656661756c7473222c226c6f63616c223a7b226c656e677468223a32322c22706f6c696379223a2261736369692d7072696e7461626c652d7631222c22736368656d61223a312c2273796d626f6c73223a222140232425262a2d5f3d2b3f227d2c2272656d6f7465223a7b226c656e677468223a32342c22706f6c696379223a2261736369692d7072696e7461626c652d7631222c22736368656d61223a312c2273796d626f6c73223a222140232425262a2d5f3d2b3f227d2c227265736f6c7574696f6e223a6e756c6c2c227265736f6c766564223a6e756c6c2c22737461747573223a22756e7265736f6c766564227d5d2c2276657273696f6e223a332c2277616c6c65745f61756469745f6c6f67223a5b7b22616374696f6e223a22637265617465222c22636861696e223a22426974636f696e222c22636f756e746572223a312c2274696d657374616d70223a31302c22766572696669636174696f6e223a2271756f7465205c2220736c617368205c5c206261636b7370616365205c6220746162205c74206c696e655c6e666565645c662072657475726e5c7220552b3230323820e280a820552b3230323920e280a920f09f9880205c7564383030222c2277616c6c65745f6e616d65223a226d61696e227d2c7b22616374696f6e223a22726f74617465222c22636861696e223a22657468657265756d222c22636f756e746572223a322c2274696d657374616d70223a32302c22766572696669636174696f6e223a226f6b222c2277616c6c65745f6e616d65223a224d61696e227d5d2c2277616c6c657473223a5b7b22636861696e223a22457468657265756d222c22636f756e746572223a322c22637265617465645f6174223a312c22656d61696c223a22222c226d6f6465223a226b6579677261696e222c226e6f746573223a22222c22757064617465645f6174223a322c2277616c6c65745f6e616d65223a226d61696e227d2c7b22636861696e223a22626974636f696e222c22636f756e746572223a312c22637265617465645f6174223a332c22656d61696c223a2277616c6c6574406578616d706c652e74657374222c226d6f6465223a226b6579677261696e222c226e6f746573223a2271756f7465205c2220736c617368205c5c206261636b7370616365205c6220746162205c74206c696e655c6e666565645c662072657475726e5c7220552b3230323820e280a820552b3230323920e280a920f09f9880205c7564383030222c22757064617465645f6174223a342c2277616c6c65745f6e616d65223a225a6564227d5d7d"
+    },
+    {
+      "name": "absent-defaults-is-explicit-null",
+      "encrypted_plaintext_source": {
+        "wallets": [],
+        "version": 3,
+        "account_defaults": null,
+        "services": [
+          {
+            "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "updated_at": 1,
+            "name": "No defaults",
+            "site": "absent.example",
+            "email": "absent@example.test",
+            "length": 20,
+            "symbols": "!@",
+            "counter": 1,
+            "defaults_mode": "explicit",
+            "defaults_revision": null,
+            "migrating": null,
+            "totp": null,
+            "ssh": null
+          }
+        ],
+        "wallet_audit_log": [],
+        "sync_conflicts": []
+      },
+      "server_envelope": {
+        "payload_version": 3,
+        "writer_protocol": 3,
+        "min_writer_protocol": 3,
+        "capabilities": [
+          "account_defaults_immutable_v1"
+        ],
+        "defaults_state": "ABSENT",
+        "defaults_commitment": null,
+        "generation": 8,
+        "lookup_id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "blob_hex": "f0e1d2c3b4a59687",
+        "checksum": "ebbd3b63f3506de1fcd962c9912b20caf3e1ea86585d6d073ba26ff278d74c3a",
+        "aad_hex": "6b6579677261696e2d73796e632d7633003031323334353637383961626364656630313233343536373839616263646566303132333435363738396162636465663031323334353637383961626364656600414253454e5400",
+        "etag": "2e5f1f6979a2edf8fa8fac0a2342aef8"
+      },
+      "local_only": {
+        "tombstones": [],
+        "deletion_review": [],
+        "security_settings": {
+          "version": 1,
+          "metadataTailSeconds": 14400
+        }
+      },
+      "expected_canonical_utf8": "{\"account_defaults\":null,\"services\":[{\"counter\":1,\"defaults_mode\":\"explicit\",\"defaults_revision\":null,\"email\":\"absent@example.test\",\"id\":\"cccccccc-cccc-4ccc-8ccc-cccccccccccc\",\"length\":20,\"migrating\":null,\"name\":\"No defaults\",\"site\":\"absent.example\",\"ssh\":null,\"symbols\":\"!@\",\"totp\":null,\"updated_at\":1}],\"sync_conflicts\":[],\"version\":3,\"wallet_audit_log\":[],\"wallets\":[]}",
+      "expected_canonical_hex": "7b226163636f756e745f64656661756c7473223a6e756c6c2c227365727669636573223a5b7b22636f756e746572223a312c2264656661756c74735f6d6f6465223a226578706c69636974222c2264656661756c74735f7265766973696f6e223a6e756c6c2c22656d61696c223a22616273656e74406578616d706c652e74657374222c226964223a2263636363636363632d636363632d346363632d386363632d636363636363636363636363222c226c656e677468223a32302c226d6967726174696e67223a6e756c6c2c226e616d65223a224e6f2064656661756c7473222c2273697465223a22616273656e742e6578616d706c65222c22737368223a6e756c6c2c2273796d626f6c73223a222140222c22746f7470223a6e756c6c2c22757064617465645f6174223a317d5d2c2273796e635f636f6e666c69637473223a5b5d2c2276657273696f6e223a332c2277616c6c65745f61756469745f6c6f67223a5b5d2c2277616c6c657473223a5b5d7d"
+    }
+  ]
+}
