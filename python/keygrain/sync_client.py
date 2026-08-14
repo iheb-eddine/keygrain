@@ -94,6 +94,123 @@ class UpgradeRequired(SyncError):
 
 _CAPABILITY_FIELDS = ("payload_version", "min_writer_protocol", "capabilities")
 _STRICT_CAPABILITY = "account_defaults_immutable_v1"
+_DEFAULTS_FIELDS = frozenset(("schema", "length", "symbols", "policy"))
+_DEFAULTS_SCHEMA = 1
+_DEFAULTS_MIN_LENGTH = 8
+_DEFAULTS_MAX_LENGTH = 128
+_DEFAULTS_POLICY = "ascii-printable-v1"
+_DEFAULTS_MAX_CHARSET = 256
+_DEFAULTS_PRINTABLE_ASCII = range(0x21, 0x7F)
+_NORMALIZED_EMAIL_RE = re.compile(
+    r"^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+_DEFAULTS_COMMITMENT_DOMAIN = b"keygrain-account-defaults-v1\x00"
+_DEFAULTS_COMMITMENT_SUFFIX = ":keygrain-defaults-commitment"
+_V3_AAD_DOMAIN = b"keygrain-sync-v3\x00"
+_LOOKUP_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+_LOWERCASE_HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _validate_account_defaults(defaults: dict) -> None:
+    """Validate the exact semantic account-defaults mapping without coercion."""
+    if type(defaults) is not dict or set(defaults) != _DEFAULTS_FIELDS:
+        raise TypeError("defaults must be a plain object with exactly four fields")
+
+    schema = defaults["schema"]
+    length = defaults["length"]
+    symbols = defaults["symbols"]
+    policy = defaults["policy"]
+    if type(schema) is not int or schema != _DEFAULTS_SCHEMA:
+        raise ValueError("unsupported defaults schema")
+    if type(length) is not int or not _DEFAULTS_MIN_LENGTH <= length <= _DEFAULTS_MAX_LENGTH:
+        raise ValueError("defaults length is invalid")
+    if type(policy) is not str or policy != _DEFAULTS_POLICY:
+        raise ValueError("defaults policy is invalid")
+    if type(symbols) is not str or not symbols or any(
+        ord(character) not in _DEFAULTS_PRINTABLE_ASCII for character in symbols
+    ):
+        raise ValueError("defaults symbols are invalid")
+    if len(UPPER) + len(LOWER) + len(DIGITS) + len(symbols) > _DEFAULTS_MAX_CHARSET:
+        raise ValueError("defaults charset is too large")
+
+
+def canonical_account_defaults_json(defaults: dict) -> str:
+    """Return the compact, sorted canonical JSON for account defaults.
+
+    Only the four semantic fields are accepted, in the exact field order used
+    by the extension and Android implementations. The input is not mutated.
+    """
+    _validate_account_defaults(defaults)
+    canonical = {
+        "length": defaults["length"],
+        "policy": defaults["policy"],
+        "schema": defaults["schema"],
+        "symbols": defaults["symbols"],
+    }
+    return json.dumps(canonical, ensure_ascii=False, separators=(",", ":"))
+
+
+def derive_defaults_commitment(
+    strengthened: bytes | bytearray | memoryview,
+    normalized_email: str,
+    defaults: dict,
+) -> str:
+    """Derive the lowercase hex commitment for immutable account defaults."""
+    try:
+        strengthened_view = memoryview(strengthened)
+    except TypeError as exc:
+        raise TypeError("strengthened key must be exactly 32 bytes") from exc
+    if strengthened_view.nbytes != 32:
+        raise ValueError("strengthened key must be exactly 32 bytes")
+    if not isinstance(normalized_email, str):
+        raise TypeError("normalized email is invalid")
+    try:
+        email_bytes = normalized_email.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError("normalized email is invalid") from exc
+    if not 1 <= len(email_bytes) <= 254 or _NORMALIZED_EMAIL_RE.fullmatch(normalized_email) is None:
+        raise ValueError("normalized email is invalid")
+
+    canonical = canonical_account_defaults_json(defaults).encode("utf-8")
+    strengthened_copy = bytes(strengthened_view)
+    commit_key = hmac.new(
+        strengthened_copy,
+        email_bytes + _DEFAULTS_COMMITMENT_SUFFIX.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    commitment = hmac.new(
+        commit_key,
+        _DEFAULTS_COMMITMENT_DOMAIN + canonical,
+        hashlib.sha256,
+    ).hexdigest()
+    return commitment
+
+
+def build_v3_sync_aad(
+    lookup_id: str,
+    defaults_state: str,
+    commitment: str | None = None,
+) -> bytes:
+    """Build the exact UTF-8 AAD envelope for a v3 sync blob."""
+    if not isinstance(lookup_id, str) or _LOOKUP_ID_RE.fullmatch(lookup_id) is None:
+        raise TypeError("lookup id is invalid")
+    if defaults_state not in {"UNSEALED", "ABSENT", "PRESENT"}:
+        raise TypeError("defaults state is invalid")
+    if defaults_state == "PRESENT":
+        if not isinstance(commitment, str) or _LOWERCASE_HEX_64_RE.fullmatch(commitment) is None:
+            raise TypeError("present defaults commitment is invalid")
+    elif commitment is not None:
+        raise TypeError("unsealed or absent defaults must not have a commitment")
+    return (
+        _V3_AAD_DOMAIN
+        + lookup_id.encode("ascii")
+        + b"\x00"
+        + defaults_state.encode("ascii")
+        + b"\x00"
+        + (commitment or "").encode("ascii")
+    )
 
 
 def classify_capability_metadata(payload) -> CapabilityMetadataClassification:
