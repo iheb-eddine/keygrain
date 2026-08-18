@@ -6,13 +6,13 @@ Keygrain
 
 ## Summary (250 chars max)
 
-Deterministic password, TOTP, SSH key & wallet seed generator — derives secrets from your master key. Optional end-to-end encrypted sync. Your master secret never leaves your device. No vault, no plaintext storage.
+Deterministic password, TOTP, SSH key & wallet seed generator — derives secrets from your master secret. Optional end-to-end encrypted sync. No vault of generated passwords; derived passwords aren't stored.
 
-(214 characters)
+(206 characters)
 
 ## Detailed Description
 
-Keygrain is a deterministic password generator. Instead of storing passwords in a vault, it derives them on-the-fly from your master password and the site name. The same inputs always produce the same output — no database needed.
+Keygrain is a deterministic password generator. Instead of storing generated passwords in a vault, it derives them on-the-fly from your master secret and the site name. The same inputs always produce the same output, and derived passwords are not stored. The extension may retain local service configuration, account/device state, and encrypted service data.
 
 HOW IT WORKS:
 • Enter your master secret and email
@@ -24,17 +24,18 @@ FEATURES:
 • TOTP — derive authenticator codes from your master secret (no separate app needed)
 • SSH keys — generate deterministic Ed25519 SSH keys
 • HD wallets — derive BIP-39 mnemonic seeds for cryptocurrency wallets
-• Encrypted sync — optionally sync your site list across devices (end-to-end encrypted, server sees only ciphertext)
+• Encrypted sync — optionally sync your site list across devices (encrypted service data; the master secret and derived passwords are not sent to the sync server)
 • Autofill — fills password fields with one click or Ctrl+Shift+Y
 • Per-site customization — adjust length, symbols, and counter
 • Visual verification — colored fingerprint confirms your secret is correct
 • Auto-lock — master secret cleared from memory after inactivity
 • Context menu — right-click any password field to fill
-• No plaintext storage — your master secret is never saved
+• No derived-password storage — generated passwords are recomputed; local service configuration, account/device state, and encrypted service data may remain on the device
+• Optional PIN unlock — may retain an encrypted local copy of the master secret
 
 SECURITY:
 • HMAC-SHA256 cryptographic derivation with Argon2id key strengthening
-• Master secret never leaves your browser
+• Master secret never leaves your browser; derived passwords are never sent to the sync server
 • Sync data encrypted locally before transmission — server cannot decrypt
 • No analytics, no tracking, no cookies
 • Open source: https://github.com/iheb-eddine/keygrain
@@ -82,7 +83,7 @@ This extension bundles two third-party libraries in minified form under `lib/`:
 
 ### What this extension does
 
-Keygrain is a deterministic cryptographic derivation tool. It derives passwords, TOTP seeds, SSH keys, and HD wallet mnemonics using HMAC-SHA256 from a master secret + email + identifier. It does NOT store secrets — it recomputes them each time.
+Keygrain is a deterministic cryptographic derivation tool. It derives passwords, TOTP seeds, SSH keys, and HD wallet mnemonics using HMAC-SHA256 from a master secret + email + identifier. It does NOT store generated passwords — it recomputes them each time. The extension may retain local service configuration, account/device state, and encrypted service data; optional PIN unlock may retain an encrypted local copy of the master secret.
 
 ### Key behaviors
 

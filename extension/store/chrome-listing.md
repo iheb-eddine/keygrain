@@ -6,13 +6,13 @@ Keygrain
 
 ## Short Description (132 chars max)
 
-Derives passwords, TOTP codes, SSH keys & wallet seeds from a master key. Encrypted sync. Nothing stored in plaintext.
+Derives passwords, TOTP codes, SSH keys & wallet seeds from a master secret. Encrypted sync. Derived passwords aren't stored.
 
-(118 characters)
+(125 characters)
 
 ## Detailed Description
 
-Keygrain is a deterministic password generator. Instead of storing passwords in a vault, it derives them on-the-fly from your master password and the site name. The same inputs always produce the same output — no database needed.
+Keygrain is a deterministic password generator. Instead of storing generated passwords in a vault, it derives them on-the-fly from your master secret and the site name. The same inputs always produce the same output, and derived passwords are not stored. The extension may retain local service configuration, account/device state, and encrypted service data.
 
 HOW IT WORKS:
 • Enter your master secret and email
@@ -24,17 +24,18 @@ FEATURES:
 • TOTP — derive authenticator codes from your master secret (no separate app needed)
 • SSH keys — generate deterministic Ed25519 SSH keys
 • HD wallets — derive BIP-39 mnemonic seeds for cryptocurrency wallets
-• Encrypted sync — optionally sync your site list across devices (end-to-end encrypted, server sees only ciphertext)
+• Encrypted sync — optionally sync your site list across devices (encrypted service data; the master secret and derived passwords are not sent to the sync server)
 • Autofill — fills password fields with one click or Ctrl+Shift+Y
 • Per-site customization — adjust length, symbols, and counter
 • Visual verification — colored fingerprint confirms your secret is correct
 • Auto-lock — master secret cleared from memory after inactivity
 • Context menu — right-click any password field to fill
-• No plaintext storage — your master secret is never saved
+• No derived-password storage — generated passwords are recomputed; local service configuration, account/device state, and encrypted service data may remain on the device
+• Optional PIN unlock — may retain an encrypted local copy of the master secret
 
 SECURITY:
 • HMAC-SHA256 cryptographic derivation with Argon2id key strengthening
-• Master secret never leaves your browser
+• Master secret never leaves your browser; derived passwords are never sent to the sync server
 • Sync data encrypted locally before transmission — server cannot decrypt
 • No analytics, no tracking, no cookies
 • Open source: https://github.com/iheb-eddine/keygrain
