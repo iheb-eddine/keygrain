@@ -170,7 +170,7 @@ No algorithm changes — every password, code, key and seed is byte-identical (S
 ### [1.0.0] - 2026-07-24
 
 Keygrain arrives on Google Play. One master secret derives every password, TOTP code,
-SSH key, and wallet seed — no vault, nothing stored.
+SSH key, and wallet seed. Derived passwords are not stored; service configuration is stored locally and can be synced in encrypted form.
 
 #### New
 - **On Google Play** — targeting Android 16 (API 36), with 16 KB page-size support.
@@ -229,8 +229,9 @@ No algorithm changes — output is byte-identical across all Keygrain platforms 
 #### Unchanged
 - Legacy clients that don't send `deleted_ids` keep the previous behaviour, so older apps
   continue to sync during rollout.
-- The server still only ever stores opaque ciphertext — it cannot read your passwords,
-  service names, or email address.
+- The server stores opaque encrypted service data plus limited protocol metadata and a
+  bcrypt authentication hash. It cannot read your passwords, service names, or email
+  address.
 
 ### [1.0.0] - 2026-07-24
 
@@ -240,8 +241,9 @@ No algorithm changes — output is byte-identical across all Keygrain platforms 
   data" feature.
 
 #### Unchanged
-- The server still only ever stores opaque ciphertext — it cannot read your passwords,
-  service names, or email address.
+- The server stores opaque encrypted service data plus limited protocol metadata and a
+  bcrypt authentication hash. It cannot read your passwords, service names, or email
+  address.
 
 ## History (pre-decoupling)
 
