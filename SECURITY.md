@@ -32,9 +32,7 @@ In scope — reports here are especially valuable:
 - **The clients** (browser extension, Python CLI, Android app): secret handling,
   storage, autofill, memory hygiene, or anything that could expose secrets or derived
   material.
-- **The sync protocol** (`API.md`): the client encrypts with AES-256-GCM before upload
-  and the server stores only opaque ciphertext — reports showing the client leaks
-  plaintext/metadata, or that the protocol is weaker than documented, are in scope.
+- **The sync protocol** (`API.md`): the client encrypts service data with AES-256-GCM before upload. The server receives opaque encrypted service data plus limited protocol metadata and stores a bcrypt hash of `auth_password`; the server never receives or can read plaintext passwords, service names, email, or plaintext service/configuration data. Reports showing the client leaks any of those plaintext values, or that the protocol is weaker than documented, are in scope.
 
 Notes:
 

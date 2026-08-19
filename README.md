@@ -5,7 +5,7 @@
 <h1 align="center">Keygrain</h1>
 
 <p align="center">
-  <strong>Derive passwords from one secret. No vault. No database. No breach.</strong>
+  <strong>Derive passwords from one secret. No vault of generated passwords. Outputs are derived on demand; encrypted service data can sync.</strong>
 </p>
 
 <p align="center">
@@ -39,8 +39,8 @@ GIF PRODUCTION SPEC:
 -->
 
 <p align="center">
-  <em>No password database — passwords are computed from your secret on demand.<br>
-  Same inputs, same output, every device. Nothing to breach.</em>
+  <em>Generated passwords are derived from your secret on demand.<br>
+  Same inputs, same output, every device. Encrypted service data can be stored and synced.</em>
 </p>
 
 <h3 align="center">Install</h3>
@@ -61,7 +61,7 @@ GIF PRODUCTION SPEC:
 
 ## What is Keygrain?
 
-Keygrain derives unique, strong passwords from your master secret and site information. The same inputs always produce the same output — across every platform, every time. There is no password database to lose, breach, or sync. Only your per-site settings (length, symbols, counter) are stored, and those are useless without your secret.
+Keygrain derives unique, strong passwords from your master secret and site information. The same inputs always produce the same output — across every platform, every time. Generated passwords are derived on demand, not stored. Per-site/service configuration and local account/device state may be stored locally, while encrypted service data may optionally be synced. The sync server receives opaque encrypted data plus limited protocol metadata and cannot read plaintext service data.
 
 ## Key Features
 
@@ -73,7 +73,7 @@ Keygrain derives unique, strong passwords from your master secret and site infor
 **Security**
 - Argon2id key strengthening (64 MiB, 3 iterations) — mandatory on all platforms
 - HMAC-SHA256 derivation — single password compromise cannot reveal the secret
-- End-to-end encrypted sync — server sees only opaque ciphertext
+- End-to-end encrypted sync — server receives opaque encrypted data plus limited protocol metadata, not plaintext service data
 - Visual secret fingerprint — colored dot pattern confirms you typed the right secret
 
 **Browser Extension**
@@ -155,10 +155,10 @@ Full specification: [SPEC.md](SPEC.md)
 | Key strengthening | Argon2id — 64 MiB memory, 3 iterations, parallelism 1 |
 | Derivation | HMAC-SHA256 — compromising one password reveals nothing about others |
 | Sync encryption | AES-256-GCM — encrypted locally before transmission |
-| Server knowledge | Opaque encrypted blob + bcrypt(auth_password). Server never sees: master secret, encryption key, or plaintext config |
+| Server knowledge | Opaque encrypted service data, limited protocol metadata, and bcrypt hash of auth_password. Server never sees: master secret, encryption key, plaintext passwords, service names, email, or plaintext service/configuration data |
 | Secret verification | Visual fingerprint (4-color dot pattern) confirms correct secret entry |
 
-Your master secret never leaves your device in plaintext. If the server is compromised, attackers get only encrypted blobs — useless without individual master secrets.
+Your master secret never leaves your device in plaintext. If the server is compromised, attackers still cannot read plaintext service data or generated passwords; they may obtain encrypted blobs, limited protocol metadata, and the bcrypt auth_password hash.
 
 ## Building from Source
 
