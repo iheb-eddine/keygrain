@@ -2,7 +2,7 @@
 
 ## 1. System Overview
 
-Keygrain is a deterministic password manager. A master secret + site + email deterministically derives a unique password — no password storage required. An optional encrypted sync layer allows service metadata to be shared across devices.
+Keygrain is a deterministic password manager. A master secret plus site and account information deterministically derives a unique password locally; generated passwords are not stored or synced. Clients do store service configuration and other local account/device state, and an optional end-to-end encrypted sync layer shares that service data across devices.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -20,23 +20,20 @@ Keygrain is a deterministic password manager. A master secret + site + email det
 │         │                  │                                    │
 └─────────┼──────────────────┼────────────────────────────────────┘
           │                  │
-          │  HTTPS (TLS 1.2+)  │
+          │       HTTPS      │
           ▼                  ▼
 ┌─────────────────────────────────────────┐
-│            SYNC SERVER (Go)             │
+│             PUBLIC SYNC SERVICE          │
 │  ┌─────────────┐  ┌─────────────────┐  │
-│  │  Rate Limit │  │  Sync API       │  │
-│  │  Middleware │──▶│  (GET/PUT)      │  │
-│  └─────────────┘  └────────┬────────┘  │
-│                             │           │
-│                    ┌────────▼────────┐  │
-│                    │  File Storage   │  │
-│                    │  (JSON per user)│  │
-│                    └─────────────────┘  │
+│  │ Rate limits │  │ Sync API        │  │
+│  │             │──▶│ (GET/PUT/DELETE)│  │
+│  └─────────────┘  └─────────────────┘  │
+│   opaque encrypted state + limited      │
+│   protocol metadata; no plaintext data  │
 └─────────────────────────────────────────┘
 ```
 
-**Key invariant:** The server never sees plaintext service data. It stores opaque encrypted blobs and plaintext metadata (UUIDs + timestamps) only.
+**Key invariant:** Password derivation and encryption happen on the client. The sync service cannot read the master secret, generated passwords, or plaintext service data such as names, sites, account emails, and configuration; it receives only an opaque encrypted blob and limited protocol metadata needed by the public sync API.
 
 ---
 
@@ -44,7 +41,7 @@ Keygrain is a deterministic password manager. A master secret + site + email det
 
 ### 2.1 Core Algorithm Library
 
-Identical implementations in Python, JavaScript, and Kotlin. All produce the same output for the same inputs (validated by 20 cross-platform tests in Python).
+Identical implementations in Python, JavaScript, and Kotlin. All produce the same output for the same inputs, with committed cross-platform vectors and parity checks guarding implementation agreement.
 
 **Responsibilities:**
 - Argon2id key strengthening
@@ -60,7 +57,7 @@ Identical implementations in Python, JavaScript, and Kotlin. All produce the sam
 | Content script (`content.js`) | Autofill via native property descriptors |
 | Background (`background.js`) | Session management, local encryption, auto-lock timer |
 
-The content script uses `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set` to bypass framework-controlled inputs (React, Angular). This requires `activeTab` + `scripting` permissions.
+The content script uses `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set` to bypass framework-controlled inputs (React, Angular). The extension uses `activeTab` for access to the current tab. Chrome uses the `scripting` permission for script injection; Firefox's MV2 flow uses `tabs.executeScript` and does not require a separate `scripting` permission.
 
 ### 2.3 Android App
 
@@ -70,13 +67,9 @@ Jetpack Compose UI with:
 - Encrypted local storage (EncryptedSharedPreferences)
 - Sync, export/import
 
-### 2.4 Server (Go)
+### 2.4 Sync Service
 
-Single-binary Go server behind nginx reverse proxy:
-- Sync API (`/api/sync/:lookup_id`) — GET and PUT
-- Dual token-bucket rate limiting
-- Static file serving (web generator, site rules, breach feed)
-- Docker deployment with auto-deploy via CI/CD
+The hosted sync service exposes the public HTTP API documented in [API.md](../API.md): authenticated GET, PUT, and DELETE operations for an opaque encrypted sync state. It applies rate limits and optimistic locking; clients perform encryption, decryption, validation, merging, and conflict resolution. The service does not receive the master secret, generated passwords, or plaintext service data.
 
 ### 2.5 Web Generator
 
@@ -167,6 +160,9 @@ Client                                    Server
   │                                         │
   │◀── 200 {services (with UUIDs), etag} ──│
   │                                         │
+  │─── DELETE /api/sync/:lookup_id ────────▶│
+  │◀── 200 deleted / 404 already absent ────│
+  │                                         │
   │  ┌─────────────────────────┐            │
   │  │ Update local UUIDs      │            │
   │  │ Update known-UUIDs set  │            │
@@ -174,7 +170,7 @@ Client                                    Server
   │  └─────────────────────────┘            │
 ```
 
-On 409 Conflict: client re-fetches, re-merges, and retries (max 1 retry).
+On 409 Conflict: the client re-fetches the current state, re-merges, and retries with bounded backoff. After the retry budget is exhausted, the client surfaces the conflict rather than retrying indefinitely.
 
 ---
 
@@ -186,29 +182,30 @@ On 409 Conflict: client re-fetches, re-merges, and retries (max 1 retry).
 ┌─────────────────────────────────────────────────────────┐
 │ TRUSTED ZONE (client device)                            │
 │                                                         │
-│  • Master secret:                                       │
-│    - Extension: session storage (cleared on close/lock) │
-│    - Android: EncryptedSharedPreferences (biometric)    │
-│    - Web generator: memory only (never persisted)       │
-│  • Strengthened key (cached in memory during session)   │
-│  • Plaintext service data                               │
-│  • All cryptographic operations                         │
-│  • Merge logic and conflict resolution                  │
+│  • Master secret and strengthened key in memory          │
+│    during an unlocked session                           │
+│  • Cleared from memory on lock or timeout                │
+│  • Optional encrypted local copy for PIN/biometric      │
+│    unlock, where the client supports it                 │
+│  • Plaintext service/configuration data and local        │
+│    account/device state                                  │
+│  • All cryptographic operations, merge, and conflict     │
+│    resolution                                            │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
-│ UNTRUSTED ZONE (server + network)                       │
+│ UNTRUSTED ZONE (sync service + network)                 │
 │                                                         │
-│  • Encrypted blob (opaque — server cannot decrypt)      │
-│  • Service metadata: UUIDs + timestamps (plaintext)     │
-│  • Auth password hash (bcrypt, cost 12)                 │
-│  • Lookup ID (pseudonymous — not linkable to email)     │
+│  • Opaque encrypted blob, checksum, and ETag             │
+│  • Service metadata: UUIDs and timestamps                │
+│  • Pseudonymous lookup_id                                │
+│  • Auth password hash (bcrypt, cost 12)                  │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**What the server CAN see:** Number of services, when each was last modified, blob size, access patterns.
+**What the sync service CAN see:** Limited protocol metadata such as service UUIDs and timestamps, the opaque blob's checksum and size, the ETag, the pseudonymous lookup ID, the auth hash, and request/access patterns.
 
-**What the server CANNOT see:** Service names, sites, emails, passwords, password parameters, master secret.
+**What the sync service CANNOT see:** The master secret, generated passwords, plaintext service names, sites, account emails, password parameters, or other plaintext service/configuration data.
 
 ### 4.2 Encryption
 
@@ -239,14 +236,12 @@ The strengthened key is the root for all derived keys. Argon2id provides resista
 
 ### 4.4 Rate Limiting
 
-Dual token-bucket rate limiting protects against brute-force:
+Dual token-bucket rate limiting protects the sync authentication surface against brute-force attempts:
 
 | Bucket | Burst | Refill Rate | Purpose |
 |--------|-------|-------------|---------|
-| Per-IP | 100 | 100/min | Prevents distributed attacks from single IP |
-| Per-lookup_id | 10 | 2/min | Prevents targeted account brute-force |
-
-Configurable via environment variables. Uses `RemoteAddr` by default; set `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER=X-Real-IP` when behind nginx.
+| Per-IP | 100 | 100/min | Limits requests from one network source |
+| Per-lookup_id | 10 | 2/min | Limits attempts against one pseudonymous account |
 
 ### 4.5 Threat Model Summary
 
@@ -255,13 +250,13 @@ Configurable via environment variables. Uses `RemoteAddr` by default; set `KEYGR
 | Server compromise | Blob is AES-256-GCM encrypted; server has no decryption key |
 | Brute-force auth | bcrypt(12) + 32-char derived password + rate limiting |
 | Brute-force master secret | Argon2id (64MiB) makes offline attacks expensive |
-| Network interception | TLS 1.2+ (nginx + Let's Encrypt) |
+| Network interception | TLS 1.2+ for HTTPS |
 | Metadata tampering by server | Client-side metadata caching with integrity checks |
 | Replay attack (stale GET) | ETag-based optimistic locking detects stale state on PUT |
 | Clock skew → wrong merge winner | Accepted limitation; monotonic timestamp recommendation |
 | Accidental mass deletion | Client-side empty-push protection guardrail |
 
-For the full threat model, see `designs/sync-v2.md` §9.
+For the public protocol contract, see [API.md](../API.md). Security guidance is in [SECURITY.md](../SECURITY.md).
 
 ---
 
@@ -269,36 +264,15 @@ For the full threat model, see `designs/sync-v2.md` §9.
 
 ### 5.1 Browser Extension
 
-Services are encrypted with the **local storage key** (AES-256-GCM) and stored in `chrome.storage.local`. The master secret is held in memory only and cleared on lock/timeout (configurable auto-lock via `chrome.alarms`).
+The extension stores service configuration and related local account/device state locally; service data is encrypted with the **local storage key** (AES-256-GCM). Generated passwords are derived when needed and are not stored. The master secret and strengthened key are held in memory during an unlocked session and cleared on lock or timeout. If PIN unlock is enabled, an encrypted local copy of the master secret may be retained for that unlock flow.
 
 ### 5.2 Android App
 
-| Data | Storage | Encryption |
-|------|---------|-----------|
-| Services | `EncryptedSharedPreferences` | AES256_SIV (keys) + AES256_GCM (values) |
-| Master secret | `EncryptedSharedPreferences` | Same scheme, protected by biometric |
-| Sync state | `SharedPreferences` (non-sensitive metadata only) | None (contains only sync timestamps) |
+The Android app stores service configuration and sync-related account/device state locally. While unlocked, the master secret and strengthened key are held in memory; locking clears the in-memory copy. When biometric unlock is enabled, an encrypted copy of the master secret may be retained locally using Android Keystore-backed protection. Generated passwords remain derived outputs, not stored vault entries.
 
-`EncryptedSharedPreferences` uses Android Keystore-backed keys — hardware-protected on supported devices.
+### 5.3 Sync Service
 
-### 5.3 Server
-
-One JSON file per user at `data/sync/<lookup_id>.json`:
-
-```json
-{
-  "auth_password_hash": "<bcrypt cost-12>",
-  "services": [{"id": "uuid", "updated_at": 1715000000}],
-  "encrypted_blob": "<base64 AES-256-GCM ciphertext>",
-  "checksum": "<sha256-hex of encrypted blob>",
-  "etag": "<sha256-truncated-16-bytes-hex>",
-  "version": 1,
-  "created_at": "2025-05-01T00:00:00Z",
-  "updated_at": "2025-05-09T00:00:00Z"
-}
-```
-
-Writes are atomic (write to `.tmp` file, then `os.Rename`). Per-lookup_id mutex prevents concurrent writes to the same file.
+The sync service stores the opaque encrypted blob and the limited protocol metadata required by [API.md](../API.md): service UUID/timestamp metadata, checksum, ETag, pseudonymous lookup ID, and the bcrypt hash of the derived authentication password. It does not store plaintext service data, generated passwords, the master secret, or deletion records. The client performs decryption, validation, merge, and deletion review.
 
 ---
 
@@ -324,13 +298,11 @@ Each service has a UUID (server-assigned) and `updated_at` timestamp. Merge oper
 
 ### 6.3 Deletion Model
 
-No tombstones. Deletion = absence of a previously-known UUID.
+Deletion review is client-local; the sync service keeps no deletion records or server-side tombstones. Clients track the UUIDs they have seen and use that state to distinguish an intentional local deletion from a service that is newly arriving from another device.
 
-- Client maintains a **known-UUIDs set** (all UUIDs seen from server)
-- A UUID in the known set but absent from remote → deleted on another device → remove locally
-- A UUID in the known set but absent locally → deleted on this device → exclude from push
+When a client sends `deleted_ids`, the sync service validates the request but never persists those IDs. Every currently stored service ID absent from `services` must be declared in `deleted_ids`, or the request is rejected. An intentionally empty `services` list is accepted when all currently stored IDs are declared. Declaring an ID that is not stored is harmless and supports idempotent retries.
 
-**Safety:** Clients refuse to push an empty service list when remote was non-empty (prevents accidental total deletion).
+If `deleted_ids` is omitted, the legacy API heuristic applies: an empty push against a non-empty record is rejected, while subset removals may be accepted without declaration. See [API.md](../API.md) for the complete contract. Clients should review deletions locally before pushing and retain only the local known-UUID/deletion-review state needed for that safety check.
 
 ### 6.4 Optimistic Locking
 
@@ -338,22 +310,3 @@ No tombstones. Deletion = absence of a previously-known UUID.
 - `PUT` requires `If-Match: "<etag>"` for existing records
 - Mismatch → 409 Conflict with `current_etag` in response body
 - First PUT (new user) does not require `If-Match`
-
----
-
-## 7. Deployment Architecture
-
-```
-Internet ──▶ nginx (TLS termination, Let's Encrypt)
-                │
-                ▼
-         Go binary (port 9860)
-                │
-                ▼
-         /opt/keygrain/data/ (Docker volume)
-```
-
-- **Build:** Docker multi-stage (Go alpine builder → alpine runtime)
-- **Deploy:** GitLab CI → SSH → `docker compose build && up -d`
-- **TLS:** nginx handles certificate renewal and HTTPS termination
-- **IP forwarding:** Set `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER=X-Real-IP` for nginx to pass real client IP for rate limiting
