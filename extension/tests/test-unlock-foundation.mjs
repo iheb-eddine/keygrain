@@ -130,28 +130,87 @@ function makeContext(argon2id) {
   runInContext('clearStrengthenCache()', ctx);
   resolveSign(new Uint8Array(32));
   await assert.rejects(operation, /stale strengthen operation/);
-}// Generation tokens reject stale work and remain monotonic.
+}
+// Keygrain manager loading, exact exports, and generation/operation foundation.
 {
   const ctx = makeContext(async () => new Uint8Array(32));
-  runInContext('globalThis.token = new KGUnlockGeneration()', ctx);
-  assert.equal(runInContext('token.value', ctx), 0);
-  runInContext('globalThis.captured = token.capture()', ctx);
-  assert.equal(runInContext('token.isCurrent(captured)', ctx), true);
-  assert.equal(runInContext('token.invalidate()', ctx), 1);
-  assert.equal(runInContext('token.isCurrent(captured)', ctx), false);
-  assert.equal(runInContext('token.isCurrent(token.capture())', ctx), true);
-  assert.throws(() => runInContext('token.assertCurrent(captured)', ctx), /stale unlock operation/);
+  runInContext('globalThis.nowValue=1000; globalThis.manager=new KeygrainStateManager({clock:()=>nowValue,settings:{version:1,fullLeaseSeconds:60,metadataTailSeconds:14400}})', ctx);
+  assert.equal(runInContext('manager.snapshot().state', ctx), 'locked');
+  const exports = JSON.parse(runInContext('JSON.stringify(Object.keys(globalThis).filter(key => key.startsWith("KEYGRAIN") || key.startsWith("Keygrain") || ["confirmExceptionalFullLease", "migrateSecuritySettings", "normalizeSecuritySettings", "projectMetadataState"].includes(key)).sort())', ctx));
+  assert.deepEqual(exports, [
+    'KeygrainStateManager', 'KEYGRAIN_COMPLETION_GRACE_SECONDS', 'KEYGRAIN_FULL_DEFAULT_SECONDS',
+    'KEYGRAIN_FULL_EXCEPTIONAL_MAX_SECONDS', 'KEYGRAIN_FULL_MIN_SECONDS', 'KEYGRAIN_FULL_NORMAL_MAX_SECONDS',
+    'KEYGRAIN_FULL_WARNING_LEAD_SECONDS', 'KEYGRAIN_METADATA_DEFAULT_SECONDS', 'KEYGRAIN_METADATA_MAX_SECONDS',
+    'KEYGRAIN_METADATA_MIN_SECONDS', 'KEYGRAIN_METADATA_WARNING_LEAD_SECONDS', 'KEYGRAIN_SETTINGS_KEY',
+    'KEYGRAIN_SETTINGS_VERSION', 'KEYGRAIN_STATE', 'confirmExceptionalFullLease',
+    'migrateSecuritySettings', 'normalizeSecuritySettings', 'projectMetadataState',
+  ].sort());
+  for (const forbidden of ['KGUnlockStateManager','KG_UNLOCK_STATES','getFullData','getSecrets','setSecrets','setSecret','setEmail','getSecret','getEmail','autoLockMinutes']) {
+    assert.equal(runInContext(`typeof globalThis[${JSON.stringify(forbidden)}]`, ctx), 'undefined', forbidden);
+  }
+  runInContext('manager.unlockFull({fullData:{secret:"s"},records:[]}); globalThis.handle=manager.beginSensitiveOperation({capture:()=>({x:1})}); globalThis.before=manager.snapshot().authorizationGeneration', ctx);
+  assert.equal(runInContext('manager.checkSensitiveOperation(handle)', ctx), true);
+  runInContext('manager.lockEverything()', ctx);
+  assert.equal(runInContext('manager.snapshot().authorizationGeneration', ctx), 2);
+  assert.throws(() => runInContext('manager.checkSensitiveOperation(handle)', ctx), error => error.code === 'KEYGRAIN_STALE_OPERATION');
 }
 
 {
   const chromeBackground = readFileSync(resolve(__dirname, '..', 'chrome', 'background.js'), 'utf8');
   const firefoxBackground = readFileSync(resolve(__dirname, '..', 'firefox', 'background.js'), 'utf8');
   const popup = readFileSync(resolve(shared, 'popup.js'), 'utf8');
-  for (const source of [chromeBackground, firefoxBackground]) {
-    const match = source.match(/if \(msg\.action === "heartbeat"\) \{([\s\S]*?)\n\s*\}/);
-    assert.ok(match, 'heartbeat handler missing');
-    assert.doesNotMatch(match[1], /resetAutoLock/);
-    assert.match(source, /msg\.action === "extendSensitive"/);
+  for (const [browser, source] of [['chrome', chromeBackground], ['firefox', firefoxBackground]]) {
+    assert.match(source, /KeygrainBrowserOwner\.createOwner/, `${browser}: owner is not authoritative`);
+    assert.match(source, /action === "heartbeat"/);
+    assert.match(source, /action === "extendSensitive"/);
+    assert.match(source, /action === "sync"/);
+    assert.match(source, /dispatchLegacyOrPhaseB\(sender, (?:chrome|browser)\.runtime\.id, message/,
+      `${browser}: heartbeat/Phase-B actions bypass the owner dispatcher`);
+    assert.doesNotMatch(source, /resetAutoLock|extendFull|extendMetadata/,
+      `${browser}: background contains a direct activity/lease extension path`);
+
+    const isolated = createContext({
+      URL, Set, Map, Object, Array, String, Number, RegExp, Math, JSON, Error, Date, console,
+      Promise, Uint8Array, ArrayBuffer, TextEncoder, TextDecoder,
+    });
+    runInContext('globalThis = this;', isolated);
+    for (const dependency of ['unlock-state.js', 'browser-owner.js']) {
+      runInContext(readFileSync(resolve(shared, dependency), 'utf8'), isolated);
+    }
+    runInContext(`
+      globalThis.storageCalls = {get: 0, set: 0, remove: 0};
+      globalThis.ownerStorage = {
+        get: async () => { storageCalls.get++; return {}; },
+        set: async () => { storageCalls.set++; },
+        remove: async () => { storageCalls.remove++; },
+      };
+      globalThis.owner = KeygrainBrowserOwner.createOwner({
+        adapter: {browser: ${JSON.stringify(browser)}, storage: ownerStorage},
+        settings: {version: 1, fullLeaseSeconds: 60, metadataTailSeconds: 14400},
+        clock: () => 1000,
+      });
+    `, isolated);
+    const beforeSnapshot = JSON.parse(runInContext('JSON.stringify(owner.snapshot())', isolated));
+    const beforeGeneration = runInContext('owner.generation', isolated);
+    const sender = browser === 'chrome'
+      ? '{tab:{id:13},frameId:0,documentId:"doc-heartbeat",url:"https://example.com/login"}'
+      : '{tab:{id:13},frameId:0,url:"https://example.com/login"}';
+    const expected = {ok: false, code: 'KEYGRAIN_CONTEXT_ERROR', message: 'This action is not available from this context.'};
+    for (const action of ['heartbeat', 'extendSensitive', 'sync']) {
+      const result = JSON.parse(runInContext(
+        `JSON.stringify(owner.dispatchLegacyOrPhaseB(${sender}, "extension-id", {action: ${JSON.stringify(action)}}, ${JSON.stringify(browser)}))`,
+        isolated
+      ));
+      assert.deepEqual(result, expected, `${browser}: ${action} must remain fail-closed`);
+      assert.equal(Object.prototype.hasOwnProperty.call(result, 'secret'), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(result, 'records'), false);
+      assert.deepEqual(JSON.parse(runInContext('JSON.stringify(owner.snapshot())', isolated)), beforeSnapshot,
+        `${browser}: ${action} changed authorization/lease state`);
+      assert.equal(runInContext('owner.generation', isolated), beforeGeneration,
+        `${browser}: ${action} renewed owner activity generation`);
+      assert.deepEqual(JSON.parse(runInContext('JSON.stringify(storageCalls)', isolated)), {get: 0, set: 0, remove: 0},
+        `${browser}: ${action} touched storage`);
+    }
   }
   assert.doesNotMatch(chromeBackground, /chrome\.storage\.session/);
   assert.doesNotMatch(popup, /document\.addEventListener\("click", \(\) => sendMsg\(\{action: "heartbeat"\}\)\)/);
@@ -160,18 +219,35 @@ function makeContext(argon2id) {
 }
 
 {
+  const ownerSource = readFileSync(resolve(__dirname, '..', 'shared', 'browser-owner.js'), 'utf8');
   const chromeBackground = readFileSync(resolve(__dirname, '..', 'chrome', 'background.js'), 'utf8');
   const firefoxBackground = readFileSync(resolve(__dirname, '..', 'firefox', 'background.js'), 'utf8');
+  assert.match(ownerSource, /captureIndicatorProjection/);
+  assert.match(ownerSource, /scheduleIndicatorReconcile/);
+  assert.match(ownerSource, /manager\.beginSensitiveOperation\(\{capture: captureIndicatorProjection\}\)/);
+  assert.match(ownerSource, /manager\.checkSensitiveOperation\(handle\)/);
+  assert.match(ownerSource, /token !== reconciliationToken/);
+  assert.match(chromeBackground, /chrome\.scripting\.registerContentScripts/);
+  assert.match(chromeBackground, /chrome\.action\.setBadgeText/);
+  assert.match(firefoxBackground, /browser\.scripting\.registerContentScripts/);
+  assert.match(firefoxBackground, /browser\.action\.setBadgeText/);
+  assert.match(firefoxBackground, /browser\.scripting\.registerContentScripts/);
+  assert.doesNotMatch(firefoxBackground, /browser\.browserAction|browser\.tabs\.executeScript|browser\.contentScripts\.register/);
+  assert.doesNotMatch(ownerSource, /getAuthorizedCredentials|unlockState\.assertCurrent/);
+  assert.doesNotMatch(chromeBackground, /getAuthorizedCredentials|unlockState|currentSecret|currentEmail/);
+  assert.doesNotMatch(firefoxBackground, /getAuthorizedCredentials|unlockState|sessionSecret|sessionEmail/);
+  assert.match(chromeBackground, /chromeShutdown\(\)/);
+  assert.match(firefoxBackground, /firefoxShutdown\(\)/);
+  assert.match(chromeBackground, /chromeIndicatorUnknown/);
+  assert.match(firefoxBackground, /firefoxIndicatorUnknown/);
+  assert.match(chromeBackground, /if \(chromeRegistrationUnknown \|\| chromeIndicatorUnknown\) return/);
+  assert.match(firefoxBackground, /if \(firefoxRegistrationUnknown \|\| firefoxIndicatorUnknown\) return/);
+  assert.match(chromeBackground, /throw chromeAdapterError\(\)/);
+  assert.match(firefoxBackground, /throw firefoxAdapterError\(\)/);
   for (const source of [chromeBackground, firefoxBackground]) {
-    const start = source.indexOf('async function updateBadge');
-    const end = source.indexOf('\n}\n\n', start);
-    assert.ok(start >= 0 && end > start, 'updateBadge body missing');
-    const body = source.slice(start, end);
-    assert.match(body, /const auth = getAuthorizedCredentials\(\)/);
-    assert.match(body, /generation/);
-    assert.match(body, /const assertGeneration = \(\) => unlockState\.assertCurrent\(generation\)/);
-    assert.ok((body.match(/assertGeneration\(\)/g) || []).length >= 6, 'badge path lacks await-boundary generation checks');
-    assert.match(body, /try \{ assertGeneration\(\); \} catch \{ return; \}/);
+    assert.match(source, /reconcileIndicators/);
+    assert.match(source, /KEYGRAIN_STALE_OPERATION/);
+    assert.match(source, /keygrain-state-wake/);
   }
 }
 console.log('8 tests: 8 passed, 0 failed');
