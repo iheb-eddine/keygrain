@@ -6,6 +6,8 @@ import android.service.autofill.*
 import android.util.Log
 import android.view.autofill.AutofillValue
 import android.widget.RemoteViews
+import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicReference
 
 class KeygrainAutofillService : AutofillService() {
 
@@ -21,6 +23,11 @@ class KeygrainAutofillService : AutofillService() {
         )
         private const val PREFS_NAME = "keygrain_autofill"
         private const val KEY_BROWSERS = "trusted_browsers"
+        // Provisional bounded value; API 26+/slow-device measurements are a release gate.
+        private const val OPTIONAL_TOTP_BUDGET_MILLIS = 500L
+        private val OPTIONAL_TOTP_BUDGET = object : OtpAutofillBudget {
+            override fun maxDurationMillis(): Long = OPTIONAL_TOTP_BUDGET_MILLIS
+        }
     }
 
     private fun getTrustedBrowsers(): Set<String> {
@@ -29,6 +36,7 @@ class KeygrainAutofillService : AutofillService() {
     }
 
     override fun onFillRequest(request: FillRequest, cancel: CancellationSignal, callback: FillCallback) {
+        var otpPath = false
         try {
             val secretManager = SecretManager(applicationContext)
             val secret = secretManager.getSecret()
@@ -41,6 +49,16 @@ class KeygrainAutofillService : AutofillService() {
             val structure = request.fillContexts.lastOrNull()?.structure
             if (structure == null) {
                 Log.d("KeygrainAutofill", "No assist structure")
+                callback.onSuccess(null)
+                return
+            }
+
+            if (cancel.isCanceled) {
+                callback.onSuccess(null)
+                return
+            }
+            val otpCandidate = OtpAutofillDetector.findCandidate(structure)
+            if (cancel.isCanceled) {
                 callback.onSuccess(null)
                 return
             }
@@ -79,6 +97,11 @@ class KeygrainAutofillService : AutofillService() {
                 return
             }
 
+            if (cancel.isCanceled) {
+                callback.onSuccess(null)
+                return
+            }
+
             val passwordNodes = mutableListOf<AutofillNodeInfo>()
             for (i in 0 until structure.windowNodeCount) {
                 findPasswordNodes(structure.getWindowNodeAt(i).rootViewNode, passwordNodes)
@@ -90,9 +113,23 @@ class KeygrainAutofillService : AutofillService() {
                 findUsernameNodes(structure.getWindowNodeAt(i).rootViewNode, usernameNodes, passwordIds)
             }
 
-            if (passwordNodes.isEmpty() && usernameNodes.isEmpty()) {
+            if (passwordNodes.isEmpty() && usernameNodes.isEmpty() && otpCandidate !is OtpCandidateResult.One) {
                 Log.d("KeygrainAutofill", "No autofillable fields found")
                 callback.onSuccess(null)
+                return
+            }
+
+            if (otpCandidate is OtpCandidateResult.One) {
+                otpPath = true
+                handleOtpRequest(
+                    secret = secret,
+                    matches = matches,
+                    usernameNodes = usernameNodes,
+                    passwordNodes = passwordNodes,
+                    otpId = otpCandidate.id,
+                    cancel = cancel,
+                    callback = callback
+                )
                 return
             }
 
@@ -123,8 +160,194 @@ class KeygrainAutofillService : AutofillService() {
 
             callback.onSuccess(responseBuilder.build())
         } catch (e: Exception) {
-            Log.e("KeygrainAutofill", "onFillRequest failed", e)
-            callback.onSuccess(null)
+            if (!otpPath) {
+                Log.e("KeygrainAutofill", "onFillRequest failed", e)
+                callback.onSuccess(null)
+            }
+        }
+    }
+
+    private data class OtpDatasetState(
+        val service: ServiceEntry,
+        val passwordBuilder: Dataset.Builder,
+        val otpBuilder: Dataset.Builder,
+        val hasPasswordValue: Boolean,
+        var hasOtpValue: Boolean
+    )
+
+    private fun handleOtpRequest(
+        secret: String,
+        matches: List<ServiceEntry>,
+        usernameNodes: List<AutofillNodeInfo>,
+        passwordNodes: List<AutofillNodeInfo>,
+        otpId: android.view.autofill.AutofillId,
+        cancel: CancellationSignal,
+        callback: FillCallback
+    ) {
+        val completion = FillCompletion { response -> callback.onSuccess(response) }
+        val futureRef = AtomicReference<Future<*>?>(null)
+        cancel.setOnCancelListener {
+            completion.cancel()
+            futureRef.get()?.cancel(true)
+        }
+        try {
+            if (cancel.isCanceled) {
+                completion.cancel()
+                return
+            }
+
+        val states = try {
+            matches.map { service ->
+                val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
+                    setTextViewText(android.R.id.text1, "Keygrain — ${service.name}")
+                }
+                val passwordDataset = Dataset.Builder()
+                val otpDataset = Dataset.Builder()
+                var hasPasswordValue = false
+                for (node in usernameNodes) {
+                    val value = AutofillValue.forText(service.email)
+                    passwordDataset.setValue(node.id, value, presentation)
+                    otpDataset.setValue(node.id, value, presentation)
+                    hasPasswordValue = true
+                }
+                for (node in passwordNodes) {
+                    val password = Keygrain.derivePassword(
+                        secret = secret.toByteArray(),
+                        email = service.email,
+                        site = service.site,
+                        length = service.length,
+                        symbols = service.symbols,
+                        counter = service.counter
+                    )
+                    val value = AutofillValue.forText(password)
+                    passwordDataset.setValue(node.id, value, presentation)
+                    otpDataset.setValue(node.id, value, presentation)
+                    hasPasswordValue = true
+                }
+                OtpDatasetState(service, passwordDataset, otpDataset, hasPasswordValue, false)
+            }.toMutableList()
+        } catch (_: Exception) {
+            completion.complete(null)
+            return
+        }
+
+        if (cancel.isCanceled) {
+            completion.cancel()
+            return
+        }
+
+        val optionalStartMillis = System.nanoTime() / 1_000_000L
+        val optionalBudgetMillis = OPTIONAL_TOTP_BUDGET.maxDurationMillis()
+        fun optionalBudgetAvailable(): Boolean {
+            val elapsed = (System.nanoTime() / 1_000_000L) - optionalStartMillis
+            return elapsed >= 0L && elapsed < optionalBudgetMillis
+        }
+        val secretBytes = secret.toByteArray()
+        val attempt = OtpAutofillAttempt(
+            services = matches,
+            secret = secretBytes,
+            clock = object : OtpAutofillClock {
+                override fun epochSeconds(): Long = System.currentTimeMillis() / 1000L
+            },
+            budget = OPTIONAL_TOTP_BUDGET,
+            isCancelled = { cancel.isCanceled },
+            nowMillis = { System.nanoTime() / 1_000_000L }
+        )
+
+        fun buildResponse(includeOtp: Boolean): FillResponse? {
+            val responseBuilder = FillResponse.Builder()
+            var datasetCount = 0
+            states.forEach { state ->
+                val hasValue = state.hasPasswordValue || (includeOtp && state.hasOtpValue)
+                if (!hasValue) return@forEach
+                val builder = if (includeOtp && state.hasOtpValue) {
+                    state.otpBuilder
+                } else {
+                    state.passwordBuilder
+                }
+                responseBuilder.addDataset(builder.build())
+                datasetCount++
+            }
+            return if (datasetCount == 0) null else responseBuilder.build()
+        }
+
+        fun finish(values: List<OtpAutofillValue>?) {
+            if (cancel.isCanceled) {
+                completion.cancel()
+                return
+            }
+            var includeOtp = values != null && optionalBudgetAvailable()
+            if (includeOtp) {
+                try {
+                    values!!.forEach { value ->
+                        val state = states.firstOrNull { it.service == value.service } ?: return@forEach
+                        OtpAutofillResponse.addValue(state.otpBuilder, otpId, value.code)
+                        state.hasOtpValue = true
+                    }
+                } catch (_: Exception) {
+                    includeOtp = false
+                }
+            }
+            val response = if (includeOtp) buildResponse(includeOtp = true) else buildResponse(includeOtp = false)
+            // Response construction is part of the optional budget. If it expired while
+            // building, publish only the already-built password fallback.
+            val finalResponse = if (includeOtp && !optionalBudgetAvailable()) {
+                buildResponse(includeOtp = false)
+            } else {
+                response
+            }
+            if (cancel.isCanceled) {
+                completion.cancel()
+                return
+            }
+            completion.complete(finalResponse)
+        }
+
+        val hasDerivedCandidate = matches.any { service ->
+            val totp = service.totp
+            try {
+                totp != null && totp.has("mode") && !totp.isNull("mode") &&
+                    totp.get("mode") is String && totp.getString("mode") == "derived"
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        if (hasDerivedCandidate) {
+            val future = TotpAutofillDerivedExecutor.submit({
+                try {
+                    finish(attempt.run())
+                } catch (_: Exception) {
+                    try {
+                        finish(null)
+                    } catch (_: Exception) {
+                        completion.complete(null)
+                    }
+                    Unit
+                } finally {
+                    secretBytes.fill(0)
+                }
+            }, onNotStarted = { secretBytes.fill(0) })
+            if (future == null) {
+                secretBytes.fill(0)
+                finish(null)
+            } else {
+                futureRef.set(future)
+                if (cancel.isCanceled) future.cancel(true)
+            }
+        } else {
+            try {
+                try {
+                    finish(attempt.run())
+                } catch (_: Exception) {
+                    finish(null)
+                }
+            } finally {
+                secretBytes.fill(0)
+            }
+        }
+        } catch (_: Exception) {
+            completion.complete(null)
         }
     }
 
