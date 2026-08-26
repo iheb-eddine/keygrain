@@ -120,12 +120,16 @@ if (!window.__keygrain_inline_injected) {
   let observer = null;
   let observerTimer = null;
   let focusinHandler = null;
+  let windowFocusHandler = null;
+  let visibilityHandler = null;
   let repositionHandler = null;
   // S-b engage guards: bound background getInlineMatches under a focus-flip storm.
   let engageInFlight = false;     // only ONE getInlineMatches round-trip outstanding at a time
   let pendingEngageField = null;  // latest field requested DURING a round-trip (collapse-not-drop)
+  let pendingEngageForce = false;
   let engageDebounceTimer = null; // ~150ms trailing debounce on the focusin path
   let engageDebounceField = null; // latest focusin field awaiting the debounce
+  let engageDebounceForce = false;
 
   // dropdown / locked-hint refs (populated by the dropdown layer)
   let ddOptions = [];
@@ -134,6 +138,7 @@ if (!window.__keygrain_inline_injected) {
   let outsideHandler = null;
   let hintTimer = null;
   let pointerArmedEl = null; // F1 1b: element armed by a trusted pointerdown that hit our host (see pointerActivated)
+  let dropdownOpenedAt = 0;
 
   // --- shadow host lifecycle ---
   // Single body-appended host with a CLOSED shadow root. No page-readable id /
@@ -192,11 +197,15 @@ if (!window.__keygrain_inline_injected) {
     if (observer) { observer.disconnect(); observer = null; }
     if (observerTimer) { clearTimeout(observerTimer); observerTimer = null; }
     if (focusinHandler) { document.removeEventListener("focusin", focusinHandler, true); focusinHandler = null; }
+    if (windowFocusHandler) { window.removeEventListener("focus", windowFocusHandler, true); windowFocusHandler = null; }
+    if (visibilityHandler) { document.removeEventListener("visibilitychange", visibilityHandler, true); visibilityHandler = null; }
     // S-b: cancel any pending debounced/replayed engage so a late timer cannot
     // resurrect the torn-down host after teardown()/disable.
     if (engageDebounceTimer) { clearTimeout(engageDebounceTimer); engageDebounceTimer = null; }
     engageDebounceField = null;
+    engageDebounceForce = false;
     pendingEngageField = null;
+    pendingEngageForce = false;
   }
 
   // Full release on disable (review point R3): the instance becomes fully inert —
@@ -213,7 +222,7 @@ if (!window.__keygrain_inline_injected) {
   }
 
   // --- background bridge -------------------------------------------------------
-  // PREFER the promise-based API: browser.runtime.sendMessage(msg) on Firefox (MV2)
+  // PREFER the promise-based API: browser.runtime.sendMessage(msg) on Firefox MV3
   // and chrome.runtime.sendMessage(msg) on Chrome (MV3) both return a promise that
   // resolves with the background listener's returned/sent value. Firefox's inline
   // onMessage listener answers by RETURNING A PROMISE, which the old callback-form
@@ -252,6 +261,13 @@ if (!window.__keygrain_inline_injected) {
     return t === "password" || t === "email" || t === "text" || t === "tel" || t === "";
   }
 
+  function getAutofill() {
+    return globalThis.KeygrainAutofill || (typeof window !== "undefined" ? window.KeygrainAutofill : null);
+  }
+  function getInline() {
+    return globalThis.KeygrainInline || (typeof window !== "undefined" ? window.KeygrainInline : null);
+  }
+
   // A login field worth an icon: a visible+enabled+editable username-like field,
   // OR a visible+enabled+editable password field. Reuses the tested predicates
   // (isFillableUsernameDescriptor already bundles visible/enabled/editable; the
@@ -259,11 +275,12 @@ if (!window.__keygrain_inline_injected) {
   // ignores visibility). Pure logic delegated to KeygrainAutofill — no duplication.
   function isLoginFieldEl(el) {
     if (!cheapTagTypeGate(el)) return false;
-    if (!globalThis.KeygrainAutofill) return false;
-    const d = KeygrainAutofill.describeField(el, document.activeElement);
+    const af = getAutofill();
+    if (!af) return false;
+    const d = af.describeField(el, document.activeElement);
     if (!d) return false;
-    if (KeygrainAutofill.isFillableUsernameDescriptor(d)) return true;
-    return KeygrainAutofill.isPasswordDescriptor(d) && !!d.visible && !d.disabled && !d.readOnly;
+    if (af.isFillableUsernameDescriptor(d)) return true;
+    return af.isPasswordDescriptor(d) && !!d.visible && !d.disabled && !d.readOnly;
   }
 
   // Cheap tag/type pre-filter for the OTP path — like cheapTagTypeGate but ADDS "number"
@@ -280,10 +297,11 @@ if (!window.__keygrain_inline_injected) {
   // no logic duplication.
   function isOtpFieldEl(el) {
     if (!cheapOtpTagTypeGate(el)) return false;
-    if (!globalThis.KeygrainAutofill) return false;
-    const d = KeygrainAutofill.describeField(el, document.activeElement);
+    const af = getAutofill();
+    if (!af) return false;
+    const d = af.describeField(el, document.activeElement);
     if (!d) return false;
-    return KeygrainAutofill.isOtpDescriptor(d);
+    return af.isOtpDescriptor(d);
   }
 
   // Field-classification precedence (§D4). Returns "otp" | "login" | null:
@@ -333,18 +351,33 @@ if (!window.__keygrain_inline_injected) {
   // Engage a confirmed login field: ONE background round-trip for the redacted
   // {enabled,locked,accounts}; the icon state is decided by the tested pure helper
   // KeygrainInline.inlineIconState. Superseded engages (a newer field) abort.
-  async function engage(field) {
-    if (!field || field === currentField) return; // already engaged / in flight for this field
-    if (!globalThis.KeygrainInline) return;
+  async function engage(field, force = false) {
+    if (!field) return;
+    if (dropdownEl) return;
+    if (!force && field === currentField) {
+      if (iconEl && currentState !== "hidden") {
+        positionIcon();
+      }
+      return;
+    }
+    const inl = getInline();
+    if (!inl) return;
     const kind = classifyEngageField(field);
-    if (!kind) return; // no longer engageable (e.g. field changed between focusin and the debounce)
+    if (!kind) {
+      if (field === currentField) hideIcon();
+      return;
+    }
     // S-b IN-FLIGHT guard: only ONE getInlineMatches round-trip may be outstanding.
     // A re-entrant engage (a focus flip that beat the debounce, or a genuine tab to
     // a new field mid-round-trip) records the LATEST field and returns; it is
     // replayed when the outstanding request settles. This COLLAPSES re-entrant
     // calls to a single background decrypt at a time WITHOUT dropping the icon for
     // a genuinely-focused field.
-    if (engageInFlight) { pendingEngageField = field; return; }
+    if (engageInFlight) {
+      pendingEngageField = field;
+      pendingEngageForce = pendingEngageForce || force;
+      return;
+    }
     engageInFlight = true;
     currentField = field;
     let resp;
@@ -356,7 +389,7 @@ if (!window.__keygrain_inline_injected) {
     if (currentField === field) { // not superseded by a newer engage / not locked away
       const r = resp || {};
       const accounts = Array.isArray(r.accounts) ? r.accounts : [];
-      const state = KeygrainInline.inlineIconState({
+      const state = inl.inlineIconState({
         enabled: !!r.enabled,
         unlocked: !r.locked,
         hasLoginField: true,
@@ -371,8 +404,10 @@ if (!window.__keygrain_inline_injected) {
     // absorbs a no-op replay with no wasted round-trip).
     if (pendingEngageField) {
       const next = pendingEngageField;
+      const nextForce = pendingEngageForce;
       pendingEngageField = null;
-      engage(next);
+      pendingEngageForce = false;
+      engage(next, nextForce);
     }
   }
 
@@ -383,14 +418,17 @@ if (!window.__keygrain_inline_injected) {
   // engage() directly (immediate), so page-load icon latency is unchanged and the
   // pure harness (which drives engage via the initial scan and stubs setTimeout)
   // is unaffected.
-  function scheduleEngage(field) {
+  function scheduleEngage(field, force = false) {
     engageDebounceField = field;
+    engageDebounceForce = engageDebounceForce || force;
     if (engageDebounceTimer) clearTimeout(engageDebounceTimer);
     engageDebounceTimer = setTimeout(() => {
       engageDebounceTimer = null;
       const f = engageDebounceField;
+      const fForce = engageDebounceForce;
       engageDebounceField = null;
-      if (f) engage(f);
+      engageDebounceForce = false;
+      if (f) engage(f, fForce);
     }, ENGAGE_DEBOUNCE_MS);
   }
 
@@ -413,7 +451,22 @@ if (!window.__keygrain_inline_injected) {
     focusinHandler = onFocusIn;
     document.addEventListener("focusin", focusinHandler, true);
 
-    // 3. bounded MutationObserver for the initial dynamic-render window only
+    // 3. Tab focus / visibility re-anchor listeners
+    windowFocusHandler = () => {
+      if (currentField && document.contains(currentField)) {
+        positionIcon();
+      }
+    };
+    window.addEventListener("focus", windowFocusHandler, true);
+
+    visibilityHandler = () => {
+      if (document.visibilityState === "visible" && currentField && document.contains(currentField)) {
+        positionIcon();
+      }
+    };
+    document.addEventListener("visibilitychange", visibilityHandler, true);
+
+    // 4. bounded MutationObserver for the initial dynamic-render window only
     observer = new MutationObserver(() => {
       if (observerScheduled) return;
       observerScheduled = true;
@@ -516,7 +569,12 @@ if (!window.__keygrain_inline_injected) {
   // and is rejected (RH1). Synthetic .click() has isTrusted === false → rejected.
   function trustedPointer(e) {
     if (!e || e.isTrusted !== true) return false;
-    return document.elementFromPoint(e.clientX, e.clientY) === host;
+    const top = document.elementFromPoint(e.clientX, e.clientY);
+    if (top === host || (top && host.contains(top))) return true;
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    if (path.includes(host)) return true;
+    if (top === currentField) return true;
+    return false;
   }
 
   // CLICKJACKING GATE — pointer, part 1b (both endpoints). A pointer activation
@@ -584,11 +642,12 @@ if (!window.__keygrain_inline_injected) {
   // Toggle the account dropdown (only meaningful in the "active" state).
   function toggleDropdown() {
     if (dropdownEl) { closeDropdown(); return; }
-    if (currentState !== "active" || !globalThis.KeygrainInline) return;
+    const inl = getInline();
+    if (currentState !== "active" || !inl) return;
     // The content script knows the current registrable host; pass it so the pure
     // model can drop a secondary line that merely repeats the site (or the email).
     const host = (location.hostname || "").replace(/^www\./, "").toLowerCase();
-    const model = KeygrainInline.buildDropdownModel(currentAccounts, host);
+    const model = inl.buildDropdownModel(currentAccounts, host);
     if (!model.length) return;
     openDropdown(model);
   }
@@ -598,14 +657,14 @@ if (!window.__keygrain_inline_injected) {
   // '<img src=x onerror=...>' renders as inert text and cannot execute in our
   // isolated-world shadow (review point R1). The token is captured in the option's
   // click closure; it is NEVER written to a DOM attribute.
-  function openDropdown(model) {
+  function openDropdown(model, initialIndex = -1) {
     ddModel = model;
     ddOptions = [];
-    // Open with NO option pre-highlighted (F1 clickjacking fix): activeIndex = -1
+    // Open with NO option pre-highlighted by default (F1 clickjacking fix): activeIndex = -1
     // is the no-selection sentinel, so an occluded, focused dropdown + one stray
-    // Enter fills NOTHING. Deliberate selection (Arrow keys then Enter, or a click)
-    // is required. dd.focus() below is KEPT so listbox a11y is preserved.
-    activeIndex = -1;
+    // Enter fills NOTHING. When explicitly triggered via keyboard shortcut, initialIndex = 0
+    // allows immediate Arrow/Enter navigation.
+    activeIndex = initialIndex;
 
     const dd = document.createElement("div");
     dd.className = "kg-dd";
@@ -673,7 +732,9 @@ if (!window.__keygrain_inline_injected) {
 
     // Dismiss on a pointerdown outside our host (does not fire for the opening
     // click, which already dispatched before this listener was added).
+    dropdownOpenedAt = Date.now();
     outsideHandler = (e) => {
+      if (Date.now() - dropdownOpenedAt < 150) return;
       if (document.elementFromPoint(e.clientX, e.clientY) !== host) closeDropdown();
     };
     document.addEventListener("pointerdown", outsideHandler, true);
@@ -754,7 +815,9 @@ if (!window.__keygrain_inline_injected) {
     dropdownEl = hint;
     root.appendChild(hint);
     positionDropdown();
+    dropdownOpenedAt = Date.now();
     outsideHandler = (e) => {
+      if (Date.now() - dropdownOpenedAt < 150) return;
       if (document.elementFromPoint(e.clientX, e.clientY) !== host) closeDropdown();
     };
     document.addEventListener("pointerdown", outsideHandler, true);
@@ -783,14 +846,77 @@ if (!window.__keygrain_inline_injected) {
     dropdownEl.style.setProperty("top", top + "px", "important");
   }
 
-  // --- background broadcasts (review point R4) ---
-  // Handles ONLY the two inline broadcast actions and returns undefined for
-  // everything else, so content.js's {action:"fill"} / {action:"getFillContext"}
-  // sendResponse is undisturbed (both listeners coexist in the one isolated world).
-  function onRuntimeMessage(msg) {
+  async function triggerDropdownOnDemand(kind = "login") {
+    const inl = getInline();
+    if (!inl) return false;
+
+    // 1. Target field selection: prefer active element if engageable, else first login field
+    let field = document.activeElement;
+    if (!field || !classifyEngageField(field)) {
+      field = findFirstEngageableField();
+    }
+    if (!field) {
+      const inputs = document.querySelectorAll("input");
+      for (const input of inputs) {
+        const type = (input.type || "text").toLowerCase();
+        if (type !== "hidden" && type !== "submit" && type !== "button" && type !== "checkbox" && type !== "radio") {
+          field = input;
+          break;
+        }
+      }
+    }
+    if (!field) return false;
+
+    // 2. Query matches on-demand from background
+    const resp = await sendMsg({ action: kind === "otp" ? "getInlineOtpMatches" : "getInlineMatches", onDemand: true });
+    const r = resp || {};
+    const accounts = Array.isArray(r.accounts) ? r.accounts : [];
+    if (!accounts.length) return false;
+
+    // 3. Ensure shadow host, set field and accounts
+    ensureHost();
+    currentField = field;
+    currentAccounts = accounts;
+    currentKind = kind;
+    currentState = "active";
+    showIcon(field, "active");
+
+    const host = (location.hostname || "").replace(/^www\./, "").toLowerCase();
+    const model = inl.buildDropdownModel(currentAccounts, host);
+    if (!model.length) return false;
+
+    // 4. Open dropdown with option 0 pre-selected for instant Arrow/Enter navigation
+    openDropdown(model, 0);
+    if (dropdownEl && dropdownEl.focus) {
+      dropdownEl.focus();
+    }
+    return true;
+  }
+
+  // --- background broadcasts & commands (review point R4) ---
+  // Handles inline broadcast actions and on-demand dropdown trigger from shortcuts.
+  // Returns undefined for everything else so content.js listeners are undisturbed.
+  function onRuntimeMessage(msg, sender, sendResponse) {
     if (!msg) return;
-    if (msg.action === "inlineLockChanged" && msg.locked) { hideIcon(); return; }
+    if (msg.action === "inlineLockChanged") {
+      const active = document.activeElement;
+      const target = (active && classifyEngageField(active) ? active : null)
+        || (currentField && document.contains(currentField) ? currentField : null)
+        || findFirstEngageableField();
+      if (target) {
+        engage(target, true);
+      } else {
+        hideIcon();
+      }
+      return;
+    }
     if (msg.action === "inlineDisabled") { teardown(); return; }
+    if (msg.action === "triggerInlineDropdown") {
+      triggerDropdownOnDemand(msg.kind || "login").then((ok) => {
+        if (typeof sendResponse === "function") sendResponse({ ok: !!ok });
+      });
+      return true;
+    }
     // not ours — leave for content.js; do NOT sendResponse, do NOT return true
   }
   chrome.runtime.onMessage.addListener(onRuntimeMessage);

@@ -6,18 +6,50 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
+  <!-- Loading Screen -->
+  <div id="loading-screen" class="loading-screen" role="status" aria-live="polite">
+    <div class="loading-spinner" aria-hidden="true"></div>
+    <p class="loading-text">Loading Keygrain...</p>
+  </div>
+
   <!-- Lock Screen -->
-  <div id="lock-screen">
+  <div id="lock-screen" class="hidden">
     <h1><img src="icons/icon-16.png" alt="" width="16" height="16" style="vertical-align:middle"> Keygrain</h1>
     <p class="lock-explanation">Keygrain derives unique passwords from your secret rather than storing generated passwords. The extension stores service configuration and other local account/device state, including an encrypted service payload locally. Optional PIN unlock stores an encrypted copy of your secret locally.</p>
+
+    <div class="auth-mode-toggle" role="tablist" aria-label="Account mode">
+      <button type="button" id="auth-mode-unlock" class="auth-tab active" role="tab" aria-selected="true">Unlock Account</button>
+      <button type="button" id="auth-mode-create" class="auth-tab" role="tab" aria-selected="false">Create New Account</button>
+    </div>
+
     <label for="email">Email</label>
     <input type="email" id="email" autocomplete="email" required>
+
+    <!-- Confirm Email Group (only visible in Create Account mode) -->
+    <div id="create-confirm-email-group" class="hidden">
+      <label for="confirm-email">Confirm Email</label>
+      <input type="email" id="confirm-email" autocomplete="email" required>
+      <p id="confirm-email-match" class="fingerprint-explanation"></p>
+    </div>
+
     <label for="secret">Master Secret</label>
     <input type="password" id="secret" autocomplete="off" required>
     <div id="strength-meter" class="strength-meter" aria-live="polite"></div>
     <div id="fingerprint" role="img" aria-label="Secret fingerprint"></div>
     <p class="fingerprint-explanation">Visual fingerprint — same colors confirm same secret.</p>
+
+    <!-- Confirm Secret Group (only visible in Create Account mode) -->
+    <div id="create-confirm-group" class="hidden">
+      <label for="confirm-secret">Confirm Master Secret</label>
+      <input type="password" id="confirm-secret" autocomplete="off" required>
+      <div id="confirm-fingerprint" role="img" aria-label="Confirm secret fingerprint"></div>
+      <p id="confirm-secret-match" class="fingerprint-explanation"></p>
+    </div>
+
+    <div id="lock-error" class="lock-error hidden" role="alert" aria-live="polite"></div>
+
     <button id="unlock-btn" disabled>Unlock</button>
+    <button id="create-btn" class="hidden" disabled>Create Account</button>
     <a href="#" id="try-demo" class="demo-link">Try Demo</a>
     <a href="#" id="switch-account-lock" class="demo-link hidden">Use a different account</a>
   </div>
@@ -32,11 +64,24 @@
     <a href="#" id="pin-use-secret" class="pin-link">Use master secret instead</a>
   </div>
 
+  <!-- Post-unlock Update-Required Screen -->
+  <div id="update-required-screen" class="hidden" role="status" aria-live="polite" tabindex="-1">
+    <h1><img src="icons/icon-16.png" alt="" width="16" height="16" style="vertical-align:middle"> Keygrain</h1>
+    <p>Unlock completed. Update Keygrain to continue.</p>
+  </div>
+
   <!-- Main Screen -->
   <div id="main-screen" class="hidden">
     <div id="demo-banner" class="hidden" role="status" aria-live="polite">Demo mode — using example data. Your real passwords are not affected.</div>
     <div class="header">
-      <h1><img src="icons/icon-16.png" alt="" width="16" height="16" style="vertical-align:middle"> Keygrain</h1>
+      <div class="header-title">
+        <h1><img src="icons/icon-16.png" alt="" width="16" height="16" style="vertical-align:middle"> Keygrain</h1>
+      </div>
+      <div id="lease-status" class="lease-status hidden">
+        <span id="lease-state-badge" class="lease-state-badge" title="Current session state">Unlocked</span>
+        <span id="lease-countdown" class="lease-countdown" title="Time remaining in current session"></span>
+        <button id="header-extend-btn" class="header-lease-btn" type="button" title="Extend current session">Extend</button>
+      </div>
       <div class="header-actions">
         <button id="menu-btn" title="Menu" aria-label="Menu" aria-haspopup="true" aria-expanded="false" aria-controls="menu-dropdown"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3h14v1.5H1zm0 4.25h14v1.5H1zm0 4.25h14v1.5H1z"/></svg></button>
         <button id="settings-btn" title="Settings" aria-label="Settings"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6.32-1.9l-1.09-.63a5.4 5.4 0 0 0 0-1.94l1.09-.63a.5.5 0 0 0 .18-.68l-1-1.73a.5.5 0 0 0-.68-.18l-1.09.63a5.3 5.3 0 0 0-1.68-.97V1.5a.5.5 0 0 0-.5-.5h-2a.5.5 0 0 0-.5.5v1.26a5.3 5.3 0 0 0-1.68.97L4.28 3.1a.5.5 0 0 0-.68.18l-1 1.73a.5.5 0 0 0 .18.68l1.09.63a5.4 5.4 0 0 0 0 1.94l-1.09.63a.5.5 0 0 0-.18.68l1 1.73a.5.5 0 0 0 .68.18l1.09-.63c.5.42 1.07.74 1.68.97v1.26a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .5-.5v-1.26a5.3 5.3 0 0 0 1.68-.97l1.09.63a.5.5 0 0 0 .68-.18l1-1.73a.5.5 0 0 0-.18-.68z"/></svg></button>
@@ -60,16 +105,19 @@
     </div>
 
     <div id="menu-dropdown" class="hidden" role="menu">
+      <button id="menu-lock-secret" role="menuitem">Lock master secret (Keep metadata)</button>
+      <button id="menu-lock-all" role="menuitem">Lock completely</button>
+      <hr>
       <button id="export-btn" role="menuitem">Export to file</button>
       <button id="import-btn" role="menuitem">Import from file</button>
       <button id="migrate-btn" role="menuitem">Migrate from another manager</button>
+      <button id="wallet-btn" role="menuitem">HD Wallets</button>
       <hr>
       <button id="help-btn" role="menuitem">Help</button>
-      <button id="wallet-btn" role="menuitem">Wallet</button>
       <hr>
       <button id="offline-btn" role="menuitemcheckbox" aria-checked="false">Offline mode</button>
       <button id="switch-account-btn" role="menuitem">Switch account</button>
-      <button id="delete-server-btn" role="menuitem" class="menu-danger">Delete server data</button>
+      <button id="delete-server-btn" role="menuitem">Delete server data</button>
     </div>
 
     <input type="text" id="search" placeholder="Search services..." autocomplete="off">
@@ -91,20 +139,20 @@
 
     <div id="quick-fill" class="hidden"></div>
 
-    <div id="service-list"></div>
+    <div id="service-list" role="listbox"></div>
 
     <div id="sync-indicator" class="hidden">
       <span id="sync-time"></span>
       <span id="sync-error" class="hidden" title="Click for details"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> Sync failed</span>
     </div>
 
-    <button id="add-btn" title="Add service" aria-label="Add service"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm3.5 7.75h-2.75v2.75h-1.5V8.75H4.5v-1.5h2.75V4.5h1.5v2.75h2.75v1.5z"/></svg> Add service</button>
+    <button id="add-btn" class="hidden" title="Add service" aria-label="Add service"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm3.5 7.75h-2.75v2.75h-1.5V8.75H4.5v-1.5h2.75V4.5h1.5v2.75h2.75v1.5z"/></svg> Add service</button>
   </div>
 
   <!-- Add Service Dialog -->
   <div id="add-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="add-dialog-title">
     <h2 id="add-dialog-title">Add Service</h2>
-    <p style="color: var(--text-secondary); font-size: 0.85rem; margin: 0 0 8px 0;">ℹ️ Changing any field will generate a different password.</p>
+    <div id="add-edit-warning" class="hidden" style="background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning-text); border-radius: var(--radius-md); padding: 8px 10px; margin-bottom: 8px; font-size: 0.82rem; font-weight: 500;" role="alert">⚠️ Changing site, length, symbols, or counter will generate a different password.</div>
     <label for="add-name">Service name</label>
     <input type="text" id="add-name" required>
     <div id="add-rule-indicator" class="hidden" aria-live="polite"></div>
@@ -120,33 +168,52 @@
       <input type="text" id="add-symbols" value="!@#$%&*-_=+?">
       <div id="add-pw-warning" class="hidden" aria-live="polite"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> Changing these options will change your generated password.</div>
     </details>
+
+    <details id="add-totp-section">
+      <summary><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.75 4.75a.75.75 0 0 0-1.5 0v3.5c0 .414.336.75.75.75h3.5a.75.75 0 0 0 0-1.5H8.75V4.75z"/></svg> One-Time Codes (TOTP)</summary>
+      <label for="add-totp-mode">TOTP Mode</label>
+      <select id="add-totp-mode">
+        <option value="">None</option>
+        <option value="derived">Deterministic (from master secret)</option>
+        <option value="stored">Stored seed (from website)</option>
+      </select>
+      <div id="add-totp-seed-group" class="hidden">
+        <label for="add-totp-seed">Base32 Seed / Key</label>
+        <input type="text" id="add-totp-seed" placeholder="JBSWY3DPEHPK3PXP" autocomplete="off" spellcheck="false">
+      </div>
+    </details>
+
+    <details id="add-ssh-section">
+      <summary><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 1a4.5 4.5 0 0 0-4.5 4.5c0 1.77 1.02 3.3 2.5 4.03V14a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-4.47c1.48-.73 2.5-2.26 2.5-4.03A4.5 4.5 0 0 0 7.5 1zm0 2a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z"/></svg> SSH Key</summary>
+      <label for="add-ssh-keyname">Key Name</label>
+      <input type="text" id="add-ssh-keyname" placeholder="e.g. github or id_ed25519" autocomplete="off" spellcheck="false">
+    </details>
+
     <div id="rotate-section" class="hidden">
       <label for="add-counter">Password version</label>
       <input type="number" id="add-counter" min="1" step="1" value="1">
       <button id="rotate-btn" type="button"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13.65 2.35A7.96 7.96 0 0 0 8 0C3.58 0 0 3.58 0 8s3.58 8 8 8a7.99 7.99 0 0 0 7.56-5.34h-2.03A6 6 0 1 1 8 2a5.98 5.98 0 0 1 4.24 1.76L9 7h7V0l-2.35 2.35z"/></svg> Rotate password</button>
       <button id="mark-rotated-btn" type="button" class="hidden"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.35 6.35l-4 4a.5.5 0 0 1-.7 0l-2-2a.5.5 0 1 1 .7-.7L7 9.29l3.65-3.64a.5.5 0 1 1 .7.7z"/></svg> Mark as rotated</button>
     </div>
-    <details id="add-totp-section">
-      <summary>🔑 TOTP (Authenticator)</summary>
-      <label for="add-totp-mode">Mode</label>
-      <select id="add-totp-mode">
-        <option value="">None</option>
-        <option value="stored">Stored (paste seed/URI)</option>
-        <option value="derived">Derived (from master secret)</option>
-      </select>
-      <div id="add-totp-seed-group">
-        <label for="add-totp-seed">Seed / otpauth:// URI</label>
-        <input type="text" id="add-totp-seed" placeholder="Base32, hex, or otpauth:// URI">
-      </div>
-    </details>
-    <details id="add-ssh-section">
-      <summary>🔐 SSH Key</summary>
-      <label for="add-ssh-keyname">Key name</label>
-      <input type="text" id="add-ssh-keyname" placeholder="e.g. github, work-servers">
-    </details>
+
     <div class="dialog-actions">
       <button id="add-cancel">Cancel</button>
       <button id="add-confirm">Add</button>
+    </div>
+  </div>
+
+  <!-- Reauth / Unlock Dialog -->
+  <div id="reauth-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="reauth-dialog-title">
+    <h2 id="reauth-dialog-title">Master Secret Required</h2>
+    <p style="color: var(--text-secondary); font-size: 0.85rem; margin: 0 0 8px 0;">Enter your master secret to perform this operation.</p>
+    <label for="reauth-secret">Master secret</label>
+    <input type="password" id="reauth-secret" placeholder="Enter master secret" autocomplete="off" required>
+    <div id="reauth-fingerprint" role="img" aria-label="Secret fingerprint"></div>
+    <p class="fingerprint-explanation">Visual fingerprint — same colors confirm same secret.</p>
+    <p id="reauth-error" class="pin-error hidden" style="color: var(--danger, #ef4444); font-size: 0.85rem; margin: 4px 0 0 0;" aria-live="polite"></p>
+    <div class="dialog-actions">
+      <button id="reauth-cancel">Cancel</button>
+      <button id="reauth-confirm" class="btn-primary">Unlock</button>
     </div>
   </div>
 
@@ -199,8 +266,30 @@
   <!-- Settings Panel -->
   <div id="settings-panel" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title">
     <h2 id="settings-dialog-title">Settings</h2>
-    <label for="set-lock-timeout">Auto-lock timeout (minutes)</label>
-    <input type="number" id="set-lock-timeout" min="1" value="15">
+    <div id="secret-timeout-group">
+      <label for="set-lock-timeout">Master secret timeout</label>
+      <select id="set-lock-timeout">
+        <option value="30">30 seconds</option>
+        <option value="60" selected>1 minute (default)</option>
+        <option value="120">2 minutes</option>
+        <option value="300">5 minutes</option>
+        <option value="600">10 minutes</option>
+        <option value="900">15 minutes</option>
+        <option value="1800">30 minutes</option>
+      </select>
+    </div>
+    <div id="metadata-timeout-group">
+      <label for="set-metadata-timeout">Metadata cache timeout (services & usernames)</label>
+      <select id="set-metadata-timeout">
+        <option value="0">Disabled (lock completely on secret expiry)</option>
+        <option value="900">15 minutes</option>
+        <option value="1800">30 minutes</option>
+        <option value="3600">1 hour</option>
+        <option value="14400" selected>4 hours (default)</option>
+        <option value="28800">8 hours</option>
+        <option value="86400">24 hours</option>
+      </select>
+    </div>
     <label for="set-length">Default password length</label>
     <input type="number" id="set-length" min="8" value="20">
     <label for="set-symbols">Default symbols</label>
@@ -235,12 +324,46 @@
         <button id="shortcut-open-btn" type="button">Open shortcuts page</button>
         <button id="shortcut-copy-url" type="button">Copy URL</button>
       </div>
-      <p id="shortcut-contextmenu-note" class="shortcut-subnote">You can also right-click any field and choose "Fill with Keygrain".</p>
     </div>
     <hr>
     <button id="reset-btn" class="btn-danger">Reset Keygrain</button>
     <p class="version-info" id="version-display"></p>
     <p class="version-info"><a href="https://github.com/iheb-eddine/keygrain" target="_blank" rel="noopener" aria-label="MIT · Source Code — on GitHub">MIT · Source Code</a></p>
+  </div>
+
+  <!-- SSH Keypair Dialog -->
+  <div id="ssh-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="ssh-dialog-title">
+    <h2 id="ssh-dialog-title">SSH Keypair</h2>
+    <p id="ssh-dialog-subtitle" style="font-size: 0.85rem; color: var(--text-secondary); margin-top: -8px; margin-bottom: 12px;"></p>
+    
+    <!-- Public Key Section -->
+    <div class="ssh-key-section">
+      <label for="ssh-dialog-pubkey">Public Key (authorized_keys)</label>
+      <textarea id="ssh-dialog-pubkey" readonly rows="3" class="ssh-key-textarea"></textarea>
+      <div class="ssh-action-group">
+        <button type="button" id="ssh-copy-pub-btn" class="btn-secondary ssh-action-btn">Copy Public Key</button>
+        <button type="button" id="ssh-download-pub-btn" class="btn-secondary ssh-action-btn">Download .pub</button>
+      </div>
+    </div>
+
+    <!-- Private Key Section (with privacy shield) -->
+    <div class="ssh-key-section" style="margin-top: 14px;">
+      <div class="ssh-key-header">
+        <label for="ssh-dialog-privkey" style="margin: 0;">Private Key (OpenSSH PEM)</label>
+        <button type="button" id="ssh-toggle-priv-btn" class="btn-secondary ssh-reveal-btn">Show on screen</button>
+      </div>
+      <div class="ssh-action-group">
+        <button type="button" id="ssh-copy-priv-btn" class="btn-secondary ssh-action-btn">Copy Private Key</button>
+        <button type="button" id="ssh-download-priv-btn" class="btn-secondary ssh-action-btn">Download Key</button>
+      </div>
+      <div id="ssh-privkey-container" class="hidden" style="margin-top: 6px;">
+        <textarea id="ssh-dialog-privkey" readonly rows="6" class="ssh-key-textarea"></textarea>
+      </div>
+    </div>
+
+    <div class="dialog-actions" style="margin-top: 16px;">
+      <button type="button" id="ssh-dialog-close">Close</button>
+    </div>
   </div>
 
   <!-- Reset Confirmation Dialog -->
@@ -300,13 +423,12 @@
   <script src="keygrain.js"></script>
   <script src="totp.js"></script>
   <script src="ssh.js"></script>
-  <script src="sync.js"></script>
   <script src="autofill.js"></script>
   <script src="popup-crypto.js"></script>
+  <script src="worker-ingress.js"></script>
   <script src="popup-dialog.js"></script>
   <script src="popup-search.js"></script>
-  <script src="popup-rules.js"></script>
-  <script src="popup-breach.js"></script>
+  <script src="diagnostics.js"></script>
   <script src="migration-state.js"></script>
   <script src="popup.js"></script>
 </body>

@@ -11,69 +11,121 @@
     "avalanche": "m/44'/60'/0'/0/0"
   };
 
-  // Retrieve secret from background
-  let secret = null;
-  let email = null;
-
   async function sendMsg(msg) {
     try { return await chrome.runtime.sendMessage(msg); }
     catch { await new Promise(r => setTimeout(r, 100)); return chrome.runtime.sendMessage(msg); }
   }
 
+  let email = null;
+  let isFullUnlocked = false;
+  let sessionSecret = null;
+
   try {
-    const resp = await sendMsg({action: "getSecret"});
-    secret = resp?.secret || null;
-    const emailResp = await sendMsg({action: "getEmail"});
-    email = emailResp?.email || null;
-  } catch { secret = null; }
+    const stateResp = await sendMsg({action: "getUnlockState"});
+    if ((stateResp?.ok && stateResp.result?.isUnlocked) || stateResp?.isUnlocked || stateResp?.unlocked) {
+      email = stateResp?.result?.email || (await sendMsg({action: "getEmail"}))?.result?.email || null;
+      isFullUnlocked = true;
+    } else {
+      const state2 = await sendMsg({action: "state"});
+      if (state2?.ok && state2.state === "full") {
+        email = state2.accountEmail || (await sendMsg({action: "getEmail"}))?.result?.email || null;
+        isFullUnlocked = true;
+      } else if (state2?.ok && state2.state === "metadata") {
+        email = state2.accountEmail || (await sendMsg({action: "getEmail"}))?.result?.email || null;
+        isFullUnlocked = false;
+      }
+    }
+  } catch (_) {}
 
-  const lockedMsg = document.getElementById("locked-msg");
-  const walletUI = document.getElementById("wallet-ui");
-
-  if (!secret) {
-    lockedMsg.classList.remove("hidden");
-    return;
+  if (isFullUnlocked) {
+    try {
+      const secResp = await sendMsg({action: "getSecret"});
+      if (secResp?.secret) {
+        sessionSecret = secResp.secret;
+      }
+    } catch (_) {}
   }
-  walletUI.classList.remove("hidden");
+
+  const walletUI = document.getElementById("wallet-ui");
+  if (walletUI) walletUI.classList.remove("hidden");
 
   // Pre-fill email
   const emailInput = document.getElementById("wallet-email");
-  if (email) emailInput.value = email;
+  if (email && emailInput) emailInput.value = email;
+
+  const secretGroup = document.getElementById("secret-group");
+  const sessionUnlockedBadge = document.getElementById("session-unlocked-badge");
+  const unlockedEmailBadge = document.getElementById("unlocked-email-badge");
+  const secretInput = document.getElementById("wallet-secret");
+  const fingerprintEl = document.getElementById("wallet-fingerprint");
+
+  if (isFullUnlocked && sessionSecret) {
+    if (secretGroup) secretGroup.classList.add("hidden");
+    if (sessionUnlockedBadge) sessionUnlockedBadge.classList.remove("hidden");
+    if (unlockedEmailBadge && email) unlockedEmailBadge.textContent = email;
+  } else {
+    if (secretGroup) secretGroup.classList.remove("hidden");
+    if (sessionUnlockedBadge) sessionUnlockedBadge.classList.add("hidden");
+  }
+
+  async function updateFingerprint() {
+    const val = secretInput ? secretInput.value : "";
+    if (!val || !fingerprintEl) {
+      if (fingerprintEl) fingerprintEl.textContent = "";
+      return;
+    }
+    try {
+      const colors = await secretFingerprint(val);
+      fingerprintEl.textContent = "";
+      for (const idx of colors) {
+        const seg = document.createElement("div");
+        seg.style.flex = "1";
+        seg.style.backgroundColor = WONG_PALETTE[idx];
+        fingerprintEl.appendChild(seg);
+      }
+    } catch (_) {
+      fingerprintEl.textContent = "";
+    }
+  }
+
+  secretInput?.addEventListener("input", updateFingerprint);
 
   // Load and display saved wallets
   async function loadWalletList() {
     const listBody = document.getElementById("wallet-list-body");
     const listTable = document.getElementById("wallet-list-table");
     const listEmpty = document.getElementById("wallet-list-empty");
-    if (!email) return;
     try {
-      const key = await deriveStorageKey(secret, email);
-      const data = await chrome.storage.local.get("services");
-      const stored = data.services;
-      if (stored && stored.version === 2) {
-        const iv = base64ToArrayBuffer(stored.iv);
-        const ciphertext = base64ToArrayBuffer(stored.ciphertext);
-        const aad = new TextEncoder().encode(email.toLowerCase());
-        const cryptoKey = await crypto.subtle.importKey("raw", key, {name: "AES-GCM"}, false, ["decrypt"]);
-        const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
-        const parsed = JSON.parse(new TextDecoder().decode(decrypted));
-        const walletsList = parsed.wallets || [];
-        if (walletsList.length > 0) {
-          listEmpty.classList.add("hidden");
-          listTable.classList.remove("hidden");
+      const resp = await sendMsg({action: "getSavedWallets"});
+      const walletsList = resp?.result?.wallets || resp?.wallets || [];
+      if (walletsList.length > 0) {
+        listEmpty?.classList.add("hidden");
+        listTable?.classList.remove("hidden");
+        if (listBody) {
           listBody.innerHTML = "";
           walletsList.forEach(w => {
             const tr = document.createElement("tr");
+            tr.title = "Click to load parameters";
             const td1 = document.createElement("td"); td1.textContent = w.wallet_name || "";
             const td2 = document.createElement("td"); td2.textContent = w.chain || "";
             const td3 = document.createElement("td"); td3.textContent = w.counter || 1;
             const td4 = document.createElement("td"); td4.textContent = w.created_at ? new Date(w.created_at).toLocaleDateString() : "\u2014";
             tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
+            tr.addEventListener("click", () => {
+              if (nameInput) nameInput.value = w.wallet_name || "";
+              if (chainSelect) chainSelect.value = w.chain || "bitcoin";
+              if (counterInput) counterInput.value = w.counter || 1;
+              if (w.email && emailInput) emailInput.value = w.email;
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            });
             listBody.appendChild(tr);
           });
         }
+      } else {
+        listTable?.classList.add("hidden");
+        listEmpty?.classList.remove("hidden");
       }
-    } catch { /* ignore decryption errors */ }
+    } catch { /* ignore load errors */ }
   }
   loadWalletList();
 
@@ -96,7 +148,7 @@
   let mnemonicValue = null;
 
   // 5-second delay after checkbox
-  confirmCheck.addEventListener("change", () => {
+  confirmCheck?.addEventListener("change", () => {
     if (confirmCheck.checked) {
       deriveBtn.disabled = true;
       let remaining = 5;
@@ -120,19 +172,29 @@
     }
   });
 
-    deriveBtn.addEventListener("click", async () => {
+  deriveBtn?.addEventListener("click", async () => {
     errorMsg.classList.add("hidden");
+    let secret = secretInput ? secretInput.value : "";
+    if (!secret && isFullUnlocked && sessionSecret) {
+      secret = sessionSecret;
+    }
     const walletName = nameInput.value.trim().toLowerCase();
     const chain = chainSelect.value;
     const counter = parseInt(counterInput.value, 10);
+    const em = emailInput.value.trim();
 
-    if (!walletName || !/^[a-z0-9\-]+$/.test(walletName)) {
-      errorMsg.textContent = "Wallet name must match [a-z0-9-]+";
+    if (!em) {
+      errorMsg.textContent = "Email is required.";
       errorMsg.classList.remove("hidden");
       return;
     }
-    if (!emailInput.value.trim()) {
-      errorMsg.textContent = "Email is required.";
+    if (!secret) {
+      errorMsg.textContent = "Master secret is required.";
+      errorMsg.classList.remove("hidden");
+      return;
+    }
+    if (!walletName || !/^[a-z0-9\-]+$/.test(walletName)) {
+      errorMsg.textContent = "Wallet name must match [a-z0-9-]+";
       errorMsg.classList.remove("hidden");
       return;
     }
@@ -145,13 +207,9 @@
     deriveBtn.disabled = true;
     deriveBtn.textContent = "Deriving...";
     try {
-      mnemonicValue = await deriveWalletMnemonic(secret, emailInput.value.trim(), {
-        walletName, chain, counter
-      });
-      // SECURITY NOTE: Mnemonic is displayed as plaintext DOM nodes for up to 60 seconds.
-      // JS strings are immutable and cannot be zeroed; DOM text persists until GC.
-      // Mitigations: auto-clear timer, pagehide/beforeunload clear, extension-only context
-      // (no web page content scripts can access extension pages).
+      const mnemonic = await deriveWalletMnemonic(secret, em, { walletName, chain, counter });
+      mnemonicValue = mnemonic;
+
       const words = mnemonicValue.split(" ");
       mnemonicGrid.innerHTML = "";
       words.forEach((w, i) => {
@@ -169,14 +227,24 @@
       clearBtn.classList.remove("hidden");
       startAutoClear();
 
-      // Persist wallet entry and audit log
-      await saveWalletDerivation(secret, emailInput.value.trim(), walletName, chain, counter);
+      // Persist derived wallet to encrypted container
+      try {
+        await sendMsg({
+          action: "saveWallet",
+          walletName,
+          chain,
+          counter,
+          email: em,
+        });
+        await loadWalletList();
+      } catch (_) {}
     } catch (e) {
-      errorMsg.textContent = e.message;
+      errorMsg.textContent = e.message || "Derivation failed.";
       errorMsg.classList.remove("hidden");
+    } finally {
+      deriveBtn.textContent = "Derive Mnemonic";
+      deriveBtn.disabled = !confirmCheck.checked;
     }
-    deriveBtn.textContent = "Derive Mnemonic";
-    deriveBtn.disabled = !confirmCheck.checked;
   });
 
   function clearMnemonic() {
@@ -184,6 +252,8 @@
     mnemonicGrid.innerHTML = "";
     resultDiv.classList.add("hidden");
     clearBtn.classList.add("hidden");
+    if (secretInput) secretInput.value = "";
+    if (fingerprintEl) fingerprintEl.textContent = "";
     if (autoClearTimer) { clearTimeout(autoClearTimer); autoClearTimer = null; }
     if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
   }
@@ -201,62 +271,7 @@
     autoClearTimer = setTimeout(clearMnemonic, 60000);
   }
 
-  clearBtn.addEventListener("click", clearMnemonic);
+  clearBtn?.addEventListener("click", clearMnemonic);
 
-  // Clear on page hide/close
-  document.addEventListener("pagehide", clearMnemonic);
-  window.addEventListener("beforeunload", clearMnemonic);
-
-  async function deriveStorageKey(sec, em) {
-    const enc = new TextEncoder();
-    const strengthened = await strengthenSecret(sec, em);
-    const message = enc.encode(em.toLowerCase() + ":keygrain-local-storage");
-    return hmacSHA256(strengthened, message);
-  }
-
-  async function saveWalletDerivation(sec, em, walletName, chain, counter) {
-    const key = await deriveStorageKey(sec, em);
-    try {
-      const data = await chrome.storage.local.get("services");
-      const stored = data.services;
-      let services = [], walletsList = [], auditLog = [];
-
-      if (stored && stored.version === 2) {
-        const iv = base64ToArrayBuffer(stored.iv);
-        const ciphertext = base64ToArrayBuffer(stored.ciphertext);
-        const aad = new TextEncoder().encode(em.toLowerCase());
-        const cryptoKey = await crypto.subtle.importKey("raw", key, {name: "AES-GCM"}, false, ["decrypt"]);
-        const decrypted = await crypto.subtle.decrypt({name: "AES-GCM", iv, additionalData: aad}, cryptoKey, ciphertext);
-        const parsed = JSON.parse(new TextDecoder().decode(decrypted));
-        services = parsed.services || parsed || [];
-        walletsList = parsed.wallets || [];
-        auditLog = parsed.wallet_audit_log || [];
-      }
-
-      // Add/update wallet entry
-      const wKey = walletName.toLowerCase() + ":" + chain.toLowerCase();
-      const idx = walletsList.findIndex(w => (w.wallet_name.toLowerCase() + ":" + w.chain.toLowerCase()) === wKey);
-      if (idx >= 0) {
-        const existing = walletsList[idx];
-        if (existing.counter !== counter || existing.email !== em) {
-          walletsList[idx] = {...existing, counter, email: em, updated_at: new Date().toISOString()};
-        }
-      } else {
-        walletsList.push({wallet_name: walletName, chain, counter, email: em, mode: "keygrain", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), notes: ""});
-      }
-
-      // Append audit log
-      auditLog.push({action: "derive", wallet_name: walletName, chain, counter, timestamp: new Date().toISOString(), verification: "passed"});
-
-      // Re-encrypt and save
-      const iv2 = crypto.getRandomValues(new Uint8Array(12));
-      const aad2 = new TextEncoder().encode(em.toLowerCase());
-      const plaintext = new TextEncoder().encode(JSON.stringify({version: 1, services, wallets: walletsList, wallet_audit_log: auditLog}));
-      const cryptoKey2 = await crypto.subtle.importKey("raw", key, {name: "AES-GCM"}, false, ["encrypt"]);
-      const ciphertext2 = await crypto.subtle.encrypt({name: "AES-GCM", iv: iv2, additionalData: aad2}, cryptoKey2, plaintext);
-      await chrome.storage.local.set({services: {version: 2, iv: arrayBufferToBase64(iv2), ciphertext: arrayBufferToBase64(ciphertext2)}});
-    } finally {
-      key.fill(0);
-    }
-  }
+  window.addEventListener("pagehide", clearMnemonic);
 })();

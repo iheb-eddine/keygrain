@@ -3,7 +3,7 @@
 // No top-level DOM / window / chrome access. Loaded into three environments and
 // must be safe in all of them (mirrors autofill.js):
 //   - Chrome MV3 service worker   (importScripts in chrome/background.js)
-//   - Firefox MV2 background page (manifest background.scripts)
+//   - Firefox MV3 event page (manifest background.scripts)
 //   - the Node test VM            (buildContext() in tests/test.mjs)
 // (In Increment B it is also loaded into the content isolated world.)
 // Helpers are exposed via globalThis.KeygrainInline so they resolve regardless
@@ -94,8 +94,8 @@ function inlineIconState(ctx) {
   const c = ctx || {};
   if (!c.enabled) return "hidden";
   if (!c.hasLoginField) return "hidden";
-  if (!c.unlocked) return "locked";
   if (c.hasMatches) return "active";
+  if (!c.unlocked) return "locked";
   return "hidden";
 }
 
@@ -139,3 +139,7 @@ globalThis.KeygrainInline = {
   sanitizeAccountForContent,
   buildDropdownModel,
 };
+if (typeof window !== "undefined") {
+  window.KeygrainInline = globalThis.KeygrainInline;
+}
+

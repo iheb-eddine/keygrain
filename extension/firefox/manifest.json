@@ -1,5 +1,5 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "Keygrain",
   "version": "1.3.0",
   "description": "Deterministic password generator with encrypted sync. Your master password never leaves your device.",
@@ -8,14 +8,17 @@
     "activeTab",
     "alarms",
     "contextMenus",
+    "scripting",
     "storage",
-    "tabs",
+    "tabs"
+  ],
+  "host_permissions": [
     "https://keygrain.com/*"
   ],
-  "optional_permissions": [
+  "optional_host_permissions": [
     "*://*/*"
   ],
-  "browser_action": {
+  "action": {
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",
@@ -24,7 +27,7 @@
     }
   },
   "background": {
-    "scripts": ["lib/public_suffix_list.js", "public-suffix.js", "lib/hash-wasm-argon2.js", "keygrain.js", "unlock-state.js", "totp.js", "sync.js", "autofill.js", "inline-autofill.js", "background.js"]
+    "scripts": ["lib/public_suffix_list.js", "public-suffix.js", "lib/hash-wasm-argon2.js", "keygrain.js", "unlock-state.js", "popup-crypto.js", "worker-ingress.js", "worker-update-version.js", "lib/tweetnacl.js", "ssh.js", "bip39-wordlist.js", "wallet.js", "browser-owner.js", "diagnostics.js", "totp.js", "sync.js", "autofill.js", "inline-autofill.js", "background.js"]
   },
   "commands": {
     "fill_credentials": {
@@ -40,7 +43,9 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "content_security_policy": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'"
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "extension@keygrain.com",

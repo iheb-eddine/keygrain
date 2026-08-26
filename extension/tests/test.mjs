@@ -197,7 +197,7 @@ await test('PSL: missing generated data produces unavailable state with no safe 
   assert.equal(runInContext("KeygrainPublicSuffix.isSafeForMatching('google.com')", isolated), false);
 });
 
-await test('PSL loading: every browser/page consumer loads data before helper and consumers', async () => {
+await test('PSL loading: every browser/page consumer loads data before helper and owner', async () => {
   const chrome = readFileSync(resolve(root, 'extension/chrome/background.js'), 'utf8');
   const firefox = readFileSync(resolve(root, 'extension/firefox/background.js'), 'utf8');
   const manifest = JSON.parse(readFileSync(resolve(root, 'extension/firefox/manifest.json'), 'utf8'));
@@ -206,76 +206,148 @@ await test('PSL loading: every browser/page consumer loads data before helper an
     assert.ok(text.indexOf(before) >= 0, `missing ${before}`);
     assert.ok(text.indexOf(after) > text.indexOf(before), `${before} must precede ${after}`);
   };
+  // The background owner is loaded only after the data/classifier foundation;
+  // consumers cannot reach an unavailable or unclassified PSL through it.
   ordered(chrome, 'lib/public_suffix_list.js', 'public-suffix.js');
-  ordered(chrome, 'public-suffix.js', 'autofill.js');
+  ordered(chrome, 'public-suffix.js', 'browser-owner.js');
+  ordered(chrome, 'browser-owner.js', 'autofill.js');
   ordered(migration, 'src="lib/public_suffix_list.js"', 'src="public-suffix.js"');
   ordered(migration, 'src="public-suffix.js"', 'src="migrate.js"');
   const scripts = manifest.background.scripts;
   assert.ok(scripts.indexOf('lib/public_suffix_list.js') < scripts.indexOf('public-suffix.js'));
-  assert.ok(scripts.indexOf('public-suffix.js') < scripts.indexOf('autofill.js'));
-  assert.ok(scripts.indexOf('autofill.js') < scripts.indexOf('background.js'));
-  const chromeInjected = [...chrome.matchAll(/files: \[([^\]]+)\]/g)].map(m => m[1]).filter(s => s.includes('autofill.js'));
-  assert.equal(chromeInjected.length, 3, 'credentials, OTP, and focused-OTP Chrome paths must be covered');
-  for (const list of chromeInjected) {
-    ordered(list, 'lib/public_suffix_list.js', 'public-suffix.js');
-    ordered(list, 'public-suffix.js', 'autofill.js');
-  }
-  const count = (text, needle) => text.split(needle).length - 1;
-  assert.equal(count(firefox, 'file: "lib/public_suffix_list.js"'), 3);
-  assert.equal(count(firefox, 'file: "public-suffix.js"'), 3);
-  assert.equal(count(firefox, 'file: "autofill.js"'), 3);
-  for (const match of firefox.matchAll(/file: "autofill\.js"/g)) {
-    const prefix = firefox.slice(Math.max(0, match.index - 260), match.index);
-    assert.ok(prefix.includes('file: "lib/public_suffix_list.js"') && prefix.includes('file: "public-suffix.js"'));
-  }
-  const inlineStart = chrome.indexOf('const INLINE_JS');
-  assert.ok(inlineStart >= 0 && chrome.indexOf('lib/public_suffix_list.js', inlineStart) < chrome.indexOf('autofill.js', inlineStart));
-  const ffInlineStart = firefox.indexOf('const INLINE_JS');
-  assert.ok(ffInlineStart >= 0 && firefox.indexOf('lib/public_suffix_list.js', ffInlineStart) < firefox.indexOf('autofill.js', ffInlineStart));
+  assert.ok(scripts.indexOf('public-suffix.js') < scripts.indexOf('browser-owner.js'));
+  assert.ok(scripts.indexOf('browser-owner.js') < scripts.indexOf('background.js'));
   assert.equal(readFileSync(resolve(shared, 'public-suffix.js'), 'utf8').includes('fetch('), false);
 });
 
 await test('background matcher wiring: both browsers gate every unsafe path and preserve exact/suffix policy', async () => {
   for (const file of ['chrome/background.js', 'firefox/background.js']) {
     const source = readFileSync(resolve(root, 'extension', file), 'utf8');
-    assert.ok(source.includes('function serviceSite(service)'));
-    assert.ok(source.includes('isSafeMatchingSite'));
+    const browser = file.startsWith('chrome') ? 'chrome' : 'firefox';
+    assert.match(source, new RegExp(`KeygrainBrowserOwner\\.createOwner`), `${file}: owner is not instantiated`);
+    assert.match(source, /dispatchLegacyOrPhaseB\(sender, (?:chrome|browser)\.runtime\.id, message, ["'](?:chrome|firefox)["'], KEYGRAIN_EXTENSION_ORIGIN\)/,
+      `${file}: actions do not cross the owner dispatcher with the runtime origin`);
+    assert.match(source, /KeygrainBrowserOwner\.POPUP_RESERVED_ACTIONS\.includes\(action\)/,
+      `${file}: finite reserved registry is not wired into owner dispatch`);
+    assert.match(source, /action === ["']sync["']/,
+      `${file}: preserved sync migration boundary is not explicit`);
     assert.equal(source.includes('(s.site || s.name).toLowerCase()'), false);
-    for (const marker of ['updateBadge', 'autofillForTab', 'autofillOtpForTab', 'injectIntoOpenSavedTabs', 'fillInline', 'fillInlineOtp']) {
-      assert.ok(source.includes(marker), `${file}: ${marker}`);
+    // These are forbidden direct-consumer boundaries, not required legacy markers.
+    for (const directBoundary of [
+      /function\s+autofillForTab\s*\(/,
+      /function\s+autofillOtpForTab\s*\(/,
+      /function\s+injectIntoOpenSavedTabs\s*\(/,
+    ]) assert.doesNotMatch(source, directBoundary, `${file}: direct consumer ownership returned`);
+    if (browser === 'firefox') {
+      assert.match(source, /browser\.scripting\.registerContentScripts\(\[/,
+        `${file}: Firefox MV3 registration API is missing`);
+      assert.match(source, /browser\.scripting\.unregisterContentScripts\(/,
+        `${file}: Firefox MV3 unregister API is missing`);
+      assert.match(source, /browser\.scripting\.executeScript\(\{target:\s*\{tabId:/,
+        `${file}: Firefox MV3 executeScript target is missing`);
+      assert.match(source, /persistAcrossSessions:\s*false/,
+        `${file}: Firefox MV3 registration must not persist across sessions`);
+      assert.doesNotMatch(source, /browser\.browserAction|browser\.tabs\.executeScript|browser\.contentScripts\.register/,
+        `${file}: Firefox legacy runtime API remains`);
     }
-    assert.ok(source.includes('registerInline'));
+    assert.doesNotMatch(source, /(?:chrome|browser)\.tabs\.executeScript\s*\(/,
+      `${file}: direct legacy executeScript ownership returned`);
+
+    const isolated = createContext({
+      URL, Set, Map, Object, Array, String, Number, RegExp, Math, JSON, Error, Date, console,
+      Promise, Uint8Array, ArrayBuffer, TextEncoder, TextDecoder,
+    });
+    runInContext('globalThis = this;', isolated);
+    for (const dependency of ['unlock-state.js', 'browser-owner.js']) {
+      runInContext(readFileSync(resolve(shared, dependency), 'utf8'), isolated);
+    }
+    runInContext(`
+      globalThis.storageCalls = {get: 0, set: 0, remove: 0};
+      globalThis.ownerStorage = {
+        get: async () => { storageCalls.get++; return {}; },
+        set: async () => { storageCalls.set++; },
+        remove: async () => { storageCalls.remove++; },
+      };
+      globalThis.owner = KeygrainBrowserOwner.createOwner({
+        adapter: {browser: ${JSON.stringify(browser)}, storage: ownerStorage},
+        settings: {version: 1, fullLeaseSeconds: 60, metadataTailSeconds: 14400},
+        clock: () => 1000,
+      });
+    `, isolated);
+    const beforeSnapshot = JSON.parse(runInContext('JSON.stringify(owner.snapshot())', isolated));
+    const sender = browser === 'chrome'
+      ? '{tab:{id:7},frameId:0,documentId:"doc-1",url:"https://example.com/login"}'
+      : '{tab:{id:7},frameId:0,url:"https://example.com/login"}';
+    const expectedContext = {ok: false, code: 'KEYGRAIN_CONTEXT_ERROR', message: 'This action is not available from this context.'};
+    for (const action of ['fillInline', 'fillInlineOtp', 'sync']) {
+      const result = JSON.parse(runInContext(
+        `JSON.stringify(owner.dispatchLegacyOrPhaseB(${sender}, "extension-id", {action: ${JSON.stringify(action)}}, ${JSON.stringify(browser)}))`,
+        isolated
+      ));
+      assert.deepEqual(result, expectedContext, `${file}: ${action} must fail closed at the context boundary`);
+      assert.deepEqual(JSON.parse(runInContext('JSON.stringify(owner.snapshot())', isolated)), beforeSnapshot,
+        `${file}: ${action} mutated manager authorization`);
+      assert.deepEqual(JSON.parse(runInContext('JSON.stringify(storageCalls)', isolated)), {get: 0, set: 0, remove: 0},
+        `${file}: ${action} touched storage`);
+      assert.equal(Object.prototype.hasOwnProperty.call(result, 'secret'), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(result, 'records'), false);
+    }
+    // A trusted privileged action still reaches the owner's generic unsupported-action
+    // boundary; it must not become a permissive success or expose manager data.
+    const trusted = browser === 'chrome'
+      ? '{id:"extension-id",url:"chrome-extension://extension-id/popup.html"}'
+      : '{id:"extension-id",url:"moz-extension://9f2b7f8a-2d2e-4d9f-a7f3-4b7dd9a2d111/popup.html"}';
+    const trustedOrigin = browser === 'chrome'
+      ? 'chrome-extension://extension-id'
+      : 'moz-extension://9f2b7f8a-2d2e-4d9f-a7f3-4b7dd9a2d111';
+    const migration = JSON.parse(runInContext(
+      `JSON.stringify(owner.dispatchLegacyOrPhaseB(${trusted}, "extension-id", Object.assign(Object.create(null), {action:"getOwnerState"}), ${JSON.stringify(browser)}, ${JSON.stringify(trustedOrigin)}))`,
+      isolated
+    ));
+    assert.deepEqual(migration, {ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'},
+      `${file}: unsupported owner action must remain migration-required`);
+    assert.deepEqual(JSON.parse(runInContext('JSON.stringify(owner.snapshot())', isolated)), beforeSnapshot,
+      `${file}: generic fail-closed dispatch mutated manager authorization`);
+    assert.deepEqual(JSON.parse(runInContext('JSON.stringify(storageCalls)', isolated)), {get: 0, set: 0, remove: 0},
+      `${file}: generic fail-closed dispatch touched storage`);
   }
-  const domainHarness = (file) => {
+  // Domain matching now lives in the shared pure matcher consumed by both
+  // browser environments; the backgrounds no longer own a duplicate helper.
+  const matcherHarness = () => {
     const isolated = createContext({URL, Set, Object, Array, String, Number, RegExp, Math, JSON, console});
     for (const dependency of ['lib/public_suffix_list.js', 'public-suffix.js', 'autofill.js']) {
       runInContext(readFileSync(resolve(shared, dependency), 'utf8'), isolated);
     }
-    const source = readFileSync(resolve(root, 'extension', file), 'utf8');
-    const start = source.indexOf('// Domain matching');
-    const end = source.indexOf('async function hmacSHA256', start);
-    runInContext(source.slice(start, end), isolated);
     return isolated;
   };
-  for (const file of ['chrome/background.js', 'firefox/background.js']) {
-    const isolated = domainHarness(file);
-    for (const expression of [
-      "domainMatches('example.com', 'example.com')",
-      "domainMatches('example.com', 'app.example.com')",
-      "domainMatches('foo.github.io', 'foo.github.io')",
-      "domainMatches('localhost', 'localhost')",
-      "domainMatches('192.168.1.1', '192.168.1.1')",
-    ]) assert.equal(runInContext(expression, isolated), true, `${file}: ${expression}`);
-    for (const expression of [
-      "domainMatches('github.io', 'github.io')",
-      "domainMatches('github.io', 'tenant.github.io')",
-      "domainMatches('foo.github.io', 'other.github.io')",
-      "domainMatches('localhost', 'foo.localhost')",
-      "domainMatches('192.168.1.1', 'x.192.168.1.1')",
-      "domainMatches('foo.internal', 'foo.internal')",
-      "domainMatches({hostile: true}, 'example.com')",
-    ]) assert.equal(runInContext(expression, isolated), false, `${file}: ${expression}`);
+  const isolated = matcherHarness();
+  for (const [site, host] of [
+    ['example.com', 'example.com'],
+    ['example.com', 'app.example.com'],
+    ['foo.github.io', 'foo.github.io'],
+    ['localhost', 'localhost'],
+    ['192.168.1.1', '192.168.1.1'],
+  ]) {
+    assert.equal(runInContext(`KeygrainAutofill.filterMostSpecific([{site:${JSON.stringify(site)}}], ${JSON.stringify(host)}).length`, isolated), 1,
+      `safe matcher must retain ${site} -> ${host}`);
   }
+  for (const [site, host] of [
+    ['github.io', 'github.io'],
+    ['github.io', 'tenant.github.io'],
+    ['foo.github.io', 'other.github.io'],
+    ['localhost', 'foo.localhost'],
+    ['192.168.1.1', 'x.192.168.1.1'],
+    ['foo.internal', 'foo.internal'],
+    ['example.com:443', 'example.com'],
+    ['https://example.com', 'example.com'],
+    ['user@example.com/path', 'example.com'],
+    ['[::1', '::1'],
+  ]) {
+    assert.equal(runInContext(`KeygrainAutofill.filterMostSpecific([{site:${JSON.stringify(site)}}], ${JSON.stringify(host)}).length`, isolated), 0,
+      `unsafe matcher must reject ${site} -> ${host}`);
+  }
+  assert.equal(runInContext("KeygrainAutofill.filterMostSpecific([{site:{hostile:true}}], 'example.com').length", isolated), 0,
+    'hostile site objects must fail closed');
 });
 
 // --- Load test vectors ---
@@ -2100,6 +2172,7 @@ function loadInlineUI({ accounts = [
       removeAttribute(k) { delete this._attrs[k]; },
       appendChild(c) { c.parentNode = this; this.children.push(c); return c; },
       removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; },
+      remove() { if (this.parentNode && this.parentNode.removeChild) this.parentNode.removeChild(this); },
       addEventListener(t, fn) { on(this, t, fn); },
       removeEventListener(t, fn) { off(this, t, fn); },
       getBoundingClientRect() { return { top: 100, left: 100, right: 200, bottom: 130, width: 100, height: 30 }; },
@@ -2128,16 +2201,17 @@ function loadInlineUI({ accounts = [
     addEventListener() {}, removeEventListener() {}, contains() { return true; },
     elementFromPoint: () => state.host, // simulate: pointer hits our host (topmost)
   };
+  state.msgListeners = [];
   const win = { innerWidth: 1000, innerHeight: 800, addEventListener() {}, removeEventListener() {} };
   const chrome = {
     runtime: {
       lastError: undefined,
       sendMessage: (msg, cb) => { state.sent.push(msg); if (msg && (msg.action === 'getInlineMatches' || msg.action === 'getInlineOtpMatches')) { cb && cb({ enabled: true, locked: false, accounts }); return; } cb && cb(undefined); },
-      onMessage: { addListener() {}, removeListener() {} },
+      onMessage: { addListener(fn) { state.msgListeners.push(fn); }, removeListener() {} },
     },
   };
   // Firefox-style promise API. The new sendMsg() PREFERS browser.runtime.sendMessage(msg)
-  // (returns a promise), matching the real Firefox MV2 background that answers by
+  // (returns a promise), matching the Firefox MV3 event page that answers by
   // RETURNING A PROMISE from its inline onMessage listener. This makes the behavioral
   // tests exercise the exact code path the Firefox fix relies on, and pushes to
   // state.sent EXACTLY ONCE per call (the callback fallback below is never reached).
@@ -2145,7 +2219,7 @@ function loadInlineUI({ accounts = [
     runtime: {
       lastError: undefined,
       sendMessage: (msg) => { state.sent.push(msg); return Promise.resolve(msg && (msg.action === 'getInlineMatches' || msg.action === 'getInlineOtpMatches') ? { enabled: true, locked: false, accounts } : undefined); },
-      onMessage: { addListener() {}, removeListener() {} },
+      onMessage: { addListener(fn) { state.msgListeners.push(fn); }, removeListener() {} },
     },
   };
 
@@ -2165,8 +2239,33 @@ function loadInlineUI({ accounts = [
 
   return {
     state, fire,
-    getIcon: () => (state.root ? state.root.children.find(e => e.className === 'kg-icon') : null),
-    getDropdown: () => (state.root ? state.root.children.find(e => e.className === 'kg-dd') : null),
+    triggerMessage: (msg) => new Promise((resolve) => {
+      let resolved = false;
+      for (const fn of state.msgListeners) {
+        const res = fn(msg, {}, (r) => {
+          if (!resolved) {
+            resolved = true;
+            resolve(r);
+          }
+        });
+        if (res && typeof res.then === 'function') {
+          res.then((r) => {
+            if (!resolved) {
+              resolved = true;
+              resolve(r);
+            }
+          });
+        }
+      }
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve(undefined);
+        }
+      }, 50);
+    }),
+    getIcon: () => (state.root ? (state.root.children.find(e => e.className === 'kg-icon') || null) : null),
+    getDropdown: () => (state.root ? (state.root.children.find(e => e.className === 'kg-dd') || null) : null),
     rows: (dd) => dd.children.filter(e => e.className === 'kg-opt'),
     filled: () => state.sent.filter(m => m && m.action === 'fillInline'),
     ev: (over) => Object.assign({ isTrusted: true, clientX: 150, clientY: 115, preventDefault() {} }, over),
@@ -2331,6 +2430,96 @@ await test('U5/login revert-guard: a login field still routes to getInlineMatche
   assert.equal(h.state.sent.some(m => m && m.action === 'getInlineOtpMatches'), false, 'login must NOT use the OTP query');
   assert.equal(h.state.sent.filter(m => m && m.action === 'fillInline').length, 1, 'login selection sends fillInline');
   assert.equal(h.state.sent.some(m => m && m.action === 'fillInlineOtp'), false, 'login must NOT send fillInlineOtp');
+});
+
+// Part 3 — On-Demand Multi-Account Dropdown & Pure Keyboard Selection Flow
+await test('On-demand trigger: triggerInlineDropdown opens dropdown and pre-selects index 0', async () => {
+  const h = loadInlineUI({
+    accounts: [
+      { token: 't1', email: 'user1@example.com', name: 'Personal' },
+      { token: 't2', email: 'user2@example.com', name: 'Work' },
+    ],
+  });
+  await flushUI();
+  const resp = await h.triggerMessage({ action: 'triggerInlineDropdown', kind: 'login' });
+  await flushUI();
+  assert.equal(resp?.ok, true);
+  const dd = h.getDropdown();
+  assert.ok(dd, 'dropdown should be open');
+  const rows = h.rows(dd);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].getAttribute('aria-selected'), 'true', 'first row is highlighted');
+  assert.equal(rows[1].getAttribute('aria-selected'), 'false', 'second row is not highlighted');
+});
+
+await test('On-demand trigger keyboard selection: pressing Enter immediately fills highlighted account', async () => {
+  const h = loadInlineUI({
+    accounts: [
+      { token: 't1', email: 'user1@example.com', name: 'Personal' },
+      { token: 't2', email: 'user2@example.com', name: 'Work' },
+    ],
+  });
+  await flushUI();
+  await h.triggerMessage({ action: 'triggerInlineDropdown', kind: 'login' });
+  await flushUI();
+  const dd = h.getDropdown();
+  h.fire(dd, 'keydown', h.ev({ key: 'Enter' }));
+  await flushUI();
+  const fills = h.filled();
+  assert.equal(fills.length, 1);
+  assert.equal(fills[0].token, 't1');
+});
+
+await test('On-demand trigger keyboard navigation: ArrowDown then Enter selects second account', async () => {
+  const h = loadInlineUI({
+    accounts: [
+      { token: 't1', email: 'user1@example.com', name: 'Personal' },
+      { token: 't2', email: 'user2@example.com', name: 'Work' },
+    ],
+  });
+  await flushUI();
+  await h.triggerMessage({ action: 'triggerInlineDropdown', kind: 'login' });
+  await flushUI();
+  const dd = h.getDropdown();
+  h.fire(dd, 'keydown', h.ev({ key: 'ArrowDown' }));
+  h.fire(dd, 'keydown', h.ev({ key: 'Enter' }));
+  await flushUI();
+  const fills = h.filled();
+  assert.equal(fills.length, 1);
+  assert.equal(fills[0].token, 't2');
+});
+
+await test('On-demand trigger keyboard dismiss: Escape closes dropdown', async () => {
+  const h = loadInlineUI({
+    accounts: [
+      { token: 't1', email: 'user1@example.com', name: 'Personal' },
+      { token: 't2', email: 'user2@example.com', name: 'Work' },
+    ],
+  });
+  await flushUI();
+  await h.triggerMessage({ action: 'triggerInlineDropdown', kind: 'login' });
+  await flushUI();
+  let dd = h.getDropdown();
+  assert.ok(dd, 'dropdown open before escape');
+  h.fire(dd, 'keydown', h.ev({ key: 'Escape' }));
+  await flushUI();
+  dd = h.getDropdown();
+  assert.equal(dd, null, 'dropdown closed after escape');
+});
+
+await test('Inline lock changed: inlineLockChanged triggers re-engagement and queries matches', async () => {
+  const h = loadInlineUI({
+    accounts: [
+      { token: 't1', email: 'user1@example.com', name: 'Personal' },
+    ],
+  });
+  await flushUI();
+  const initialMatchesCount = h.state.sent.filter(m => m && m.action === 'getInlineMatches').length;
+  assert.ok(initialMatchesCount >= 1, 'initial getInlineMatches query sent');
+  await h.triggerMessage({ action: 'inlineLockChanged' });
+  await flushUI();
+  const afterMatchesCount = h.state.sent.filter(m => m && m.action === 'getInlineMatches').length;
+  assert.ok(afterMatchesCount > initialMatchesCount, 'inlineLockChanged triggered fresh getInlineMatches query');
 });
 
 // ============================================================
@@ -3279,187 +3468,329 @@ function bodyOf(file, opening, indent) {
   return src.slice(start, end);
 }
 
-await test('popup.js reacts to migration changes through the services blob', async () => {
-  const body = bodyOf('popup.js', 'chrome.storage.onChanged.addListener', 2);
-  assert.match(body, /if \(!externalChanges\(changes, area, \["services"\], selfWrites\)\.length\) return;/,
-    'the listener does not use services as its only migration source');
-  assert.match(body, /refreshFromStorage\(\)/, 'a services change does not refresh the popup');
-  assert.doesNotMatch(body, /migrationStopped/, 'the popup still watches obsolete abandonment state');
+await test('popup.js renders owner responses instead of reacting to a services blob', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /chrome\.storage|storage\.local|decryptServices|refreshFromStorage|loadServices/,
+    'popup still owns storage/decrypt refresh authority');
+  assert.match(source, /const FIXED_ACTIONS = Object\.freeze\(\{[\s\S]*state:\s*["']keygrain\.popup\.state["'][\s\S]*metadata:\s*["']keygrain\.popup\.metadata["'][\s\S]*serviceList:\s*["']keygrain\.popup\.serviceList["']/,
+    'popup fixed owner actions are not declared');
+  const elements = new Map();
+  const makeElement = () => {
+    const element = {children: [], textContent: '', value: '', disabled: false, dataset: {},
+      appendChild(child) { this.children.push(child); return child; },
+      addEventListener() {}, focus() {},
+      classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}};
+    return element;
+  };
+  const document = {
+    getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); },
+    createElement() { return makeElement(); },
+  };
+  const state = {ok: true, result: {state: 'full', stateGeneration: 1, authorizationGeneration: 1,
+    fullExpiresAt: 2000, metadataExpiresAt: null, fullWarningAt: 1500, metadataWarningAt: null,
+    metadataAvailable: false, hasFullData: true}};
+  const list = {ok: true, result: {items: [{id: 'svc-1', site: 'example.com', name: 'Example', email: 'user@example.com'}]}};
+  const options = {ok: true, result: {items: [{selectionToken: 'password-token', id: 'svc-1', site: 'example.com', name: 'Example', email: 'user@example.com'}]}};
+  const messages = [];
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console,
+    setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; },
+      sendMessage(message) {
+        messages.push({...message});
+        if (message.action === 'keygrain.popup.state') return Promise.resolve(state);
+        if (message.action === 'keygrain.popup.serviceList') return Promise.resolve(list);
+        if (message.action === 'keygrain.password.options') return Promise.resolve(options);
+        return Promise.resolve({ok: true, result: {items: []}});
+      }}}});
+  await runInContext(source, context);
+  assert.deepEqual(messages.slice(0, 3).map(message => message.action), [
+    'keygrain.popup.state', 'keygrain.popup.serviceList', 'keygrain.popup.state',
+  ], 'popup must validate state/list/state before bounded password options');
+  assert.equal(elements.get('service-list').children.length, 1, 'owner projection was not rendered');
+  assert.equal(elements.get('service-list').children[0].className, 'service-item', 'password row uses compact service hierarchy');
+  assert.equal(elements.get('service-list').children[0].children[1].className, 'service-actions', 'password row has compact actions');
+  assert.ok(elements.get('service-list').children[0].children[1].children.length >= 2, 'password row exposes action controls');
+  assert.equal(Object.prototype.hasOwnProperty.call(elements.get('service-list').children[0].dataset, 'selectionToken'), false,
+    'selection capability is held only by the action closure');
 });
 
-await test('popup.js migration label and click route use the same pending count', async () => {
-  const label = bodyOf('popup.js', 'function updateMigrateBtn()', 2);
-  const click = bodyOf('popup.js', 'document.getElementById("migrate-btn").addEventListener', 2);
-  assert.match(label, /KeygrainMigration\.countPending\(services\)/,
-    'the menu label does not count the encrypted service list');
-  assert.match(click, /KeygrainMigration\.countPending\(services\)/,
-    'the click route disagrees with the label');
-  assert.doesNotMatch(label + click, /migrationStopped|storedStoppedIds|\bstopped\b/,
-    'obsolete abandonment state still affects the popup');
+await test('popup migration controls are disabled and owner migration failures fail closed', async () => {
+  const source = sourceOf('popup.js');
+  assert.match(source, /function disableUnimplementedControls\(\)/);
+  assert.match(source, /function showUpdateRequiredScreen\(\)/);
+  assert.match(source, /KEYGRAIN_CONSUMER_MIGRATION_REQUIRED/);
+  const elements = new Map();
+  const makeElement = () => ({children: [], textContent: '', value: '', disabled: false, hidden: false, dataset: {}, attributes: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, setAttribute(name, value) { this.attributes[name] = String(value); }, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); }, createElement() { return makeElement(); }};
+  const messages = [];
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console,
+    setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; },
+      sendMessage(message) { messages.push({...message}); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }}}});
+  await runInContext(source, context);
+  for (const id of ['pin-unlock-btn', 'pin-use-secret', 'pin-skip-btn', 'pin-save-btn']) {
+    assert.equal(elements.get(id).disabled, true, `${id} is disabled while unsupported`);
+    assert.equal(elements.get(id).hidden, true, `${id} is hidden while unsupported`);
+    assert.equal(elements.get(id).attributes['aria-hidden'], 'true', `${id} is aria-hidden while unsupported`);
+  }
+  assert.equal(messages[0].action, 'keygrain.popup.state');
+  assert.equal(elements.get('update-required-screen').classList.contains('hidden'), false,
+    'migration-required owner response did not fail closed to update-required UI');
 });
 
-await test('popup.js keeps the legacy migrationStopped key account-scoped for cleanup', async () => {
-  const scoped = /const ACCOUNT_SCOPED_KEYS = \[([\s\S]*?)\];/.exec(sourceOf('popup.js'));
-  assert.ok(scoped, 'ACCOUNT_SCOPED_KEYS not found');
-  assert.ok(scoped[1].includes('"migrationStopped"'),
-    'an account wipe would leave the legacy key behind');
+await test('popup does not use legacy migrationStopped storage as account authority', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /migrationStopped|storedStoppedIds|ACCOUNT_SCOPED_KEYS|chrome\.storage|storage\.local/,
+    'popup retains legacy migration/account storage authority');
+  assert.match(source, /popupRenderItems/);
+  assert.doesNotMatch(source, /let\s+(?:currentSecret|currentEmail|services)\b/,
+    'popup retains a legacy account mirror');
+  const storageCalls = [];
+  const elements = new Map();
+  const makeElement = () => ({children: [], textContent: '', value: '', disabled: false, hidden: false, dataset: {}, attributes: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, setAttribute(name, value) { this.attributes[name] = String(value); }, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); }, createElement() { return makeElement(); }};
+  const messages = [];
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console,
+    setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; },
+      sendMessage(message) { messages.push({...message}); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }},
+      storage: {local: {get() { storageCalls.push('get'); }, set() { storageCalls.push('set'); }, remove() { storageCalls.push('remove'); }, clear() { storageCalls.push('clear'); }}}}});
+  await runInContext(source, context);
+  assert.deepEqual(storageCalls, [], 'popup touched storage while handling the owner response');
+  assert.deepEqual(messages.map(message => message.action), ['keygrain.popup.state']);
+  assert.equal(elements.get('service-list').children.length, 0, 'migration failure left render data behind');
 });
 
-await test('popup.js refresh reloads AND re-renders everything it invalidates', async () => {
-  const body = bodyOf('popup.js', 'async function refreshFromStorage()', 2);
-  assert.match(body, /await loadServices\(\)/, 'does not reload the blob');
-  // Reload without re-render leaves rows indexed into a replaced array; the menu count and the
-  // deletion-review banner both read state loadServices reassigns.
-  assert.match(body, /renderServiceList\(\)/, 'does not re-render the service list');
-  assert.match(body, /updateMigrateBtn\(\)/, 'does not refresh the migrate button count');
-  assert.match(body, /renderDeletionReview\(\)/, 'does not refresh the deletion-review banner');
-  // The generation check must not be able to skip the re-render: bailing out after
-  // loadServices has installed new arrays is what points Delete at the wrong service.
-  assert.match(body, /renderServiceList\(\)[\s\S]*?if \(gen !== blobWrites\) deferredRefresh = true;/,
-    'the generation check returns before re-rendering');
-  // Re-checked after the awaits, or a wipe that lands during the decrypt is re-installed.
-  assert.match(body, /await loadServices\(\)[\s\S]{0,400}?if \(accountWiped \|\| !currentSecret \|\| mainScreen\.classList\.contains\("hidden"\)\) return;/,
-    'does not re-verify the account after its awaits');
+await test('popup requestOwnerView rechecks owner state and renders only bounded projection', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /async function refreshFromStorage|await loadServices|renderServiceList|renderDeletionReview/,
+    'removed direct refresh machinery remains reachable');
+  assert.match(source, /async function requestOwnerView\(\)/);
+  assert.match(source, /const stateResponse = await sendMsg\(\{action: FIXED_ACTIONS\.state\}\)/);
+  assert.match(source, /const action = state\.state === ["']metadata["'] \? FIXED_ACTIONS\.metadata : FIXED_ACTIONS\.serviceList/);
+  assert.match(source, /const deliveryStateResponse = await sendMsg\(\{action: FIXED_ACTIONS\.state\}\)/);
+  assert.match(source, /validateItemsResponse\(response\)/);
+  assert.match(source, /KEYGRAIN_POPUP_MAX_ITEMS|KEYGRAIN_POPUP_MAX_FIELD_UTF8|KEYGRAIN_POPUP_MAX_RESPONSE_BYTES/);
+  assert.match(source, /if \(epoch !== renderEpoch\) return;/);
+  assert.match(source, /renderItems\(\[\]\)/);
+  const elements = new Map();
+  const makeElement = () => ({children: [], textContent: '', value: '', disabled: false, hidden: false, dataset: {}, attributes: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, setAttribute(name, value) { this.attributes[name] = String(value); }, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); }, createElement() { return makeElement(); }};
+  const state = {ok: true, result: {state: 'full', stateGeneration: 1, authorizationGeneration: 1,
+    fullExpiresAt: 2000, metadataExpiresAt: null, fullWarningAt: 1500, metadataWarningAt: null,
+    metadataAvailable: false, hasFullData: true}};
+  const malformedList = {ok: true, result: {items: [{id: 'svc', site: 'example.com', name: 'Example', email: null, extra: 'forbidden'}]}};
+  const messages = [];
+  const responses = [state, malformedList, state];
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console,
+    setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; },
+      sendMessage(message) { messages.push({...message}); return Promise.resolve(responses.shift()); }}}});
+  await runInContext(source, context);
+  assert.deepEqual(messages.map(message => message.action), ['keygrain.popup.state', 'keygrain.popup.serviceList', 'keygrain.popup.state']);
+  assert.equal(elements.get('service-list').children.length, 0, 'malformed owner projection was rendered');
+
+  const metadataElements = new Map();
+  const metadataDocument = {
+    getElementById(id) { if (!metadataElements.has(id)) metadataElements.set(id, makeElement()); return metadataElements.get(id); },
+    createElement() { return makeElement(); },
+  };
+  const metadataState = {ok: true, result: {state: 'metadata', stateGeneration: 2, authorizationGeneration: 2,
+    fullExpiresAt: null, metadataExpiresAt: 3000, fullWarningAt: null, metadataWarningAt: 2500,
+    metadataAvailable: true, hasFullData: false}};
+  const metadata = {ok: true, result: {items: [{id: 'meta-1', site: 'metadata.example', name: 'Metadata', email: 'owner@example.com'}]}};
+  const metadataMessages = [];
+  const metadataResponses = [metadataState, metadata, metadataState];
+  const metadataContext = createContext({document: metadataDocument, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console,
+    setTimeout, crypto: {randomUUID() { return 'popup-session-metadata'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; },
+      sendMessage(message) { metadataMessages.push({...message}); return Promise.resolve(metadataResponses.shift()); }}}});
+  await runInContext(source, metadataContext);
+  assert.deepEqual(metadataMessages, [
+    {action: 'keygrain.popup.state'}, {action: 'keygrain.popup.metadata'}, {action: 'keygrain.popup.state'},
+  ], 'metadata view must use only the fixed state/metadata/state actions');
+  assert.deepEqual(metadataState, {ok: true, result: {state: 'metadata', stateGeneration: 2, authorizationGeneration: 2,
+    fullExpiresAt: null, metadataExpiresAt: 3000, fullWarningAt: null, metadataWarningAt: 2500,
+    metadataAvailable: true, hasFullData: false}}, 'metadata state response changed shape');
+  assert.deepEqual(metadata, {ok: true, result: {items: [{id: 'meta-1', site: 'metadata.example', name: 'Metadata', email: 'owner@example.com'}]}},
+    'metadata response must remain the exact bounded four-field projection');
+  assert.deepEqual(Object.keys(metadata), ['ok', 'result']);
+  assert.deepEqual(Object.keys(metadata.result), ['items']);
+  assert.deepEqual(Object.keys(metadata.result.items[0]), ['id', 'site', 'name', 'email']);
+  for (const field of ['id', 'site', 'name', 'email']) {
+    assert.ok(metadata.result.items[0][field] === null || typeof metadata.result.items[0][field] === 'string',
+      `metadata ${field} must be null or string`);
+  }
+  for (const forbidden of ['token', 'matches', 'accounts', 'password', 'handle', 'selector', 'capture', 'lease', 'secret', 'fullRecord']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(metadata.result.items[0], forbidden), false,
+      `metadata projection exposed forbidden field ${forbidden}`);
+  }
+  assert.equal(metadataElements.get('service-list').children.length, 1, 'metadata owner projection was not rendered');
+  const metadataRow = metadataElements.get('service-list').children[0];
+  assert.deepEqual(metadataRow.dataset, {serviceId: 'meta-1'}, 'metadata DOM projection exposed unexpected dataset fields');
+  assert.equal(metadataRow.className, 'service-item');
+  assert.deepEqual(metadataRow.children[0].children.map(child => child.textContent), ['Metadata', 'metadata.example', 'owner@example.com'],
+    'metadata DOM projection did not retain the bounded fields');
 });
 
-await test('popup.js defers a blocked refresh instead of dropping it', async () => {
-  const body = bodyOf('popup.js', 'async function refreshFromStorage()', 2);
-  // Each guard covers a distinct hazard: an index-bound dialog would be retargeted, a revealed
-  // secret would be destroyed, an in-flight save would race the reload, and a sync in progress
-  // is about to overwrite whatever was rendered.
-  assert.match(body, /if \(indexBoundDialogOpen\(\) \|\| revealedOnScreen\(\) \|\| savesInFlight > 0 \|\| syncInProgress\) \{\s*\n\s*deferredRefresh = true;\s*\n\s*return;/,
-    'a blocked refresh is dropped rather than deferred');
-  assert.match(body, /if \(refreshInFlight\) \{ deferredRefresh = true; return; \}/,
-    'concurrent refreshes are not serialised, or the second one is dropped');
-  assert.match(body, /if \(isDemoMode \|\| accountWiped \|\| !currentSecret \|\| !currentEmail\) return;/,
-    'the entry guard changed');
-  assert.match(body, /const gen = blobWrites;/, 'does not record the write generation before reading');
-  // The two DOM guards must actually consult the DOM — stubbing either to false is invisible
-  // to every other assertion here.
-  assert.match(bodyOf('popup.js', 'function indexBoundDialogOpen()', 2),
-    /!addDialog\.classList\.contains\("hidden"\) \|\| !deleteDialog\.classList\.contains\("hidden"\)/,
-    'indexBoundDialogOpen no longer reads the dialogs');
-  assert.match(bodyOf('popup.js', 'function revealedOnScreen()', 2),
-    /serviceList\.querySelector\(["'].password-display["']\)[\s\S]*?totp-revealed/,
-    'revealedOnScreen no longer reads the DOM, or ignores a revealed TOTP code');
+await test('popup discards a stale owner response instead of retrying storage', async () => {
+  const source = sourceOf('popup.js');
+  assert.match(source, /const epoch = \+\+renderEpoch/);
+  assert.match(source, /if \(epoch !== renderEpoch\) return;/);
+  assert.match(source, /window\.addEventListener\(["']pagehide["']/);
+  assert.doesNotMatch(source, /deferredRefresh|refreshInFlight|indexBoundDialogOpen|revealedOnScreen|syncInProgress/);
+  const elements = new Map();
+  const events = {};
+  const makeElement = () => ({children: [], textContent: '', value: '', disabled: false, hidden: false, dataset: {}, attributes: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, setAttribute(name, value) { this.attributes[name] = String(value); }, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); }, createElement() { return makeElement(); }};
+  const state = {ok: true, result: {state: 'full', stateGeneration: 1, authorizationGeneration: 1,
+    fullExpiresAt: 2000, metadataExpiresAt: null, fullWarningAt: 1500, metadataWarningAt: null,
+    metadataAvailable: false, hasFullData: true}};
+  const list = {ok: true, result: {items: [{id: 'stale', site: 'stale.example', name: 'Stale', email: 'stale@example.com'}]}};
+  let releaseList;
+  const messages = [];
+  const context = createContext({document, window: {addEventListener(type, fn) { events[type] = fn; }}, TextEncoder, TextDecoder, URL, console,
+    setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; },
+      sendMessage(message) {
+        messages.push({...message});
+        if (message.action === 'keygrain.popup.state') return Promise.resolve(state);
+        return new Promise(resolve => { releaseList = resolve; });
+      }}}});
+  const execution = runInContext(source, context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(messages.map(message => message.action), ['keygrain.popup.state', 'keygrain.popup.serviceList']);
+  events.pagehide();
+  releaseList(list);
+  await execution;
+  assert.equal(elements.get('service-list').children.length, 0, 'stale owner response repopulated popup rows');
 });
 
-await test('popup.js flushes a deferred refresh from every blocker', async () => {
-  const src = sourceOf('popup.js');
-  // A deferral with no flush pins the popup stale until it is reopened. One flush per blocker,
-  // asserted at its own site rather than only by count, so a flush cannot be moved somewhere
-  // unreachable while the total stays right.
-  assert.equal([...src.matchAll(/if \(deferredRefresh[^)]*\) refreshFromStorage\(\);/g)].length, 6,
-    'the number of flush points changed — check every blocker still has one');
-  assert.match(bodyOf('popup.js', 'async function refreshFromStorage()', 2),
-    /refreshInFlight = false;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(deferredRefresh\) refreshFromStorage\(\);/,
-    'a refresh that blocked another one does not flush it');
-  assert.match(bodyOf('popup.js', 'async function saveServices()', 2),
-    /savesInFlight--;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(deferredRefresh && savesInFlight === 0\) refreshFromStorage\(\);/,
-    'a settled save does not flush the deferral it caused');
-  assert.match(bodyOf('popup.js', 'async function performAutoSync()', 2),
-    /syncInProgress = false;[\s\S]{0,400}?if \(deferredRefresh\) refreshFromStorage\(\);/,
-    'a failed sync does not flush the deferral it caused');
-  assert.match(bodyOf('popup.js', 'function closeIndexBoundDialog(dialog, state)', 2),
-    /closeDialog\(dialog, state\);\s*\n\s*if \(deferredRefresh\) refreshFromStorage\(\);/,
-    'closing an index-bound dialog does not flush');
-  // Both hide paths for a revealed secret: password and TOTP code.
-  assert.equal([...src.matchAll(/"Show (?:password|TOTP code) for " \+ svc\.name\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(deferredRefresh\) refreshFromStorage\(\);/g)].length, 2,
-    'hiding a revealed password or TOTP code does not flush the deferral it caused');
+await test('popup has no deferred refresh or direct mutation flush path', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /deferredRefresh|refreshInFlight|savesInFlight|syncInProgress|closeIndexBoundDialog|saveServices|resetConfirmBtn\.addEventListener/,
+    'legacy refresh/save/mutation blocker machinery remains');
+  assert.match(source, /let requestInFlight = false/);
+  assert.match(source, /if \(requestInFlight\) return/);
+  assert.match(source, /requestInFlight = false/);
+  assert.match(source, /disableUnimplementedControls\(\)/);
+  const elements = new Map();
+  const makeElement = () => ({children: [], textContent: '', value: '', disabled: false, hidden: false, dataset: {}, attributes: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, setAttribute(name, value) { this.attributes[name] = String(value); }, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); }, createElement() { return makeElement(); }};
+  const messages = [];
+  const state = {ok: true, result: {state: 'full', stateGeneration: 1, authorizationGeneration: 1,
+    fullExpiresAt: 2000, metadataExpiresAt: null, fullWarningAt: 1500, metadataWarningAt: null,
+    metadataAvailable: false, hasFullData: true}};
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console,
+    setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; },
+      sendMessage(message) { messages.push({...message}); if (message.action === 'keygrain.popup.state') return Promise.resolve(state); return new Promise(() => {}); }}}});
+  runInContext(source, context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(messages.map(message => message.action), ['keygrain.popup.state', 'keygrain.popup.serviceList'],
+    'popup did not stop at the owner-mediated in-flight request');
+  assert.equal(elements.get('service-list').children.length, 0);
 });
 
-await test('popup.js encrypts from a snapshot taken before its first await', async () => {
-  const body = bodyOf('popup.js', 'async function saveServices()', 2);
-  // Encrypting from the globals loses the caller's mutation — and a deletion's tombstone, which
-  // is local-only and does not come back — whenever a refresh completes mid-save.
-  assert.match(body, /encryptServices\(key, currentEmail, snap\.services, snap\.wallets, snap\.walletAuditLog, snap\.tombstones, snap\.deletionReview\)/,
-    'saveServices encrypts from the globals rather than the snapshot');
-  // Contiguous, with no await between: the snapshot and both counters must be in the same
-  // synchronous run as the caller's mutation.
-  assert.match(body, /const snap = \{services, wallets, walletAuditLog, tombstones, deletionReview\};\s*\n(?:\s*\/\/[^\n]*\n)*\s*savesInFlight\+\+;\s*\n\s*blobWrites\+\+;\s*\n\s*try \{\s*\n\s*const key = await deriveStorageKey/,
-    'the snapshot and the counters must be contiguous and precede the first await');
-  // Released in a finally, or one throwing write pins every later refresh forever.
-  assert.match(body, /\} finally \{\s*\n\s*savesInFlight--;/, 'savesInFlight is not released in a finally');
+await test('popup has no save or encrypt authority', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /saveServices|deriveStorageKey|encryptServices|chrome\.storage\.local\.set|currentSecret|services\s*=/,
+    'popup retains direct save, encryption, or full-record authority');
+  const storageCalls = [], messages = [], elements = new Map();
+  const element = () => ({children: [], textContent: '', value: '', disabled: false, dataset: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element};
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console, setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; }, sendMessage(message) { messages.push(message.action); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }}, storage: {local: {get() { storageCalls.push('get'); }, set() { storageCalls.push('set'); }, remove() { storageCalls.push('remove'); }, clear() { storageCalls.push('clear'); }}}}});
+  await runInContext(source, context);
+  assert.deepEqual(storageCalls, []);
+  assert.deepEqual(messages, ['keygrain.popup.state']);
 });
 
-await test('popup.js arms a self-write marker and a generation bump on every blob write', async () => {
-  const src = sourceOf('popup.js');
-  // An unarmed write makes the popup reload in response to itself; an unbumped generation makes
-  // an in-flight refresh blind to it. Removals count: ACCOUNT_SCOPED_KEYS includes "services",
-  // and clear() takes everything. Whitespace-tolerant, so a second writer cannot hide behind
-  // different formatting.
-  const writes = [...src.matchAll(/chrome\.storage\.local\.set\(\{\s*services/g)].length
-    + [...src.matchAll(/chrome\.storage\.local\.remove\(ACCOUNT_SCOPED_KEYS\)/g)].length
-    + [...src.matchAll(/chrome\.storage\.local\.clear\(\)/g)].length;
-  assert.equal(writes, 3, 'the set of writes touching the blob changed — re-check each is armed');
-  assert.equal([...src.matchAll(/selfWrites\.services = /g)].length, writes, 'a write is not marked');
-  assert.equal([...src.matchAll(/blobWrites\+\+;/g)].length, writes, 'a write does not bump the generation');
-  // Both wipes must also stop an in-flight refresh from re-installing the old account.
-  assert.equal([...src.matchAll(/accountWiped = true;/g)].length, 2, 'an account wipe is not flagged');
+await test('popup cannot arm blob writes or mutate owner generation', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /selfWrites|blobWrites|chrome\.storage\.local|accountWiped|currentSecret|currentEmail/,
+    'popup retains a direct blob-write or generation authority');
+  const storageCalls = [], messages = [], elements = new Map();
+  const element = () => ({children: [], textContent: '', value: '', disabled: false, dataset: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element};
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console, setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; }, sendMessage(message) { messages.push(message.action); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }}, storage: {local: {get() { storageCalls.push('get'); }, set() { storageCalls.push('set'); }, remove() { storageCalls.push('remove'); }, clear() { storageCalls.push('clear'); }}}}});
+  await runInContext(source, context);
+  assert.deepEqual(storageCalls, []);
+  assert.deepEqual(messages, ['keygrain.popup.state']);
 });
 
-await test('popup.js persists the blob from exactly one place', async () => {
-  // The refresh reasoning depends on it: savesInFlight and blobWrites are what keep a reload
-  // out of a read-modify-write cycle, and only saveServices maintains them.
-  assert.equal([...sourceOf('popup.js').matchAll(/chrome\.storage\.local\.set\(\{\s*services/g)].length, 1);
+await test('popup does not persist account data from a second location', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /chrome\.storage|storage\.local|saveServices|persist|encryptServices|services\s*=/,
+    'popup contains an account persistence path');
+  const storageCalls = [], messages = [], elements = new Map();
+  const element = () => ({children: [], textContent: '', value: '', disabled: false, dataset: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element};
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console, setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; }, sendMessage(message) { messages.push(message.action); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }}, storage: {local: {get() { storageCalls.push('get'); }, set() { storageCalls.push('set'); }, remove() { storageCalls.push('remove'); }, clear() { storageCalls.push('clear'); }}}}});
+  await runInContext(source, context);
+  assert.deepEqual(storageCalls, []);
+  assert.deepEqual(messages, ['keygrain.popup.state']);
 });
 
-await test('popup.js clears both PIN keys after five wrong attempts', async () => {
-  // The failed-attempt branch of the PIN unlock handler, delimited by the catch's closing brace.
-  const branch = bodyOf('popup.js', 'const fails = (data.pinFailCount || 0) + 1;', 4);
-  // Five is the documented lockout, and it must be the >= comparison: `fails === 5` would let a
-  // stale count above five keep the encrypted secret on the device forever.
-  assert.match(branch, /if \(fails >= 5\) \{/,
-    'the PIN lockout threshold is no longer five wrong attempts');
-  // Both keys go in the same removal. pinData alone leaves pinFailCount at 5, so the next PIN
-  // set inherits an already-exhausted counter; pinFailCount alone leaves the wrapped secret
-  // behind, which is the thing the lockout exists to destroy.
-  const removal = /chrome\.storage\.local\.remove\(\[([^\]]*)\]\)/.exec(branch);
-  assert.ok(removal, 'the lockout branch no longer removes anything');
-  assert.ok(removal[1].includes('"pinData"'), 'the lockout leaves the wrapped secret on the device');
-  assert.ok(removal[1].includes('"pinFailCount"'), 'the lockout leaves the fail counter behind');
+await test('popup rejects persistent PIN fallback before any secret or storage access', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /pinUnlockBtn\.addEventListener|pinData|pinFailCount|pinDecryptSecret/,
+    'popup retains persistent PIN authority');
+  const storageCalls = [], messages = [], elements = new Map();
+  const element = () => ({children: [], textContent: '', value: '', disabled: false, dataset: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element};
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console, setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; }, sendMessage(message) { messages.push(message.action); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }}, storage: {local: {get() { storageCalls.push('get'); }, set() { storageCalls.push('set'); }, remove() { storageCalls.push('remove'); }, clear() { storageCalls.push('clear'); }}}}});
+  await runInContext(source, context);
+  assert.deepEqual(storageCalls, []);
+  assert.deepEqual(messages, ['keygrain.popup.state']);
+  assert.equal(elements.get('pin-unlock-btn').disabled, true);
 });
 
-await test('popup.js wipes both PIN keys when the account is wiped', async () => {
-  const scoped = /const ACCOUNT_SCOPED_KEYS = \[([\s\S]*?)\];/.exec(sourceOf('popup.js'));
-  assert.ok(scoped, 'ACCOUNT_SCOPED_KEYS not found');
-  // Switch account and the delete-local branch both wipe through this list. A PIN key missing
-  // from it survives the wipe, so the next account on the device inherits a PIN that unwraps
-  // the previous account's secret.
-  assert.ok(scoped[1].includes('"pinData"'),
-    'an account wipe would leave the previous account\'s wrapped secret behind');
-  assert.ok(scoped[1].includes('"pinFailCount"'),
-    'an account wipe would leave the previous account\'s fail counter behind');
-  // The list is only load-bearing if the wipe actually removes by it — an inlined key array here
-  // would drift from ACCOUNT_SCOPED_KEYS silently.
-  assert.match(bodyOf('popup.js', 'async function wipeLocalAccountData()', 2),
-    /await chrome\.storage\.local\.remove\(ACCOUNT_SCOPED_KEYS\);/,
-    'the account wipe does not remove by ACCOUNT_SCOPED_KEYS');
+await test('popup PIN wipe path is absent and cannot mutate account state', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /pinData|pinFailCount|pinDecryptSecret|ACCOUNT_SCOPED_KEYS|chrome\.storage|wipeLocalAccountData/,
+    'popup retains PIN or account wipe authority');
+  const storageCalls = [], messages = [], elements = new Map();
+  const element = () => ({children: [], textContent: '', value: '', disabled: false, dataset: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element};
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console, setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; }, sendMessage(message) { messages.push(message.action); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }}, storage: {local: {get() { storageCalls.push('get'); }, set() { storageCalls.push('set'); }, remove() { storageCalls.push('remove'); }, clear() { storageCalls.push('clear'); }}}}});
+  await runInContext(source, context);
+  assert.deepEqual(storageCalls, []);
+  assert.deepEqual(messages, ['keygrain.popup.state']);
 });
 
-await test('popup.js full reset clears storage rather than enumerating PIN keys', async () => {
-  const body = bodyOf('popup.js', 'resetConfirmBtn.addEventListener("click", async () => {', 2);
-  // Reset Keygrain is the one path that needs no key list: clear() drops every key in
-  // chrome.storage.local, so pinData and pinFailCount go with it and cannot be forgotten when a
-  // new key is added. The account wipe above cannot use clear() — it must preserve the
-  // device/config keys (settings, onboardingDone, siteRules, …) — which is exactly why that path
-  // needs the explicit ACCOUNT_SCOPED_KEYS list and this one does not.
-  assert.match(body, /await chrome\.storage\.local\.clear\(\);/,
-    'the full reset no longer clears storage, so PIN state can survive it');
+await test('popup full reset remains disabled and fail closed', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /chrome\.storage\.local\.clear|deleteServerData|function lockEverything/,
+    'popup retains a direct reset or lock authority');
+  const storageCalls = [], messages = [], elements = new Map();
+  const element = () => ({children: [], textContent: '', value: '', disabled: false, dataset: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element};
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console, setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; }, sendMessage(message) { messages.push(message.action); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }}, storage: {local: {get() { storageCalls.push('get'); }, set() { storageCalls.push('set'); }, remove() { storageCalls.push('remove'); }, clear() { storageCalls.push('clear'); }}}}});
+  await runInContext(source, context);
+  assert.deepEqual(storageCalls, []);
+  assert.deepEqual(messages, ['keygrain.popup.state']);
+  assert.equal(elements.get('reset-confirm-btn').disabled, true);
 });
 
-await test('popup.js closes the index-bound dialogs through the refresh flush', async () => {
-  const src = sourceOf('popup.js');
-  // addDialog and deleteDialog carry an index into `services` (editIndex, deleteTarget), so a
-  // refresh is deferred while either is open. A close that bypasses the wrapper drops that
-  // deferred refresh and the popup stays stale until it is reopened.
-  assert.equal([...src.matchAll(/closeDialog\((?:addDialog|deleteDialog)/g)].length, 0,
-    'an add/delete dialog close bypasses closeIndexBoundDialog');
-  assert.equal([...src.matchAll(/closeIndexBoundDialog\((?:addDialog|deleteDialog)/g)].length, 7,
-    'the number of add/delete close paths changed — check the new one flushes the deferral');
-  // The wrapper is only reachable if nothing hides those dialogs directly.
-  assert.equal([...src.matchAll(/(?:addDialog|deleteDialog)\.classList\.add\("hidden"\)/g)].length, 0,
-    'a dialog is hidden without going through closeDialog, so the flush is skipped');
+await test('popup add/delete dialogs remain disabled rather than bypassing the owner', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /chrome\.storage|saveServices|services\s*=/,
+    'popup mutation/dialog authority returned');
+  const storageCalls = [], messages = [], elements = new Map();
+  const element = () => ({children: [], textContent: '', value: '', disabled: false, dataset: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element};
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console, setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; }, sendMessage(message) { messages.push(message.action); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }}, storage: {local: {get() { storageCalls.push('get'); }, set() { storageCalls.push('set'); }, remove() { storageCalls.push('remove'); }, clear() { storageCalls.push('clear'); }}}}});
+  await runInContext(source, context);
+  assert.deepEqual(storageCalls, []);
+  assert.deepEqual(messages, ['keygrain.popup.state']);
+  
 });
 
 await test('migrate.js reacts to external services and checklist writes', async () => {
@@ -3706,37 +4037,19 @@ await test('derivePassword: preserves order, duplicate weighting, and fixed-cate
   assert.notEqual(actual['!1'], actual['!A']);
 });
 
-await test('popup Add/Edit and Settings symbol fields reject before mutation or write', async () => {
-  const popupSource = readFileSync(resolve(shared, 'popup.js'), 'utf8');
-  const settingsStart = popupSource.indexOf('settingsSave.addEventListener("click"');
-  const settingsEnd = popupSource.indexOf('// === In-page autofill toggle + consent ===', settingsStart);
-  const settingsHandler = popupSource.slice(settingsStart, settingsEnd);
-  const addStart = popupSource.indexOf('addConfirm.addEventListener("click"');
-  const addEnd = popupSource.indexOf('rotateBtn.addEventListener("click"', addStart);
-  const addHandler = popupSource.slice(addStart, addEnd);
-  assert.ok(settingsStart >= 0 && settingsEnd > settingsStart, 'Settings handler must be present');
-  assert.ok(addStart >= 0 && addEnd > addStart, 'Add/Edit handler must be present');
-
-  for (const symbols of ['', ' ', '\x1f', '\x7f', 'é', '😀']) {
-    assert.throws(() => call('validateSymbols', symbols), /graphic printable ASCII/);
-  }
-
-  const settingsValidation = settingsHandler.indexOf('try { validateSymbols(symbols); }');
-  const settingsReturn = settingsHandler.indexOf('return;', settingsValidation);
-  const settingsWrite = settingsHandler.indexOf('await chrome.storage.local.set({settings})');
-  assert.ok(settingsValidation >= 0 && settingsValidation < settingsReturn && settingsReturn < settingsWrite);
-  assert.match(settingsHandler, /const symbols = setSymbols\.value/);
-  assert.doesNotMatch(settingsHandler, /symbols\s*\|\|/);
-
-  const addValidation = addHandler.indexOf('try { validateSymbols(symbols); }');
-  const addReturn = addHandler.indexOf('return;', addValidation);
-  const editMutation = addHandler.indexOf('services[editIndex] =');
-  const addMutation = addHandler.indexOf('services.push(');
-  assert.ok(addValidation >= 0 && addValidation < addReturn);
-  assert.ok(addValidation < editMutation && addValidation < addMutation);
-  assert.match(addHandler, /const symbols = addSymbols\.value/);
-  assert.match(addHandler, /if \(editIndex !== null\)/);
-  assert.doesNotMatch(addHandler, /symbols\s*\|\|/);
+await test('popup Add/Edit and Settings controls fail closed before mutation or write', async () => {
+  const source = sourceOf('popup.js');
+  assert.doesNotMatch(source, /settingsSave\.addEventListener|validateSymbols\(|chrome\.storage|derivePassword|services\s*=/,
+    'popup retains direct settings, derivation, or service mutation authority');
+  const storageCalls = [], messages = [], elements = new Map();
+  const element = () => ({children: [], textContent: '', value: '', disabled: false, dataset: {}, appendChild(child) { this.children.push(child); return child; }, addEventListener() {}, focus() {}, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}});
+  const document = {getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }, createElement: element};
+  const context = createContext({document, window: {addEventListener() {}}, TextEncoder, TextDecoder, URL, console, setTimeout, crypto: {randomUUID() { return 'popup-session'; }},
+    chrome: {runtime: {getManifest() { return {name: 'Keygrain', version: 'test'}; }, sendMessage(message) { messages.push(message.action); return Promise.resolve({ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'}); }}, storage: {local: {get() { storageCalls.push('get'); }, set() { storageCalls.push('set'); }, remove() { storageCalls.push('remove'); }, clear() { storageCalls.push('clear'); }}}}});
+  await runInContext(source, context);
+  assert.deepEqual(storageCalls, []);
+  assert.deepEqual(messages, ['keygrain.popup.state']);
+  
 });
 
 await test('live web derivation rejects invalid symbols before strengthen and accepts ASCII edges', async () => {
@@ -3995,46 +4308,100 @@ await test('sync GET: empty absent-capability blob/checksum is malformed, not le
   }
 });
 
-await test('KG-29 upgrade-required handling is safe and equivalent in both background owners', async () => {
+await test('Keygrain upgrade-required handling is safe and equivalent in both background owners', async () => {
   const owners = [
-    readFileSync(resolve(root, 'extension', 'chrome', 'background.js'), 'utf8'),
-    readFileSync(resolve(root, 'extension', 'firefox', 'background.js'), 'utf8'),
+    ['chrome', readFileSync(resolve(root, 'extension', 'chrome', 'background.js'), 'utf8')],
+    ['firefox', readFileSync(resolve(root, 'extension', 'firefox', 'background.js'), 'utf8')],
   ];
-  for (const owner of owners) {
-    assert.match(owner, /const UPGRADE_REQUIRED_MESSAGE = "Update Keygrain to continue syncing this account\.";/);
-    assert.match(owner, /async function clearSyncRetry\(\) \{[\s\S]*?storage\.local\.remove\("syncRetryState"\)[\s\S]*?alarms\.clear\("syncRetry"\)[\s\S]*?alarms\.clear\("syncAlarm"\)/,
-      'upgrade cancellation must only remove retry state and clear the two sync alarms');
-    assert.match(owner, /if \(errType === "upgrade_required"\) \{[\s\S]*?await clearSyncRetry\(\);[\s\S]*?lastSyncError: \{type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE\}/,
-      'background capability failure is stored as a distinct safe state');
-    assert.match(owner, /if \(msg\.action === "clearSyncRetry"\)/,
-      'popup cancellation action is not exposed');
-    assert.match(owner, /if \(errType === "rate_limited"\) \{[\s\S]*?alarms\.create\("syncRetry"/,
-      'rate-limit retry path disappeared');
-    assert.match(owner, /else if \(errType === "network_error" \|\| errType === "server_error"\)/,
-      'network/server retry classification changed');
-    assert.doesNotMatch(owner, /upgrade_required[\s\S]{0,500}offlineMode/,
-      'upgrade handling must not alter offline mode');
+  for (const [browser, ownerSource] of owners) {
+    assert.match(ownerSource, /KeygrainBrowserOwner\.createOwner/, `${browser}: owner is not authoritative`);
+    assert.match(ownerSource, new RegExp(`action === ["']sync["']`), `${browser}: sync is not routed`);
+    assert.match(ownerSource, /dispatchLegacyOrPhaseB\(sender, (?:chrome|browser)\.runtime\.id, message/,
+      `${browser}: sync does not cross the owner dispatcher`);
+    assert.match(ownerSource, /KeygrainBrowserOwner\.POPUP_RESERVED_ACTIONS\.includes\(action\)/,
+      `${browser}: reserved consumer actions are not routed through the finite owner registry`);
+    // The lifecycle wake alarm is current owner infrastructure, not legacy retry state.
+    const allAlarmOperations = ownerSource.match(
+      /(?:chrome|browser)\.alarms\.(?:create|clear)\s*\(/g
+    ) || [];
+    const alarmCalls = ownerSource.match(
+      /(?:chrome|browser)\.alarms\.(?:create|clear)\s*\(\s*["'][^"']+["']/g
+    ) || [];
+    assert.equal(alarmCalls.length, allAlarmOperations.length,
+      `${browser}: an alarm operation escaped the exact-name guard`);
+    assert.ok(alarmCalls.length > 0, `${browser}: lifecycle wake alarm wiring is missing`);
+    for (const call of alarmCalls) {
+      assert.match(call, /["']keygrain-state-wake["']/, `${browser}: unexpected alarm operation ${call}`);
+    }
+    assert.match(ownerSource,
+      /const deadline = after && \(after\.state === ["']full["'] \? after\.fullExpiresAt : after\.state === ["']metadata["'] \? after\.metadataExpiresAt : null\)/,
+      `${browser}: wake scheduling is not tied to full/metadata expiry`);
+    assert.match(ownerSource,
+      /alarms\.onAlarm\.addListener\(\(alarm\) => \{\s*if \(alarm && alarm\.name === ["']keygrain-state-wake["']\) [^\n]*reconcile\(["']wake["']\)/,
+      `${browser}: lifecycle wake alarm is not routed to owner reconciliation`);
+    assert.doesNotMatch(ownerSource,
+      /(?:chrome|browser)\.alarms\.(?:create|clear)\s*\([^)]*["'](?:syncRetry|syncAlarm)["']/,
+      `${browser}: owner still schedules or clears legacy retry alarms`);
+    assert.doesNotMatch(ownerSource, /syncRetryState|scheduleSyncRetry|clearSyncRetry/,
+      `${browser}: owner still owns retry state`);
+    assert.doesNotMatch(ownerSource, /offlineMode/, `${browser}: upgrade dispatch mutates offline mode`);
+
+    const isolated = createContext({
+      URL, Set, Map, Object, Array, String, Number, RegExp, Math, JSON, Error, Date, console,
+      Promise, Uint8Array, ArrayBuffer, TextEncoder, TextDecoder,
+    });
+    runInContext('globalThis = this;', isolated);
+    for (const dependency of ['unlock-state.js', 'browser-owner.js']) {
+      runInContext(readFileSync(resolve(shared, dependency), 'utf8'), isolated);
+    }
+    runInContext(`
+      globalThis.storageCalls = {get: 0, set: 0, remove: 0};
+      globalThis.ownerStorage = {
+        get: async () => { storageCalls.get++; return {}; },
+        set: async () => { storageCalls.set++; },
+        remove: async () => { storageCalls.remove++; },
+      };
+      globalThis.owner = KeygrainBrowserOwner.createOwner({
+        adapter: {browser: ${JSON.stringify(browser)}, storage: ownerStorage},
+        settings: {version: 1, fullLeaseSeconds: 60, metadataTailSeconds: 14400},
+        clock: () => 1000,
+      });
+    `, isolated);
+    const beforeSnapshot = JSON.parse(runInContext('JSON.stringify(owner.snapshot())', isolated));
+    const sender = browser === 'chrome'
+      ? '{tab:{id:11},frameId:0,documentId:"doc-upgrade",url:"https://example.com/login"}'
+      : '{tab:{id:11},frameId:0,url:"https://example.com/login"}';
+    const expectedContext = {ok: false, code: 'KEYGRAIN_CONTEXT_ERROR', message: 'This action is not available from this context.'};
+    for (const action of ['sync', 'fillInline']) {
+      const result = JSON.parse(runInContext(
+        `JSON.stringify(owner.dispatchLegacyOrPhaseB(${sender}, "extension-id", {action: ${JSON.stringify(action)}}, ${JSON.stringify(browser)}))`,
+        isolated
+      ));
+      assert.deepEqual(result, expectedContext, `${browser}: ${action} must fail closed without sync/consumer access`);
+      assert.deepEqual(JSON.parse(runInContext('JSON.stringify(owner.snapshot())', isolated)), beforeSnapshot,
+        `${browser}: ${action} changed manager authorization`);
+      assert.deepEqual(JSON.parse(runInContext('JSON.stringify(storageCalls)', isolated)), {get: 0, set: 0, remove: 0},
+        `${browser}: ${action} touched retry/storage state`);
+      assert.equal(Object.prototype.hasOwnProperty.call(result, 'secret'), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(result, 'records'), false);
+    }
+    const trusted = browser === 'chrome'
+      ? '{id:"extension-id",url:"chrome-extension://extension-id/popup.html"}'
+      : '{id:"extension-id",url:"moz-extension://9f2b7f8a-2d2e-4d9f-a7f3-4b7dd9a2d111/popup.html"}';
+    const trustedOrigin = browser === 'chrome'
+      ? 'chrome-extension://extension-id'
+      : 'moz-extension://9f2b7f8a-2d2e-4d9f-a7f3-4b7dd9a2d111';
+    const migration = JSON.parse(runInContext(
+      `JSON.stringify(owner.dispatchLegacyOrPhaseB(${trusted}, "extension-id", Object.assign(Object.create(null), {action:"getOwnerState"}), ${JSON.stringify(browser)}, ${JSON.stringify(trustedOrigin)}))`,
+      isolated
+    ));
+    assert.deepEqual(migration, {ok: false, code: 'KEYGRAIN_CONSUMER_MIGRATION_REQUIRED', message: 'Update Keygrain to continue.'},
+      `${browser}: unsupported owner action must use the safe migration-required result`);
+    assert.deepEqual(JSON.parse(runInContext('JSON.stringify(owner.snapshot())', isolated)), beforeSnapshot,
+      `${browser}: migration-required path changed manager authorization`);
+    assert.deepEqual(JSON.parse(runInContext('JSON.stringify(storageCalls)', isolated)), {get: 0, set: 0, remove: 0},
+      `${browser}: migration-required path touched retry/storage state`);
   }
-  const popup = sourceOf('popup.js');
-  assert.match(popup, /msg === "upgrade_required"\) \{[\s\S]*?type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE/);
-  assert.match(popup, /errorObj\.type === "upgrade_required"\) \{[\s\S]*?action: "clearSyncRetry"/);
-  const upgradeStart = popup.indexOf('if (errorObj.type === "upgrade_required")');
-  const upgradeEnd = popup.indexOf('} else if (errorObj.type === "network"', upgradeStart);
-  const upgradeBranch = popup.slice(upgradeStart, upgradeEnd);
-  assert.doesNotMatch(upgradeBranch, /scheduleSyncRetry/,
-    'upgrade-required popup failures must never schedule a retry');
-  const initialSyncStart = popup.indexOf('const result = await syncWithServer(s, e, services, [], [], tombstones);');
-  const initialSyncEnd = popup.indexOf('// If still no services', initialSyncStart);
-  const initialSync = popup.slice(initialSyncStart, initialSyncEnd);
-  assert.match(initialSync, /error\?\.message === "upgrade_required"/,
-    'initial popup sync must handle the terminal capability block');
-  assert.match(initialSync, /lastSyncError = \{type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE\}/);
-  assert.match(initialSync, /action: "clearSyncRetry"/);
-  assert.match(initialSync, /showStatus\(statusEl, UPGRADE_REQUIRED_MESSAGE/);
-  assert.match(initialSync, /currentSecret = null;[\s\S]*?currentEmail = null;[\s\S]*?return;/,
-    'upgrade-required initial sync must not continue into account setup');
-  assert.match(initialSync, /catch \(error\) \{[\s\S]*?\/\* server unreachable or 404 — new user \*\//,
-    'ordinary initial sync failures must remain new-user compatible');
 });
 
 // ============================================================
