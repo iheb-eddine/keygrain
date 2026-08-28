@@ -1,4 +1,4 @@
-// Generate/check the KG-29 v3 preservation contract fixture.
+// Generate/check the v3 preservation contract fixture.
 // Usage: node ci/gen-sync-v3-preservation-vectors.mjs [--check]
 //
 // This generator intentionally does not import a production serializer. The expected

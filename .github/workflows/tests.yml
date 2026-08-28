@@ -88,11 +88,22 @@ jobs:
         run: |
           set -o pipefail
           node test-state-manager.mjs | tee state-manager-test-output.txt
-      - name: Run KG-29 v3 preservation contract tests
+      - name: Run v3 preservation contract tests
         working-directory: extension/tests
         run: |
           set -o pipefail
           node test-sync-v3-preservation.mjs | tee v3-preservation-test-output.txt
+      - name: Run browser-owner integration tests
+        working-directory: extension/tests
+        run: node test-browser-owner-integration.mjs
+      - name: Run diagnostics and identity tests
+        working-directory: extension/tests
+        run: |
+          node test-diagnostics.mjs
+          node test-identity.mjs
+      - name: Run worker-ingress tests
+        working-directory: extension/tests
+        run: node test-worker-ingress.mjs
       - name: Check test count baseline
         working-directory: extension/tests
         run: |
@@ -191,6 +202,29 @@ jobs:
       - name: Build extension
         working-directory: extension
         run: bash build.sh
+      - name: Verify Firefox artifact is MV3-only
+        working-directory: extension
+        run: |
+          python3 - <<'PYVERIFY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import json
+          archives = sorted(Path("dist").glob("keygrain-firefox-*.zip"))
+          assert len(archives) == 1, f"expected exactly one Firefox archive, found {archives}"
+          with ZipFile(archives[0]) as archive:
+              names = archive.namelist()
+              assert names == sorted(names), "Firefox archive inventory must be sorted"
+              manifest = json.loads(archive.read("manifest.json"))
+              assert manifest["manifest_version"] == 3
+              assert "browser_action" not in manifest
+              assert "service_worker" not in manifest.get("background", {})
+              assert "scripts" in manifest.get("background", {})
+              source = archive.read("background.js").decode()
+              for marker in ("MV2", "browserAction", "tabs.executeScript", "contentScripts.register"):
+                  assert marker not in source, marker
+          assert not list(Path("dist").glob("*mv2*.zip")), "MV2 Firefox artifact emitted"
+          print(f"Verified MV3-only Firefox archive: {archives[0]}")
+          PYVERIFY
       - name: Upload Chrome extension
         uses: actions/upload-artifact@v4
         with:
