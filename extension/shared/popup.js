@@ -1402,16 +1402,18 @@
         copyTotpBtn.title = "Copy TOTP code";
         copyTotpBtn.innerHTML = SVG_COPY;
         copyTotpBtn.addEventListener("click", async () => {
-          copyTotpBtn.disabled = true;
-          try {
-            let token = item.totpToken;
-            if (!token) {
-              if (currentOwnerState === "metadata") {
-                promptReauth({action: "copyTotp", id: item.id});
-              }
+          let token = item.totpToken;
+          if (!token) {
+            if (currentOwnerState === "metadata") {
+              promptReauth({action: "copyTotp", id: item.id});
               return;
             }
-            item.totpToken = null;
+            token = await acquireTotpToken(item.id);
+            if (!token) return;
+          }
+          item.totpToken = null;
+          copyTotpBtn.disabled = true;
+          try {
             let genRes = await sendMsg({action: FIXED_ACTIONS.totpGenerate, selectionToken: token});
             if (genRes?.code === "KEYGRAIN_STALE_OPERATION") {
               const freshToken = await acquireTotpToken(item.id);
@@ -1441,16 +1443,18 @@
         fillTotpBtn.title = "Fill TOTP code";
         fillTotpBtn.innerHTML = SVG_FILL;
         fillTotpBtn.addEventListener("click", async () => {
-          fillTotpBtn.disabled = true;
-          try {
-            let token = item.totpToken;
-            if (!token) {
-              if (currentOwnerState === "metadata") {
-                promptReauth({action: "fillTotp", id: item.id});
-              }
+          let token = item.totpToken;
+          if (!token) {
+            if (currentOwnerState === "metadata") {
+              promptReauth({action: "fillTotp", id: item.id});
               return;
             }
-            item.totpToken = null;
+            token = await acquireTotpToken(item.id);
+            if (!token) return;
+          }
+          item.totpToken = null;
+          fillTotpBtn.disabled = true;
+          try {
             let fillRes = await sendMsg({action: FIXED_ACTIONS.totpFill, selectionToken: token});
             if (fillRes?.code === "KEYGRAIN_STALE_OPERATION") {
               const freshToken = await acquireTotpToken(item.id);

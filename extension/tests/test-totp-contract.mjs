@@ -279,9 +279,13 @@ function popupCase({badOptions = false} = {}) {
   const request = popup.messages.find(message => message.action === 'keygrain.totp.generate');
   assert.deepEqual(JSON.parse(JSON.stringify(request)), {action: 'keygrain.totp.generate', selectionToken: 'totp-token'});
   assert.equal(codeSpan.textContent, '123456', 'generated code is transiently rendered in code span');
-  const beforeReplay = popup.messages.length;
+  const beforeFill = popup.messages.length;
   await fillBtn.handlers.click();
-  assert.equal(popup.messages.length, beforeReplay, 'consumed popup token cannot replay through Fill');
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
+  const fillRequest = popup.messages.find(message => message.action === 'keygrain.totp.fill');
+  assert(fillRequest, 'clicking Fill after Reveal acquires fresh token and sends fill message');
+  assert.equal(fillRequest.selectionToken, 'totp-token', 'fill message uses fresh token');
+  assert(popup.messages.length > beforeFill, 'token re-acquired and consumed for fill');
   popup.unload();
 }
 
