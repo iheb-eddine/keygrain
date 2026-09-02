@@ -219,15 +219,30 @@ For each entry:
 - **Discard** accepts the deletion and keeps the service deleted.
 - **Dismiss all** marks the review entries as seen and stops the reminder, but retains the entries locally.
 
----
+## Android Autofill Service and Browser Configuration
 
-## Android Autofill and Credential Provider status
+Keygrain integrates directly with Android's system-level Autofill framework (`AutofillService`).
 
-Android Autofill Service and Credential Provider support is currently **unresolved**. In the 2026-08-11 investigation, a Xiaomi device running Android 14 reported no Autofill session and no Keygrain provider callback while a password field was focused. That evidence does not establish whether the browser/device or Keygrain provider path is responsible.
+### Enabling Autofill
+1. In Keygrain, tap **Enable Autofill** on the setup banner (or go to **⋮** menu → **Autofill settings**).
+2. Select **Keygrain** when prompted to set your default autofill service.
 
-This guide intentionally provides **no supported Android settings or setup procedure** for these providers. Do not rely on selecting Keygrain as an Autofill Service or Credential Provider, and do not assume that either provider fills passwords end to end. Manual use of the app's service cards and copy actions is separate from this unresolved framework integration. Provider instructions should be added only after a real framework callback and successful end-to-end fill are verified.
+### Keystore Master Secret Persistence
+Keygrain derives passwords mathematically on-demand without storing plaintext passwords in a database. For background autofill to derive credentials when you are logging into other apps or browsers:
+- Your master secret must be retained in encrypted form via **Android Keystore** (enabled during onboarding / Biometric unlock setup).
+- If biometric unlock is not enabled or app data is wiped, the autofill service will prompt you to unlock Keygrain before filling.
 
----
+### Chrome / Chromium 1-Time Setup
+On Android 14+ / Chromium builds, Chrome requires a one-time configuration to delegate autofill to 3rd-party services:
+1. Open **Chrome**.
+2. Tap **⋮** (Menu) → **Settings**.
+3. Tap **Autofill services** (or **Passwords / Autofill**).
+4. Select **Autofill using another service**.
+5. Confirm Keygrain as the autofill provider.
+
+### Browser Limitations
+- **Firefox (GeckoView)**: Firefox for Android uses GeckoView, which only triggers autofill on forms containing username, password, or credit card fields. Standalone 2FA / TOTP input screens are not detected by GeckoView. For standalone TOTP steps, copy the code directly from Keygrain.
+- **Custom WebViews / Unregistered Apps**: Apps that do not use standard autofill hints (`AUTOFILL_HINT_PASSWORD`, `AUTOFILL_HINT_USERNAME`, etc.) may require manual copy-pasting from Keygrain.
 
 ## Export & Import
 

@@ -6,9 +6,12 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -18,8 +21,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.secbytech.keygrain.data.DeleteResult
 import com.secbytech.keygrain.data.Keygrain
@@ -31,6 +34,8 @@ import com.secbytech.keygrain.data.SyncManager
 import com.secbytech.keygrain.data.SyncResult
 import com.secbytech.keygrain.ui.UserMessages
 import com.secbytech.keygrain.ui.components.ServiceCard
+import com.secbytech.keygrain.ui.components.launchAutofillSettings
+import com.secbytech.keygrain.ui.util.AutofillUtils
 import com.secbytech.keygrain.ui.util.formatRelativeTime
 import com.secbytech.keygrain.ui.util.fuzzyScore
 import kotlinx.coroutines.Dispatchers
@@ -109,6 +114,23 @@ internal fun ServiceListScreen(
     var syncGeneration by remember { mutableIntStateOf(0) }
     var skipNextDebounce by remember { mutableStateOf(false) }
     var lastSyncTime by remember { mutableLongStateOf(0L) }
+
+    // Autofill & Chrome setup state
+    var isAutofillEnabled by remember { mutableStateOf(AutofillUtils.isAutofillEnabled(context)) }
+    var showAutofillSettingsDialog by remember { mutableStateOf(false) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isAutofillEnabled = AutofillUtils.isAutofillEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     // Tick to force subtitle recomposition every 60s
     var subtitleTick by remember { mutableIntStateOf(0) }
@@ -402,7 +424,10 @@ internal fun ServiceListScreen(
                 },
                 actions = {
                     Box {
-                        IconButton(onClick = { menuExpanded = true }) {
+                        IconButton(onClick = {
+                            isAutofillEnabled = AutofillUtils.isAutofillEnabled(context)
+                            menuExpanded = true
+                        }) {
                             Icon(Icons.Default.MoreVert, contentDescription = "Menu")
                         }
                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
@@ -452,6 +477,52 @@ internal fun ServiceListScreen(
                                     fileEmail = services.groupingBy { it.email }.eachCount()
                                         .maxByOrNull { it.value }?.key ?: ""
                                     fileAction = "import"
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Autofill") },
+                                trailingIcon = {
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = if (isAutofillEnabled) {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.errorContainer
+                                        },
+                                        contentColor = if (isAutofillEnabled) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onErrorContainer
+                                        }
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .background(
+                                                        color = if (isAutofillEnabled) {
+                                                            MaterialTheme.colorScheme.primary
+                                                        } else {
+                                                            MaterialTheme.colorScheme.error
+                                                        },
+                                                        shape = CircleShape
+                                                    )
+                                            )
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text(
+                                                text = if (isAutofillEnabled) "Active" else "Off",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    showAutofillSettingsDialog = true
                                 }
                             )
                             HorizontalDivider()
@@ -585,6 +656,15 @@ internal fun ServiceListScreen(
                     TextButton(onClick = { showDeletionReviewScreen = true }) { Text("Review") }
                 }
             }
+        }
+        // Autofill enablement banner (shown if not currently enabled)
+        if (!isAutofillEnabled && !isDemoMode) {
+            com.secbytech.keygrain.ui.components.AutofillSetupBanner(
+                isAutofillEnabled = false,
+                onEnableAutofill = {
+                    showAutofillSettingsDialog = true
+                }
+            )
         }
         if (services.isEmpty()) {
             Box(
@@ -814,6 +894,25 @@ internal fun ServiceListScreen(
                 }
             },
             onDismiss = { showDeleteServerDialog = false }
+        )
+    }
+
+    if (showAutofillSettingsDialog) {
+        com.secbytech.keygrain.ui.components.AutofillSettingsDialog(
+            isAutofillEnabled = isAutofillEnabled,
+            onDismiss = { showAutofillSettingsDialog = false },
+            onOpenSystemSettings = {
+                launchAutofillSettings(context)
+            },
+            onLaunchChrome = {
+                val intent = AutofillUtils.createLaunchChromeIntent(context.packageManager)
+                if (intent != null) {
+                    context.startActivity(intent)
+                } else {
+                    launchAutofillSettings(context)
+                }
+            },
+            chromeInstalled = AutofillUtils.getInstalledChromePackage(context.packageManager) != null
         )
     }
 

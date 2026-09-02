@@ -53,6 +53,10 @@ private val faqItems = listOf(
         "Biometric provides quick unlock without retyping your full master secret. Your secret is stored encrypted in the Android Keystore and released on successful biometric authentication.\n\nIt does NOT replace your master secret — if you clear app data, you will need your master secret again."
     ),
     FaqItem(
+        "How does Android Autofill work?",
+        "Keygrain integrates with Android's Autofill Framework to suggest and fill passwords directly inside apps and browsers.\n\n• Keystore Requirement: Background autofill derivation requires your master secret to be saved in Android Keystore (enabled via Biometric unlock / setup). Without it, the background service cannot derive passwords without opening the app.\n\n• Chrome / Chromium Setup: Chrome requires a 1-time setting toggle: Open Chrome → Settings → Autofill services (or Passwords) → Select 'Autofill using another service'.\n\n• Firefox GeckoView Limitation: Firefox on Android (GeckoView) only triggers autofill on forms with username, password, or credit card fields. It does not fire on standalone 2FA / TOTP input screens. For standalone TOTP steps, copy the code directly from Keygrain."
+    ),
+    FaqItem(
         "What if I forget my secret?",
         "You cannot recover it. There is no reset, no backup, no support email that can help. This is by design — nobody can access your passwords except you.\n\nRecommendation: write your master secret on paper and store it somewhere physically secure (e.g., a safe). Never store it digitally."
     ),
