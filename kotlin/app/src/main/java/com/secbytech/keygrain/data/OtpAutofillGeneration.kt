@@ -125,9 +125,8 @@ internal object TotpAutofillDerivedExecutor {
             }
         }) {
             override fun done() {
-                // If cancellation won before the callable started, its finally cannot run.
+                releaseOnce()
                 if (!ran.get()) {
-                    releaseOnce()
                     cleanupNotStartedOnce()
                 }
             }

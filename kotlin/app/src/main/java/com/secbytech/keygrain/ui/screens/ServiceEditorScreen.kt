@@ -26,8 +26,12 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.secbytech.keygrain.data.Keygrain
 import com.secbytech.keygrain.data.ServiceEntry
+import com.secbytech.keygrain.data.SyncCrypto
 import com.secbytech.keygrain.data.TotpEngine
+
+
 import com.secbytech.keygrain.ui.components.QrScannerDialog
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -48,6 +52,7 @@ internal fun serviceSymbolsError(symbols: String): String? {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ServiceEditorScreen(
+    masterSecret: String,
     onDismiss: () -> Unit,
     onSave: (ServiceEntry) -> Boolean,
     onInteraction: () -> Unit,
@@ -56,6 +61,7 @@ internal fun ServiceEditorScreen(
     detectedFullDomain: String? = null,
     defaultEmail: String = ""
 ) {
+
     val isEdit = initialEntry != null
 
     // Initial values captured once — used both to seed fields and to detect a dirty form.
@@ -144,25 +150,41 @@ internal fun ServiceEditorScreen(
             }
         }
     }) {
+        // Global TOTP ticker for preview when TOTP is enabled (Stored or Derived)
+        var globalTotpProgress by remember {
+            val now = System.currentTimeMillis() / 1000
+            mutableFloatStateOf((30 - (now % 30)) / 30f)
+        }
+        LaunchedEffect(totpModeIndex) {
+            if (totpModeIndex > 0) {
+                while (true) {
+                    val now = System.currentTimeMillis() / 1000
+                    globalTotpProgress = (30 - (now % 30)) / 30f
+                    delay(1000)
+                }
+            }
+        }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(if (isEdit) "Edit Service" else "Add Service") },
-                navigationIcon = {
-                    IconButton(onClick = handleExit) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
-                    }
-                },
-                actions = {
-                    TextButton(
-                        enabled = name.isNotBlank() && email.isNotBlank(),
-                        onClick = {
-                            val symbolsError = serviceSymbolsError(symbols)
-                            if (symbolsError != null) {
-                                scope.launch { snackbarHostState.showSnackbar(symbolsError) }
-                                return@TextButton
-                            }
-                            val totpJson = when (totpModeIndex) {
+            Column {
+                TopAppBar(
+                    title = { Text(if (isEdit) "Edit Service" else "Add Service") },
+                    navigationIcon = {
+                        IconButton(onClick = handleExit) {
+                            Icon(Icons.Default.Close, contentDescription = "Close")
+                        }
+                    },
+                    actions = {
+                        TextButton(
+                            enabled = name.isNotBlank() && email.isNotBlank(),
+                            onClick = {
+                                val symbolsError = serviceSymbolsError(symbols)
+                                if (symbolsError != null) {
+                                    scope.launch { snackbarHostState.showSnackbar(symbolsError) }
+                                    return@TextButton
+                                }
+                                val totpJson = when (totpModeIndex) {
                                 1 -> { // Stored
                                     val input = totpSeed.trim()
                                     if (input == originalTotpSeed && initialEntry?.totp != null) {
@@ -170,15 +192,25 @@ internal fun ServiceEditorScreen(
                                     } else {
                                         try {
                                             val parsed = TotpEngine.parseTotpInput(input)
+                                            val masterSecretBytes = masterSecret.ifEmpty { "demo" }.toByteArray()
+                                            val encKey = Keygrain.deriveEncryptionKey(masterSecretBytes, email.trim())
+                                            val encBytes = try {
+                                                SyncCrypto.encrypt(encKey, parsed.seed)
+                                            } finally {
+                                                encKey.fill(0)
+                                                parsed.seed.fill(0)
+                                                masterSecretBytes.fill(0)
+                                            }
                                             JSONObject().apply {
                                                 put("mode", "stored")
-                                                put("seed", android.util.Base64.encodeToString(parsed.seed, android.util.Base64.NO_WRAP))
+                                                put("seed_enc", android.util.Base64.encodeToString(encBytes, android.util.Base64.NO_WRAP))
                                                 put("digits", parsed.digits)
                                                 put("period", parsed.period)
                                                 put("algorithm", parsed.algorithm)
                                             }
                                         } catch (_: Exception) { null }
                                     }
+
                                 }
                                 2 -> JSONObject().apply { // Derived
                                     put("mode", "derived")
@@ -214,8 +246,18 @@ internal fun ServiceEditorScreen(
                     ) { Text(if (isEdit) "Save" else "Add") }
                 }
             )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+            if (totpModeIndex > 0) {
+                LinearProgressIndicator(
+                    progress = { globalTotpProgress },
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            }
+        }
+    },
+    snackbarHost = { SnackbarHost(snackbarHostState) }
+
     ) { padding ->
         Column(
             modifier = Modifier

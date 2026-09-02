@@ -81,6 +81,11 @@ object Keygrain {
         strengthenCache.clear()
     }
 
+    fun hasStrengthenedKey(secret: ByteArray, email: String): Boolean = synchronized(cacheLock) {
+        val cached = strengthenCache[email.lowercase()] ?: return false
+        return cached.secret.contentEquals(secret)
+    }
+
     fun derivePassword(
         secret: ByteArray,
         email: String,

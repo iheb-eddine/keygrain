@@ -261,7 +261,7 @@ class KeygrainTest {
         val passwordRow = readApprovedSource("com/secbytech/keygrain/ui/components/PasswordRow.kt")
         assertTrue(passwordRow.contains("derivePasswordForRow(service, masterSecret)"))
         assertTrue(passwordRow.contains("Unable to generate password. Edit service settings to repair."))
-        assertTrue(passwordRow.contains("enabled = password != null"))
+        assertTrue(passwordRow.contains("enabled = derivationError == null && !isDeriving"))
         assertTrue(passwordRow.contains("CancellationException"))
     }
 

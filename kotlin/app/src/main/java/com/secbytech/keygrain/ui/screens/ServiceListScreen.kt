@@ -136,8 +136,22 @@ internal fun ServiceListScreen(
     var subtitleTick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) { while (true) { delay(60_000); subtitleTick++ } }
 
+    // Global TOTP progress ticker (active whenever any service has TOTP enabled)
+    val hasTotp = remember(services) { services.any { it.totp != null } }
+    var globalTotpProgress by remember { mutableFloatStateOf(1f) }
+    LaunchedEffect(hasTotp) {
+        if (!hasTotp) return@LaunchedEffect
+        while (true) {
+            val now = System.currentTimeMillis() / 1000
+            val remaining = (30 - (now % 30)).toFloat()
+            globalTotpProgress = remaining / 30f
+            delay(1000)
+        }
+    }
+
     fun getMostCommonEmail(): String =
         services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: ""
+
 
     fun performAutoSync() {
         if (isDemoMode || isSyncing || offlineMode || deleteInProgress) return
@@ -333,10 +347,12 @@ internal fun ServiceListScreen(
     if (prefillSite != null || showEditDialog != null) {
         val editEntry = showEditDialog
         ServiceEditorScreen(
+            masterSecret = masterSecret,
             initialEntry = editEntry,
             initialSite = prefillSite ?: "",
             detectedFullDomain = detectedFullDomain,
             defaultEmail = getMostCommonEmail(),
+
             onInteraction = { lockTimerReset.longValue = System.currentTimeMillis() },
             onDismiss = {
                 prefillSite = null; detectedFullDomain = null; showEditDialog = null
@@ -399,174 +415,183 @@ internal fun ServiceListScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("Keygrain")
-                        @Suppress("UNUSED_EXPRESSION") subtitleTick
-                        val subtitle = when {
-                            isDemoMode -> null
-                            offlineMode -> "Offline"
-                            getMostCommonEmail().isBlank() -> null
-                            isSyncing -> "Syncing…"
-                            lastSyncTime > 0L -> "Synced ${formatRelativeTime(lastSyncTime)}"
-                            syncFailed -> "Not synced"
-                            else -> null
-                        }
-                        if (subtitle != null) {
-                            Text(
-                                text = subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    Box {
-                        IconButton(onClick = {
-                            isAutofillEnabled = AutofillUtils.isAutofillEnabled(context)
-                            menuExpanded = true
-                        }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "Menu")
-                        }
-                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Sync") },
-                                enabled = !offlineMode,
-                                onClick = {
-                                    menuExpanded = false
-                                    syncEmail = syncManager.getSyncEmail(context)
-                                        ?: services.groupingBy { it.email }.eachCount()
-                                            .maxByOrNull { it.value }?.key ?: ""
-                                    showSyncEmailDialog = true
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Offline mode") },
-                                trailingIcon = {
-                                    Switch(
-                                        checked = offlineMode,
-                                        onCheckedChange = null
-                                    )
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    val newValue = !offlineMode
-                                    offlineMode = newValue
-                                    settingsPrefs.edit().putBoolean("offline_mode", newValue).apply()
-                                    // Re-enabling sync (turning offline OFF) resumes syncing so
-                                    // local data is pushed back to the server.
-                                    if (!newValue) performAutoSync()
-                                }
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("Export to file") },
-                                onClick = {
-                                    menuExpanded = false
-                                    fileEmail = services.groupingBy { it.email }.eachCount()
-                                        .maxByOrNull { it.value }?.key ?: ""
-                                    fileAction = "export"
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Import from file") },
-                                onClick = {
-                                    menuExpanded = false
-                                    fileEmail = services.groupingBy { it.email }.eachCount()
-                                        .maxByOrNull { it.value }?.key ?: ""
-                                    fileAction = "import"
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Autofill") },
-                                trailingIcon = {
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = if (isAutofillEnabled) {
-                                            MaterialTheme.colorScheme.primaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.errorContainer
-                                        },
-                                        contentColor = if (isAutofillEnabled) {
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.onErrorContainer
-                                        }
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(6.dp)
-                                                    .background(
-                                                        color = if (isAutofillEnabled) {
-                                                            MaterialTheme.colorScheme.primary
-                                                        } else {
-                                                            MaterialTheme.colorScheme.error
-                                                        },
-                                                        shape = CircleShape
-                                                    )
-                                            )
-                                            Spacer(modifier = Modifier.width(5.dp))
-                                            Text(
-                                                text = if (isAutofillEnabled) "Active" else "Off",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                    }
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    showAutofillSettingsDialog = true
-                                }
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("Help") },
-                                onClick = {
-                                    menuExpanded = false
-                                    showHelpScreen = true
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Wallet") },
-                                onClick = {
-                                    menuExpanded = false
-                                    showWalletScreen = true
-                                }
-                            )
-                            if (!isDemoMode) {
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text("Switch account") },
-                                    onClick = {
-                                        menuExpanded = false
-                                        showSwitchAccountDialog = true
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Delete server data") },
-                                    onClick = {
-                                        menuExpanded = false
-                                        deleteError = null
-                                        keepLocal = true
-                                        showDeleteServerDialog = true
-                                    }
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text("Keygrain")
+                            @Suppress("UNUSED_EXPRESSION") subtitleTick
+                            val subtitle = when {
+                                isDemoMode -> null
+                                offlineMode -> "Offline"
+                                getMostCommonEmail().isBlank() -> null
+                                isSyncing -> "Syncing…"
+                                lastSyncTime > 0L -> "Synced ${formatRelativeTime(lastSyncTime)}"
+                                syncFailed -> "Not synced"
+                                else -> null
+                            }
+                            if (subtitle != null) {
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
+                    },
+                    actions = {
+                        Box {
+                            IconButton(onClick = {
+                                isAutofillEnabled = AutofillUtils.isAutofillEnabled(context)
+                                menuExpanded = true
+                            }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                            }
+                            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Sync") },
+                                    enabled = !offlineMode,
+                                    onClick = {
+                                        menuExpanded = false
+                                        syncEmail = syncManager.getSyncEmail(context)
+                                            ?: services.groupingBy { it.email }.eachCount()
+                                                .maxByOrNull { it.value }?.key ?: ""
+                                        showSyncEmailDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Offline mode") },
+                                    trailingIcon = {
+                                        Switch(
+                                            checked = offlineMode,
+                                            onCheckedChange = null
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        val newValue = !offlineMode
+                                        offlineMode = newValue
+                                        settingsPrefs.edit().putBoolean("offline_mode", newValue).apply()
+                                        if (!newValue) performAutoSync()
+                                    }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Export to file") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        fileEmail = services.groupingBy { it.email }.eachCount()
+                                            .maxByOrNull { it.value }?.key ?: ""
+                                        fileAction = "export"
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Import from file") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        fileEmail = services.groupingBy { it.email }.eachCount()
+                                            .maxByOrNull { it.value }?.key ?: ""
+                                        fileAction = "import"
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Autofill") },
+                                    trailingIcon = {
+                                        Surface(
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = if (isAutofillEnabled) {
+                                                MaterialTheme.colorScheme.primaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.errorContainer
+                                            },
+                                            contentColor = if (isAutofillEnabled) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onErrorContainer
+                                            }
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .background(
+                                                            color = if (isAutofillEnabled) {
+                                                                MaterialTheme.colorScheme.primary
+                                                            } else {
+                                                                MaterialTheme.colorScheme.error
+                                                            },
+                                                            shape = CircleShape
+                                                        )
+                                                )
+                                                Spacer(modifier = Modifier.width(5.dp))
+                                                Text(
+                                                    text = if (isAutofillEnabled) "Active" else "Off",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        showAutofillSettingsDialog = true
+                                    }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Help") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        showHelpScreen = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Wallet") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        showWalletScreen = true
+                                    }
+                                )
+                                if (!isDemoMode) {
+                                    HorizontalDivider()
+                                    DropdownMenuItem(
+                                        text = { Text("Switch account") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showSwitchAccountDialog = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Delete server data") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            deleteError = null
+                                            keepLocal = true
+                                            showDeleteServerDialog = true
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        IconButton(onClick = onLock) {
+                            Icon(Icons.Default.Lock, contentDescription = "Lock")
+                        }
                     }
-                    IconButton(onClick = onLock) {
-                        Icon(Icons.Default.Lock, contentDescription = "Lock")
-                    }
+                )
+                if (hasTotp) {
+                    LinearProgressIndicator(
+                        progress = { globalTotpProgress },
+                        modifier = Modifier.fillMaxWidth().height(2.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
                 }
-            )
+            }
         },
+
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(onClick = {

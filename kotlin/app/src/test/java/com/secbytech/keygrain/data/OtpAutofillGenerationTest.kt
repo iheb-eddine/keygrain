@@ -80,7 +80,12 @@ class OtpAutofillGenerationTest {
         assertNull(TotpAutofillDerivedExecutor.submit { "queued" })
         release.countDown()
         assertEquals("first", first!!.get(5, TimeUnit.SECONDS))
-        val recovered = TotpAutofillDerivedExecutor.submit { "recovered" }
+        var recovered = TotpAutofillDerivedExecutor.submit { "recovered" }
+        repeat(50) {
+            if (recovered != null) return@repeat
+            Thread.sleep(10L)
+            recovered = TotpAutofillDerivedExecutor.submit { "recovered" }
+        }
         assertNotNull(recovered)
         assertEquals("recovered", recovered!!.get(5, TimeUnit.SECONDS))
     }
