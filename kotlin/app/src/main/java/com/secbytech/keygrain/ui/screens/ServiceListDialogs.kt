@@ -2,6 +2,8 @@ package com.secbytech.keygrain.ui.screens
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -81,14 +83,21 @@ internal fun FileEmailDialog(
         title = { Text(if (action == "export") "Export to File" else "Import from File") },
         text = {
             Column {
-                Text("Email for encryption key:")
-                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (action == "export")
+                        "Enter the account email to derive the backup encryption key:"
+                    else
+                        "Enter the account email used when encrypting this backup:",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = fileEmail,
                     onValueChange = onFileEmailChange,
+                    label = { Text("Account Email") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                    keyboardOptions = KeyboardOptions(autoCorrect = false, keyboardType = KeyboardType.Email)
                 )
             }
         },
@@ -162,6 +171,10 @@ internal fun DeleteServiceDialog(
  */
 @Composable
 internal fun SwitchAccountDialog(
+    isOfflineAccount: Boolean = false,
+    unsyncedCount: Int = 0,
+    serviceCount: Int = 0,
+    onExportBackup: (() -> Unit)? = null,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -169,14 +182,56 @@ internal fun SwitchAccountDialog(
         onDismissRequest = onDismiss,
         title = { Text("Switch account?") },
         text = {
-            Text(
-                "This clears all data on this device — your services, wallets, and " +
-                    "settings — and returns to setup so you can enter a different master " +
-                    "secret.\n\nYour data on the sync server is not affected by this action."
-            )
+            Column {
+                when {
+                    isOfflineAccount && serviceCount > 0 -> {
+                        Text(
+                            "⚠️ WARNING: Offline Account",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "This account is not connected to cloud sync. All $serviceCount stored service(s) exist only on this device and will be permanently lost if you switch without backing up.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    unsyncedCount > 0 -> {
+                        Text(
+                            "⚠️ WARNING: Unsynced Changes",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "You have $unsyncedCount service(s) with local changes that have not yet synced to the cloud. Switching accounts now will permanently discard these local changes.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    else -> {
+                        Text(
+                            "This clears all cached data on this device — your services, wallets, and " +
+                                "settings — and returns to setup so you can enter a different master " +
+                                "secret.\n\nYour data on the sync server is safely preserved and will be restored when you sign in again."
+                        )
+                    }
+                }
+
+                if (onExportBackup != null && serviceCount > 0) {
+                    Spacer(Modifier.height(14.dp))
+                    OutlinedButton(
+                        onClick = onExportBackup,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Download / Backup Services ($serviceCount)")
+                    }
+                }
+            }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Switch account") }
+            TextButton(onClick = onConfirm) { Text("Switch account", color = MaterialTheme.colorScheme.error) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

@@ -11,6 +11,7 @@ import com.secbytech.keygrain.data.Keygrain
 import com.secbytech.keygrain.data.LocalDataWiper
 import com.secbytech.keygrain.data.SecretManager
 import com.secbytech.keygrain.data.ServiceManager
+import com.secbytech.keygrain.data.SyncStore
 import com.secbytech.keygrain.ui.util.canUseBiometric
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -23,61 +24,80 @@ fun MainScreen() {
         context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
     }
 
-    var onboardingCompleted by remember {
-        mutableStateOf(settingsPrefs.getBoolean("onboarding_completed", false))
+    var configuredEmail by remember {
+        mutableStateOf(SyncStore.getSyncEmail(context))
     }
     var unlocked by remember { mutableStateOf(false) }
     var masterSecret by remember { mutableStateOf("") }
     var isDemoMode by remember { mutableStateOf(false) }
 
+    // Legacy migration: if sync_email is null but local services exist, populate sync_email from most common email
+    LaunchedEffect(Unit) {
+        if (configuredEmail == null) {
+            val services = serviceManager.getServices()
+            if (services.isNotEmpty()) {
+                val commonEmail = services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key
+                if (!commonEmail.isNullOrBlank()) {
+                    SyncStore.setSyncEmail(context, commonEmail)
+                    configuredEmail = commonEmail
+                }
+            }
+        }
+    }
+
+    val wipeLocalAndRestart: () -> Unit = {
+        LocalDataWiper.wipeAll(context)
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.clearPrimaryClip()
+        }
+        settingsPrefs.edit()
+            .putBoolean("onboarding_completed", false)
+            .putBoolean("offline_mode", false)
+            .apply()
+        configuredEmail = null
+        unlocked = false
+        masterSecret = ""
+        isDemoMode = false
+    }
+
     when {
-        !onboardingCompleted && !secretManager.hasSecret() -> {
-            OnboardingWizard(
-                secretManager = secretManager,
-                serviceManager = serviceManager,
-                onComplete = { secret ->
-                    settingsPrefs.edit().putBoolean("onboarding_completed", true).apply()
-                    onboardingCompleted = true
-                    if (secret != null) {
+        !unlocked -> {
+            if (configuredEmail.isNullOrBlank()) {
+                AuthScreen(
+                    secretManager = secretManager,
+                    serviceManager = serviceManager,
+                    onUnlocked = { email, secret ->
+                        configuredEmail = email
                         masterSecret = secret
                         unlocked = true
+                        settingsPrefs.edit().putBoolean("onboarding_completed", true).apply()
+                    },
+                    onDemo = {
+                        isDemoMode = true
+                        masterSecret = "demo-secret-keygrain"
+                        unlocked = true
                     }
-                }
-            )
-        }
-        !unlocked -> {
-            UnlockScreen(
-                secretManager = secretManager,
-                showSubtitle = !secretManager.hasSecret(),
-                onUnlocked = { secret ->
-                    masterSecret = secret
-                    unlocked = true
-                },
-                onDemo = {
-                    isDemoMode = true
-                    masterSecret = "demo-secret-keygrain"
-                    unlocked = true
-                }
-            )
+                )
+            } else {
+                UnlockScreen(
+                    secretManager = secretManager,
+                    serviceManager = serviceManager,
+                    onUnlocked = { email, secret ->
+                        configuredEmail = email
+                        masterSecret = secret
+                        unlocked = true
+                    },
+                    onSwitchAccount = wipeLocalAndRestart,
+                    onDemo = {
+                        isDemoMode = true
+                        masterSecret = "demo-secret-keygrain"
+                        unlocked = true
+                    }
+                )
+            }
         }
         else -> {
-            // Shared local reset used by BOTH Switch account and the OFF branch of
-            // Delete server data, so their observable behavior stays identical.
-            val wipeLocalAndRestart: () -> Unit = {
-                LocalDataWiper.wipeAll(context)
-                if (android.os.Build.VERSION.SDK_INT >= 28) {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.clearPrimaryClip()
-                }
-                settingsPrefs.edit()
-                    .putBoolean("onboarding_completed", false)
-                    .putBoolean("offline_mode", false)
-                    .apply()
-                onboardingCompleted = false
-                unlocked = false
-                masterSecret = ""
-                isDemoMode = false
-            }
             ServiceListScreen(
                 masterSecret = masterSecret,
                 serviceManager = serviceManager,

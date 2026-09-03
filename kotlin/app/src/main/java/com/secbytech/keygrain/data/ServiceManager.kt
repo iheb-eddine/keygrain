@@ -85,6 +85,7 @@ class ServiceManager(context: Context) {
         )
     }
 
+    private val appContext = context.applicationContext
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
@@ -274,7 +275,11 @@ class ServiceManager(context: Context) {
 
     /** Wipe all locally stored services (used by Switch account / local delete). */
     fun clearAll() {
-        prefs.edit().clear().apply()
+        try {
+            prefs.edit().clear().apply()
+        } catch (_: Exception) {
+            appContext.deleteSharedPreferences("keygrain_services")
+        }
     }
 
     fun updateFrecency(name: String) {

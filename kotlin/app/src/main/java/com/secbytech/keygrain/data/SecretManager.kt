@@ -5,6 +5,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 class SecretManager(context: Context) {
+    private val appContext = context.applicationContext
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
@@ -31,6 +32,12 @@ class SecretManager(context: Context) {
 
     /** Wipe everything in the secret store (used by Switch account / local delete). */
     fun clearAll() {
-        prefs.edit().clear().apply()
+        try {
+            prefs.edit().clear().apply()
+        } catch (_: Exception) {
+            // If keys cannot be decrypted due to Keystore invalidation/rotation,
+            // fall back to deleting the backing XML preferences file directly.
+            appContext.deleteSharedPreferences("keygrain_prefs")
+        }
     }
 }

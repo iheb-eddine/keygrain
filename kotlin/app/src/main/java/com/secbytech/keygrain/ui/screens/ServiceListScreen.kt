@@ -32,6 +32,7 @@ import com.secbytech.keygrain.data.ServiceManager
 import com.secbytech.keygrain.data.SyncCrypto
 import com.secbytech.keygrain.data.SyncManager
 import com.secbytech.keygrain.data.SyncResult
+import com.secbytech.keygrain.data.SyncStore
 import com.secbytech.keygrain.ui.UserMessages
 import com.secbytech.keygrain.ui.components.ServiceCard
 import com.secbytech.keygrain.ui.components.launchAutofillSettings
@@ -42,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,11 +57,71 @@ internal fun ServiceListScreen(
 ) {
     val context = LocalContext.current
     val demoServices = remember { listOf(
-        ServiceEntry(name = "GitHub", site = "github.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 1),
-        ServiceEntry(name = "Google", site = "google.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 2),
-        ServiceEntry(name = "Netflix", site = "netflix.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 3),
-        ServiceEntry(name = "Amazon", site = "amazon.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 4),
-        ServiceEntry(name = "Twitter", site = "twitter.com", email = "demo@example.com", length = 20, symbols = Keygrain.DEFAULT_SYMBOLS, counter = 1, updatedAt = 5),
+        ServiceEntry(
+            name = "GitHub",
+            site = "github.com",
+            email = "demo@example.com",
+            length = 20,
+            symbols = Keygrain.DEFAULT_SYMBOLS,
+            counter = 1,
+            totp = JSONObject().apply {
+                put("mode", "derived")
+                put("digits", 6)
+                put("period", 30)
+                put("algorithm", "SHA1")
+            },
+            ssh = JSONObject().apply {
+                put("key_name", "id_ed25519")
+                put("counter", 1)
+            },
+            updatedAt = 1
+        ),
+        ServiceEntry(
+            name = "Google",
+            site = "google.com",
+            email = "demo@example.com",
+            length = 20,
+            symbols = Keygrain.DEFAULT_SYMBOLS,
+            counter = 1,
+            totp = JSONObject().apply {
+                put("mode", "derived")
+                put("digits", 6)
+                put("period", 30)
+                put("algorithm", "SHA1")
+            },
+            updatedAt = 2
+        ),
+        ServiceEntry(
+            name = "Production Bastion",
+            site = "bastion.internal",
+            email = "demo@example.com",
+            length = 24,
+            symbols = Keygrain.DEFAULT_SYMBOLS,
+            counter = 1,
+            ssh = JSONObject().apply {
+                put("key_name", "bastion-admin")
+                put("counter", 1)
+            },
+            updatedAt = 3
+        ),
+        ServiceEntry(
+            name = "Mastodon",
+            site = "mastodon.social",
+            email = "demo@example.com",
+            length = 20,
+            symbols = Keygrain.DEFAULT_SYMBOLS,
+            counter = 1,
+            updatedAt = 4
+        ),
+        ServiceEntry(
+            name = "Wikipedia",
+            site = "wikipedia.org",
+            email = "demo@example.com",
+            length = 20,
+            symbols = Keygrain.DEFAULT_SYMBOLS,
+            counter = 1,
+            updatedAt = 5
+        )
     ) }
     var services by remember { mutableStateOf(if (isDemoMode) demoServices else serviceManager.getServices()) }
     var searchQuery by remember { mutableStateOf("") }
@@ -80,14 +142,12 @@ internal fun ServiceListScreen(
     var showHelpScreen by remember { mutableStateOf(false) }
     var showWalletScreen by remember { mutableStateOf(false) }
     var showSwitchAccountDialog by remember { mutableStateOf(false) }
-    var showSyncEmailDialog by remember { mutableStateOf(false) }
     // Sync v3 deletion review (Frozen Req 7): services this device changed that were
     // deleted on another device. Populated by SyncManager on a confirmed sync.
     var deletionReview by remember {
         mutableStateOf(if (isDemoMode) emptyList() else serviceManager.getDeletionReview())
     }
     var showDeletionReviewScreen by remember { mutableStateOf(false) }
-    var syncEmail by remember { mutableStateOf("") }
     var isSyncing by remember { mutableStateOf(false) }
     var syncFailed by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -150,7 +210,8 @@ internal fun ServiceListScreen(
     }
 
     fun getMostCommonEmail(): String =
-        services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: ""
+        syncManager.getSyncEmail(context)?.ifBlank { null }
+            ?: services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: ""
 
 
     fun performAutoSync() {
@@ -299,8 +360,8 @@ internal fun ServiceListScreen(
         WalletScreen(
             masterSecret = masterSecret,
             isDemoMode = isDemoMode,
-            defaultEmail = services.groupingBy { it.email }.eachCount()
-                .maxByOrNull { it.value }?.key ?: "",
+            defaultEmail = syncManager.getSyncEmail(context)
+                ?: services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: "",
             onBack = { showWalletScreen = false }
         )
         return
@@ -450,13 +511,40 @@ internal fun ServiceListScreen(
                             DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                                 DropdownMenuItem(
                                     text = { Text("Sync") },
-                                    enabled = !offlineMode,
+                                    enabled = !offlineMode && !isSyncing,
                                     onClick = {
                                         menuExpanded = false
-                                        syncEmail = syncManager.getSyncEmail(context)
-                                            ?: services.groupingBy { it.email }.eachCount()
-                                                .maxByOrNull { it.value }?.key ?: ""
-                                        showSyncEmailDialog = true
+                                        val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
+                                        if (email.isNotBlank()) {
+                                            isSyncing = true
+                                            val secretBytes = masterSecret.toByteArray()
+                                            scope.launch {
+                                                val msg = try {
+                                                    when (val r = syncManager.sync(secretBytes, email, serviceManager, context)) {
+                                                        is SyncResult.Success -> {
+                                                            syncManager.setSyncEmail(context, email)
+                                                            skipNextDebounce = true
+                                                            services = serviceManager.getServices()
+                                                            deletionReview = serviceManager.getDeletionReview()
+                                                            lastSyncTime = System.currentTimeMillis()
+                                                            UserMessages.syncSuccess(r.services.size)
+                                                        }
+                                                        is SyncResult.AuthError -> UserMessages.AUTH_ERROR
+                                                        is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
+                                                        is SyncResult.ServerError -> UserMessages.SERVER_ERROR
+                                                        is SyncResult.IntegrityError -> UserMessages.INTEGRITY_ERROR
+                                                        is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.e("Keygrain", "Sync failed", e)
+                                                    UserMessages.NETWORK_ERROR
+                                                } finally {
+                                                    secretBytes.fill(0)
+                                                }
+                                                isSyncing = false
+                                                snackbarHostState.showSnackbar(msg)
+                                            }
+                                        }
                                     }
                                 )
                                 DropdownMenuItem(
@@ -480,8 +568,9 @@ internal fun ServiceListScreen(
                                     text = { Text("Export to file") },
                                     onClick = {
                                         menuExpanded = false
-                                        fileEmail = services.groupingBy { it.email }.eachCount()
-                                            .maxByOrNull { it.value }?.key ?: ""
+                                        fileEmail = syncManager.getSyncEmail(context)
+                                            ?: services.groupingBy { it.email }.eachCount()
+                                                .maxByOrNull { it.value }?.key ?: ""
                                         fileAction = "export"
                                     }
                                 )
@@ -489,8 +578,9 @@ internal fun ServiceListScreen(
                                     text = { Text("Import from file") },
                                     onClick = {
                                         menuExpanded = false
-                                        fileEmail = services.groupingBy { it.email }.eachCount()
-                                            .maxByOrNull { it.value }?.key ?: ""
+                                        fileEmail = syncManager.getSyncEmail(context)
+                                            ?: services.groupingBy { it.email }.eachCount()
+                                                .maxByOrNull { it.value }?.key ?: ""
                                         fileAction = "import"
                                     }
                                 )
@@ -682,7 +772,43 @@ internal fun ServiceListScreen(
                 }
             }
         }
-        // Autofill enablement banner (shown if not currently enabled)
+        // Offline / Unsynced Account Warning Banner
+        val lastSyncTs = remember { SyncStore.getLastSuccessfulSyncAt(context) }
+        val isOfflineAcc = (offlineMode || lastSyncTs == 0L || services.any { !it.synced }) && !isDemoMode
+        if (isOfflineAcc && services.isNotEmpty()) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (offlineMode) "Offline Mode — data stored only on this device"
+                        else if (lastSyncTs == 0L) "Not Synced — data stored only on this device"
+                        else "Unsynced Changes — not backed up to cloud",
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    TextButton(onClick = {
+                        fileEmail = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
+                        fileAction = "export"
+                        exportLauncher.launch("keygrain-backup.keygrain")
+                    }) {
+                        Text("Backup", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
         if (!isAutofillEnabled && !isDemoMode) {
             com.secbytech.keygrain.ui.components.AutofillSetupBanner(
                 isAutofillEnabled = false,
@@ -756,46 +882,6 @@ internal fun ServiceListScreen(
 
     // --- Dialogs (extracted to ServiceListDialogs.kt) ---
 
-    if (showSyncEmailDialog) {
-        SyncEmailDialog(
-            syncEmail = syncEmail,
-            onSyncEmailChange = { syncEmail = it },
-            onConfirm = {
-                showSyncEmailDialog = false
-                if (offlineMode) return@SyncEmailDialog
-                isSyncing = true
-                val secretBytes = masterSecret.toByteArray()
-                scope.launch {
-                    val msg = try {
-                        when (val r = syncManager.sync(secretBytes, syncEmail, serviceManager, context)) {
-                            is SyncResult.Success -> {
-                                syncManager.setSyncEmail(context, syncEmail)
-                                skipNextDebounce = true
-                                services = serviceManager.getServices()
-                                deletionReview = serviceManager.getDeletionReview()
-                                lastSyncTime = System.currentTimeMillis()
-                                UserMessages.syncSuccess(r.services.size)
-                            }
-                            is SyncResult.AuthError -> UserMessages.AUTH_ERROR
-                            is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
-                            is SyncResult.ServerError -> UserMessages.SERVER_ERROR
-                            is SyncResult.IntegrityError -> UserMessages.INTEGRITY_ERROR
-                            is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
-                        }
-                    } catch (e: Exception) {
-                        Log.e("Keygrain", "Sync failed", e)
-                        UserMessages.NETWORK_ERROR
-                    } finally {
-                        secretBytes.fill(0)
-                    }
-                    isSyncing = false
-                    snackbarHostState.showSnackbar(msg)
-                }
-            },
-            onDismiss = { showSyncEmailDialog = false }
-        )
-    }
-
     if (isSyncing) { SyncingDialog() }
 
     fileAction?.let { action ->
@@ -849,7 +935,18 @@ internal fun ServiceListScreen(
     }
 
     if (showSwitchAccountDialog) {
+        val lastSyncAt = SyncStore.getLastSuccessfulSyncAt(context)
+        val isOffline = offlineMode || lastSyncAt == 0L
+        val unsyncedCount = if (isOffline) 0 else services.count { !it.synced }
         SwitchAccountDialog(
+            isOfflineAccount = isOffline,
+            unsyncedCount = unsyncedCount,
+            serviceCount = services.size,
+            onExportBackup = {
+                fileEmail = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
+                fileAction = "export"
+                exportLauncher.launch("keygrain-backup.keygrain")
+            },
             onConfirm = {
                 showSwitchAccountDialog = false
                 onSwitchAccount()
