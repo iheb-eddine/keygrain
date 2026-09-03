@@ -952,6 +952,90 @@ await test('mergeAuditLog: unions distinct entries', async () => {
   assert.equal(result.length, 2);
 });
 
+await test('classifySyncCapabilities: absent metadata preserves legacy v2 classification', async () => {
+  const legacy = {version: 1, services: [], encrypted_blob: 'opaque', checksum: 'hash'};
+  ctx._capMetadata = legacy;
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.deepEqual(result, {
+    status: 'legacy', writer_status: 'legacy_v2', reason: 'capability_metadata_absent'
+  });
+  assert.deepEqual(legacy, {version: 1, services: [], encrypted_blob: 'opaque', checksum: 'hash'});
+});
+
+await test('classifySyncCapabilities: exact strict metadata is recognized but requires upgrade', async () => {
+  const metadata = {
+    payload_version: 3,
+    min_writer_protocol: 3,
+    capabilities: ['account_defaults_immutable_v1']
+  };
+  ctx._capMetadata = metadata;
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.equal(result.status, 'strict_compatible');
+  assert.equal(result.writer_status, 'upgrade_required');
+  assert.equal(result.reason, 'strict_account_requires_protocol_3');
+  assert.deepEqual(result.capabilities, ['account_defaults_immutable_v1']);
+  result.capabilities.push('mutated');
+  assert.deepEqual(metadata.capabilities, ['account_defaults_immutable_v1']);
+});
+
+await test('classifySyncCapabilities: wrong capability fails closed', async () => {
+  ctx._capMetadata = {
+    payload_version: 3, min_writer_protocol: 3, capabilities: ['account_defaults_v1']
+  };
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.deepEqual(result, {
+    status: 'unsafe', writer_status: 'blocked', reason: 'min_writer_protocol_contradiction'
+  });
+});
+
+await test('classifySyncCapabilities: wrong protocol fails closed', async () => {
+  ctx._capMetadata = {
+    payload_version: 2, min_writer_protocol: 2, capabilities: ['account_defaults_immutable_v1']
+  };
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.deepEqual(result, {
+    status: 'unsafe', writer_status: 'blocked', reason: 'payload_version_unsupported'
+  });
+});
+
+await test('classifySyncCapabilities: contradictory minimum writer metadata fails closed', async () => {
+  ctx._capMetadata = {
+    payload_version: 2, min_writer_protocol: 3, capabilities: ['account_defaults_immutable_v1']
+  };
+  const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+  assert.deepEqual(result, {
+    status: 'unsafe', writer_status: 'blocked', reason: 'min_writer_protocol_contradiction'
+  });
+});
+
+await test('classifySyncCapabilities: malformed and partial metadata never becomes legacy', async () => {
+  for (const metadata of [
+    {payload_version: null, min_writer_protocol: 3, capabilities: ['account_defaults_immutable_v1']},
+    {payload_version: 3, min_writer_protocol: 3, capabilities: null},
+    {payload_version: 3, min_writer_protocol: 3, capabilities: ['account_defaults_immutable_v1', 'unknown']},
+    {payload_version: 3, min_writer_protocol: 3},
+    null,
+    []
+  ]) {
+    ctx._capMetadata = metadata;
+    const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+    assert.equal(result.status, 'unsafe');
+    assert.equal(result.writer_status, 'blocked');
+  }
+});
+
+await test('classifySyncCapabilities: present null or empty fields are not legacy absence', async () => {
+  for (const metadata of [
+    {payload_version: null, min_writer_protocol: null, capabilities: null},
+    {payload_version: 3, min_writer_protocol: 3, capabilities: []}
+  ]) {
+    ctx._capMetadata = metadata;
+    const result = runInContext(`JSON.parse(JSON.stringify(classifySyncCapabilities(_capMetadata)))`, ctx);
+    assert.notEqual(result.status, 'legacy');
+    assert.equal(result.writer_status, 'blocked');
+  }
+});
+
 await test('parseBlobContent: legacy flat array', async () => {
   const result = runInContext(`JSON.parse(JSON.stringify(parseBlobContent([{site:"a.com"}])))`, ctx);
   assert.deepEqual(result.services, [{ site: 'a.com' }]);
@@ -1025,6 +1109,109 @@ await test('decryptBlob recovers fixture services (AAD=lookup_id)', async () => 
     if (fsvc.totp) assert.deepEqual(got.totp, fsvc.totp);
     if (fsvc.ssh) assert.deepEqual(got.ssh, fsvc.ssh);
   }
+});
+
+await test('v3 foundation: canonical defaults are sorted, compact, and JSON-escaped', async () => {
+  const escapedSymbols = String.fromCharCode(0x22, 0x5c, 0x21);
+  ctx._defaults = {symbols: escapedSymbols, policy: 'ascii-printable-v1', schema: 1, length: 32};
+  assert.equal(runInContext('canonicalAccountDefaultsJSON(_defaults)', ctx),
+    '{"length":32,"policy":"ascii-printable-v1","schema":1,"symbols":"\\\"\\\\!"}');
+});
+
+await test('v3 foundation: canonical defaults reject malformed or non-canonical inputs', async () => {
+  const valid = {schema: 1, length: 20, symbols: '!@#$%&*-_=+?', policy: 'ascii-printable-v1'};
+  const invalid = [
+    null, [],
+    Object.assign({}, valid, {extra: 1}),
+    Object.assign(Object.create({schema: 1}), {length: 20, symbols: valid.symbols, policy: valid.policy}),
+    Object.defineProperty({...valid}, 'extra', {value: 1, enumerable: false}),
+    {...valid, schema: 1.5}, {...valid, schema: Number.MAX_SAFE_INTEGER + 1},
+    {...valid, length: 7}, {...valid, length: 129}, {...valid, length: 20.5},
+    {...valid, policy: 'ascii-printable-v2'}, {...valid, symbols: ''},
+    {...valid, symbols: 'bad space'}, {...valid, symbols: String.fromCharCode(0x7f)},
+    {...valid, symbols: '!'.repeat(203)},
+  ];
+  for (const candidate of invalid) {
+    ctx._candidate = candidate;
+    assert.throws(() => runInContext('canonicalAccountDefaultsJSON(_candidate)', ctx),
+      undefined, JSON.stringify(candidate));
+  }
+  const symbolKey = Symbol('extra');
+  const withSymbol = {...valid};
+  withSymbol[symbolKey] = 1;
+  ctx._candidate = withSymbol;
+  assert.throws(() => runInContext('canonicalAccountDefaultsJSON(_candidate)', ctx));
+});
+
+await test('v3 foundation: commitment vector is deterministic and sensitive', async () => {
+  const key = hexToBytes('d7b935b8298f476c6046cb71501fcb8c9a53327df3cc4e05c696fea7ef3d035a');
+  const defaults = {schema: 1, length: 20, symbols: '!@#$%&*-_=+?', policy: 'ascii-printable-v1'};
+  const expected = '44d37dd56a969d6e4f88886827063e9cbcf44576e8b606e24e588e94e809296f';
+  assert.equal(await call('deriveDefaultsCommitment', key, 'test@gmail.com', defaults), expected);
+  assert.equal(await call('deriveDefaultsCommitment', new Uint8Array(key), 'test@gmail.com', defaults), expected);
+  assert.notEqual(await call('deriveDefaultsCommitment', key, 'other@gmail.com', defaults), expected);
+  assert.notEqual(await call('deriveDefaultsCommitment', key, 'test@gmail.com', {...defaults, length: 21}), expected);
+});
+
+await test('v3 foundation: commitment inputs are strict and do not coerce', async () => {
+  const key = hexToBytes('d7b935b8298f476c6046cb71501fcb8c9a53327df3cc4e05c696fea7ef3d035a');
+  const defaults = {schema: 1, length: 20, symbols: '!@#$%&*-_=+?', policy: 'ascii-printable-v1'};
+  for (const badKey of [new Uint8Array(31), new Uint8Array(33), new Array(32).fill(0), '00'.repeat(32)]) {
+    await assert.rejects(() => call('deriveDefaultsCommitment', badKey, 'test@gmail.com', defaults));
+  }
+  for (const badEmail of [
+    'Test@gmail.com', ' test@gmail.com', 'test@gmail.com ', 'test@例子.com',
+    'test@x.com' + String.fromCharCode(0), 'test@x.com' + String.fromCharCode(0xd800),
+  ]) {
+    await assert.rejects(() => call('deriveDefaultsCommitment', key, badEmail, defaults));
+  }
+});
+
+await test('v3 foundation: AAD encodes exact state/commitment bytes', async () => {
+  const lookupId = '0123456789abcdef'.repeat(4);
+  const commitment = 'ab'.repeat(32);
+  const expected = state => Buffer.from(
+    `keygrain-sync-v3\0${lookupId}\0${state}\0${state === 'PRESENT' ? commitment : ''}`,
+    'utf8'
+  ).toString('hex');
+  for (const [state, commitmentArg] of [['UNSEALED', null], ['ABSENT', null], ['PRESENT', commitment]]) {
+    const aad = call('buildV3SyncAAD', lookupId, state, commitmentArg);
+    assert.equal(Buffer.from(aad).toString('hex'), expected(state));
+    aad[0] ^= 0xff;
+    assert.equal(Buffer.from(call('buildV3SyncAAD', lookupId, state, commitmentArg)).toString('hex'), expected(state));
+  }
+});
+
+await test('v3 foundation: AAD rejects malformed lookup/state/commitment tuples', async () => {
+  const lookupId = '0123456789abcdef'.repeat(4);
+  const validCommitment = 'ab'.repeat(32);
+  for (const badLookup of ['', lookupId.toUpperCase(), lookupId.slice(1), lookupId + '0', lookupId.slice(0, 63) + '!', lookupId.slice(0, 32) + String.fromCharCode(0) + lookupId.slice(33)]) {
+    assert.throws(() => call('buildV3SyncAAD', badLookup, 'ABSENT', null));
+  }
+  for (const badState of ['unsealed', 'ABSENT ', 'PRESENT' + String.fromCharCode(0), '', null]) {
+    assert.throws(() => call('buildV3SyncAAD', lookupId, badState, null));
+  }
+  for (const [state, badCommitment] of [
+    ['UNSEALED', undefined], ['UNSEALED', validCommitment], ['ABSENT', ''],
+    ['PRESENT', null], ['PRESENT', validCommitment.toUpperCase()],
+    ['PRESENT', validCommitment.slice(1)], ['PRESENT', validCommitment + '0'],
+  ]) {
+    assert.throws(() => call('buildV3SyncAAD', lookupId, state, badCommitment));
+  }
+});
+
+await test('v2 regression anchors remain lookup-id AAD and current derivations', async () => {
+  assert.equal(await call('deriveLookupId', syncVectors.secret, syncVectors.email), syncVectors.lookup_id);
+  assert.equal(Buffer.from(await call('deriveEncryptionKey', syncVectors.secret, syncVectors.email)).toString('hex'), syncVectors.encryption_key_hex);
+  ctx._secret = syncVectors.secret;
+  ctx._email = syncVectors.email;
+  ctx._blobB64 = syncVectors.server_response.encrypted_blob;
+  const decrypted = await runInContext(`(async () => {
+    const key = await deriveEncryptionKey(_secret, _email);
+    const lookupId = await deriveLookupId(_secret, _email);
+    return new TextDecoder().decode(await decryptBlob(key, base64ToArrayBuffer(_blobB64), new TextEncoder().encode(lookupId)));
+  })()`, ctx);
+  assert.equal(JSON.parse(decrypted).services.length, syncVectors.services.length);
 });
 
 // Derive each password service through the REAL keygrain.js derivePassword and
@@ -3578,6 +3765,276 @@ await test('live web derivation rejects invalid symbols before strengthen and ac
     await assert.rejects(() => runInContext('derivePassword(..._args)', webCtx), /printable ASCII/);
   }
   assert.equal(webStrengthenCalls, 0, 'invalid live-web symbols must reject before strengthen/output');
+});
+
+// ============================================================
+// Sync capability GET boundary tests
+// ============================================================
+function syncResponse(status, body, etag = 'legacy-etag') {
+  return {
+    status,
+    headers: {get: name => name === 'ETag' ? `"${etag}"` : null},
+    json: async () => body
+  };
+}
+
+function installSyncHarness(getResponse, putResponse = syncResponse(201, {services: [], etag: 'put-etag'})) {
+  const state = {fetches: [], writes: [], gets: [], putResponse};
+  ctx.chrome = {
+    storage: {
+      local: {
+        get: async key => {
+          state.gets.push(key);
+          if (key === 'settings') return {settings: {serverUrl: 'https://sync.test'}};
+          if (key === 'syncMetadataCache') return {syncMetadataCache: null};
+          if (key === 'syncKnownWalletKeys') return {syncKnownWalletKeys: []};
+          if (key === 'lastSuccessfulSyncAt') return {lastSuccessfulSyncAt: 0};
+          if (key === 'conflictsDismissed') return {conflictsDismissed: false};
+          return {};
+        },
+        set: async value => { state.writes.push(value); },
+      }
+    }
+  };
+  ctx.fetch = async (url, options) => {
+    state.fetches.push({url, method: options.method});
+    return options.method === 'PUT' ? state.putResponse : getResponse;
+  };
+  return state;
+}
+
+function installSyncInstrumentation() {
+  runInContext(`
+    _syncDecryptCalls = 0;
+    _syncEncryptCalls = 0;
+    _syncAtobCalls = 0;
+    if (typeof _syncOriginalDecryptBlob === 'undefined') _syncOriginalDecryptBlob = decryptBlob;
+    if (typeof _syncOriginalEncryptBlob === 'undefined') _syncOriginalEncryptBlob = encryptBlob;
+    if (typeof _syncOriginalAtob === 'undefined') _syncOriginalAtob = atob;
+    decryptBlob = async (...args) => { _syncDecryptCalls++; return _syncOriginalDecryptBlob(...args); };
+    encryptBlob = async (...args) => { _syncEncryptCalls++; return _syncOriginalEncryptBlob(...args); };
+    atob = value => { _syncAtobCalls++; return _syncOriginalAtob(value); };
+  `, ctx);
+}
+
+function resetSyncInstrumentation() {
+  runInContext(`
+    if (typeof _syncOriginalDecryptBlob !== 'undefined') decryptBlob = _syncOriginalDecryptBlob;
+    if (typeof _syncOriginalEncryptBlob !== 'undefined') encryptBlob = _syncOriginalEncryptBlob;
+    if (typeof _syncOriginalAtob !== 'undefined') atob = _syncOriginalAtob;
+  `, ctx);
+}
+
+function syncCounters() {
+  return JSON.parse(runInContext(`JSON.stringify({decrypt: _syncDecryptCalls, encrypt: _syncEncryptCalls, atob: _syncAtobCalls})`, ctx));
+}
+
+function responseWithUnreadableBlob(fields) {
+  let blobReads = 0;
+  const body = {...fields};
+  Object.defineProperty(body, 'encrypted_blob', {
+    enumerable: true,
+    get() { blobReads++; return 'must-not-be-consumed'; }
+  });
+  return {body, get blobReads() { return blobReads; }};
+}
+
+await test('sync GET: valid legacy envelope keeps the existing decrypt/no-op path', async () => {
+  resetSyncInstrumentation();
+  const legacy = await runInContext(`(async () => {
+    const lookup = await deriveLookupId('my-master-secret', 'test@gmail.com');
+    const key = await deriveEncryptionKey('my-master-secret', 'test@gmail.com');
+    const blob = await encryptBlob(key, new TextEncoder().encode(JSON.stringify({
+      services: [], wallets: [], wallet_audit_log: [], sync_conflicts: []
+    })), new TextEncoder().encode(lookup));
+    return {
+      version: 1, services: [], encrypted_blob: arrayBufferToBase64(blob),
+      checksum: await sha256Hex(blob)
+    };
+  })()`, ctx);
+  const harness = installSyncHarness(syncResponse(200, legacy));
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], []);
+    assert.equal(result.status, 'unchanged');
+    assert.equal(result.skippedPut, true);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 0);
+    const counters = syncCounters();
+    assert.ok(counters.decrypt > 0, 'legacy response must still decrypt');
+    assert.ok(counters.atob > 0, 'legacy response must still consume its blob');
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('sync GET: valid legacy 200 preserves the existing v2 write path', async () => {
+  resetSyncInstrumentation();
+  const legacy = await runInContext(`(async () => {
+    const lookup = await deriveLookupId('my-master-secret', 'test@gmail.com');
+    const key = await deriveEncryptionKey('my-master-secret', 'test@gmail.com');
+    const blob = await encryptBlob(key, new TextEncoder().encode(JSON.stringify({
+      services: [], wallets: [], wallet_audit_log: [], sync_conflicts: []
+    })), new TextEncoder().encode(lookup));
+    return {
+      version: 1, services: [], encrypted_blob: arrayBufferToBase64(blob),
+      checksum: await sha256Hex(blob)
+    };
+  })()`, ctx);
+  const put = syncResponse(200, {services: [{id: 'local-1', updated_at: 2}], etag: 'updated-etag'});
+  const harness = installSyncHarness(syncResponse(200, legacy), put);
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [{
+      id: 'local-1', site: 'example.com', name: 'example.com', email: 'a@b.com',
+      length: 20, symbols: '!', counter: 1, updated_at: 2, synced: false
+    }], [], []);
+    assert.equal(result.status, 'synced');
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 1);
+    assert.ok(syncCounters().encrypt > 0, 'legacy v2 write must still encrypt for PUT');
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+for (const [label, fields] of [
+  ['strict-compatible metadata', {
+    version: 3, services: [], payload_version: 3, min_writer_protocol: 3,
+    capabilities: ['account_defaults_immutable_v1'], checksum: 'unused'
+  }],
+  ['wrong capability token', {
+    version: 3, services: [], payload_version: 3, min_writer_protocol: 3,
+    capabilities: ['account_defaults_v1'], checksum: 'unused'
+  }],
+  ['partial capability metadata', {
+    version: 1, services: [], payload_version: 3, checksum: 'unused'
+  }],
+  ['contradictory capability metadata', {
+    version: 3, services: [], payload_version: 2, min_writer_protocol: 3,
+    capabilities: ['account_defaults_immutable_v1'], checksum: 'unused'
+  }],
+  ['malformed capability metadata', {
+    version: 3, services: [], payload_version: 3, min_writer_protocol: 3,
+    capabilities: 'account_defaults_immutable_v1', checksum: 'unused'
+  }],
+]) {
+  await test(`sync GET: ${label} fails before blob/decrypt/storage mutation/PUT`, async () => {
+    resetSyncInstrumentation();
+    const guarded = responseWithUnreadableBlob(fields);
+    const harness = installSyncHarness(syncResponse(200, guarded.body));
+    installSyncInstrumentation();
+    try {
+      await assert.rejects(
+        () => call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], []),
+        error => error && error.message === 'upgrade_required'
+      );
+      assert.equal(guarded.blobReads, 0, 'guard must not consume encrypted_blob');
+      assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 0);
+      assert.equal(harness.writes.length, 0, 'guard must not mutate local storage');
+      assert.deepEqual(syncCounters(), {decrypt: 0, encrypt: 0, atob: 0});
+    } finally {
+      resetSyncInstrumentation();
+    }
+  });
+}
+
+await test('sync GET: malformed absent-capability response is not treated as legacy', async () => {
+  resetSyncInstrumentation();
+  const malformed = responseWithUnreadableBlob({version: 1, services: []});
+  const harness = installSyncHarness(syncResponse(200, malformed.body));
+  installSyncInstrumentation();
+  try {
+    await assert.rejects(
+      () => call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], []),
+      error => error && error.message === 'upgrade_required'
+    );
+    assert.equal(malformed.blobReads, 0);
+    assert.equal(harness.writes.length, 0);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 0);
+    assert.deepEqual(syncCounters(), {decrypt: 0, encrypt: 0, atob: 0});
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('sync GET: 404 still performs the existing first-sync PUT path', async () => {
+  resetSyncInstrumentation();
+  const put = syncResponse(201, {services: [{id: 'local-1', updated_at: 1}], etag: 'created-etag'});
+  const harness = installSyncHarness(syncResponse(404, {error: 'not found'}), put);
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [{
+      id: 'local-1', site: 'example.com', name: 'example.com', email: 'a@b.com',
+      length: 20, symbols: '!', counter: 1, updated_at: 1, synced: false
+    }], [], []);
+    assert.equal(result.status, 'created');
+    assert.equal(harness.fetches.filter(r => r.method === 'GET').length, 1);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 1);
+    assert.ok(syncCounters().encrypt > 0, '404 first sync must still encrypt for PUT');
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+
+await test('sync GET: empty absent-capability blob/checksum is malformed, not legacy', async () => {
+  resetSyncInstrumentation();
+  const harness = installSyncHarness(syncResponse(200, {
+    version: 1, services: [], encrypted_blob: '', checksum: ''
+  }));
+  installSyncInstrumentation();
+  try {
+    await assert.rejects(
+      () => call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], []),
+      error => error && error.message === 'upgrade_required'
+    );
+    assert.equal(harness.writes.length, 0);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 0);
+    assert.deepEqual(syncCounters(), {decrypt: 0, encrypt: 0, atob: 0});
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('KG-29 upgrade-required handling is safe and equivalent in both background owners', async () => {
+  const owners = [
+    readFileSync(resolve(root, 'extension', 'chrome', 'background.js'), 'utf8'),
+    readFileSync(resolve(root, 'extension', 'firefox', 'background.js'), 'utf8'),
+  ];
+  for (const owner of owners) {
+    assert.match(owner, /const UPGRADE_REQUIRED_MESSAGE = "Update Keygrain to continue syncing this account\.";/);
+    assert.match(owner, /async function clearSyncRetry\(\) \{[\s\S]*?storage\.local\.remove\("syncRetryState"\)[\s\S]*?alarms\.clear\("syncRetry"\)[\s\S]*?alarms\.clear\("syncAlarm"\)/,
+      'upgrade cancellation must only remove retry state and clear the two sync alarms');
+    assert.match(owner, /if \(errType === "upgrade_required"\) \{[\s\S]*?await clearSyncRetry\(\);[\s\S]*?lastSyncError: \{type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE\}/,
+      'background capability failure is stored as a distinct safe state');
+    assert.match(owner, /if \(msg\.action === "clearSyncRetry"\)/,
+      'popup cancellation action is not exposed');
+    assert.match(owner, /if \(errType === "rate_limited"\) \{[\s\S]*?alarms\.create\("syncRetry"/,
+      'rate-limit retry path disappeared');
+    assert.match(owner, /else if \(errType === "network_error" \|\| errType === "server_error"\)/,
+      'network/server retry classification changed');
+    assert.doesNotMatch(owner, /upgrade_required[\s\S]{0,500}offlineMode/,
+      'upgrade handling must not alter offline mode');
+  }
+  const popup = sourceOf('popup.js');
+  assert.match(popup, /msg === "upgrade_required"\) \{[\s\S]*?type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE/);
+  assert.match(popup, /errorObj\.type === "upgrade_required"\) \{[\s\S]*?action: "clearSyncRetry"/);
+  const upgradeStart = popup.indexOf('if (errorObj.type === "upgrade_required")');
+  const upgradeEnd = popup.indexOf('} else if (errorObj.type === "network"', upgradeStart);
+  const upgradeBranch = popup.slice(upgradeStart, upgradeEnd);
+  assert.doesNotMatch(upgradeBranch, /scheduleSyncRetry/,
+    'upgrade-required popup failures must never schedule a retry');
+  const initialSyncStart = popup.indexOf('const result = await syncWithServer(s, e, services, [], [], tombstones);');
+  const initialSyncEnd = popup.indexOf('// If still no services', initialSyncStart);
+  const initialSync = popup.slice(initialSyncStart, initialSyncEnd);
+  assert.match(initialSync, /error\?\.message === "upgrade_required"/,
+    'initial popup sync must handle the terminal capability block');
+  assert.match(initialSync, /lastSyncError = \{type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE\}/);
+  assert.match(initialSync, /action: "clearSyncRetry"/);
+  assert.match(initialSync, /showStatus\(statusEl, UPGRADE_REQUIRED_MESSAGE/);
+  assert.match(initialSync, /currentSecret = null;[\s\S]*?currentEmail = null;[\s\S]*?return;/,
+    'upgrade-required initial sync must not continue into account setup');
+  assert.match(initialSync, /catch \(error\) \{[\s\S]*?\/\* server unreachable or 404 — new user \*\//,
+    'ordinary initial sync failures must remain new-user compatible');
 });
 
 // ============================================================

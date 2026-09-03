@@ -88,6 +88,11 @@ jobs:
         run: |
           set -o pipefail
           node test-state-manager.mjs | tee state-manager-test-output.txt
+      - name: Run KG-29 v3 preservation contract tests
+        working-directory: extension/tests
+        run: |
+          set -o pipefail
+          node test-sync-v3-preservation.mjs | tee v3-preservation-test-output.txt
       - name: Check test count baseline
         working-directory: extension/tests
         run: |
@@ -113,7 +118,8 @@ jobs:
           POPUP_COUNT=$(extract_passed popup-test-output.txt)
           FOUNDATION_COUNT=$(extract_passed unlock-foundation-test-output.txt)
           STATE_COUNT=$(extract_passed state-manager-test-output.txt)
-          ACTUAL_COUNT=$((MAIN_COUNT + POPUP_COUNT + FOUNDATION_COUNT + STATE_COUNT))
+          V3_COUNT=$(extract_passed v3-preservation-test-output.txt)
+          ACTUAL_COUNT=$((MAIN_COUNT + POPUP_COUNT + FOUNDATION_COUNT + STATE_COUNT + V3_COUNT))
           BASELINE=$(grep '^js=' ../../.test-baselines | cut -d= -f2)
           if [ -z "$BASELINE" ]; then
             echo "::error::Missing js test baseline" >&2
@@ -123,7 +129,7 @@ jobs:
             echo "::error::TEST COUNT REGRESSION: js (main: $MAIN_COUNT, popup: $POPUP_COUNT, foundation: $FOUNDATION_COUNT, state: $STATE_COUNT, actual: $ACTUAL_COUNT, baseline: $BASELINE)"
             exit 1
           fi
-          echo "Test count OK: js main=$MAIN_COUNT + popup=$POPUP_COUNT + foundation=$FOUNDATION_COUNT + state=$STATE_COUNT = $ACTUAL_COUNT >= baseline=$BASELINE"
+          echo "Test count OK: js main=$MAIN_COUNT + popup=$POPUP_COUNT + foundation=$FOUNDATION_COUNT + state=$STATE_COUNT + v3=$V3_COUNT = $ACTUAL_COUNT >= baseline=$BASELINE"
 
   test-js-slow:
     runs-on: ubuntu-latest

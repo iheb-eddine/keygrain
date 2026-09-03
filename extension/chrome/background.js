@@ -103,6 +103,13 @@ async function resetAutoLock() {
 
 let bgSyncInProgress = false;
 let lockDeferred = false;
+const UPGRADE_REQUIRED_MESSAGE = "Update Keygrain to continue syncing this account.";
+
+async function clearSyncRetry() {
+  await chrome.storage.local.remove("syncRetryState");
+  chrome.alarms.clear("syncRetry");
+  chrome.alarms.clear("syncAlarm");
+}
 
 async function backgroundSync() {
   const {secret, email} = getAuthorizedCredentials() || {};
@@ -149,7 +156,10 @@ async function backgroundSync() {
       chrome.alarms.clear("syncAlarm");
     }
     const errType = e?.message;
-    if (errType === "rate_limited") {
+    if (errType === "upgrade_required") {
+      await clearSyncRetry();
+      await chrome.storage.local.set({lastSyncError: {type: "upgrade_required", message: UPGRADE_REQUIRED_MESSAGE}});
+    } else if (errType === "rate_limited") {
       const delay = (e.retryAfter || 60) / 60;
       await chrome.storage.local.set({lastSyncError: {type: "rate_limited", message: "Rate limited. Retrying soon."}});
       chrome.alarms.create("syncRetry", {delayInMinutes: delay});
@@ -254,6 +264,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     unlockState.lockEverything();
     clearStrengthenCache();
     sendResponse({ok: true});
+    return true;
+  }
+  if (msg.action === "clearSyncRetry") {
+    clearSyncRetry().then(() => sendResponse({ok: true})).catch(() => sendResponse({ok: false}));
     return true;
   }
   if (msg.action === "scheduleSyncRetry") {

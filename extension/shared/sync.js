@@ -1,6 +1,205 @@
 // sync.js — Sync v2: per-service merge (depends on keygrain.js)
 const DEFAULT_SYNC_SERVER = "https://keygrain.com";
 
+// The strict protocol token is defined by Design 0 Amendment A.9 and the
+// enforcing server. The pure classifier is wired into the GET boundary so the
+// current v2 writer continues only for valid legacy metadata and fails closed
+// before any strict/unsafe response can reach the write path.
+const STRICT_SYNC_CAPABILITY = "account_defaults_immutable_v1";
+const STRICT_SYNC_PAYLOAD_VERSION = 3;
+const STRICT_SYNC_MIN_WRITER_PROTOCOL = 3;
+const DEFAULTS_SCHEMA = 1;
+const DEFAULTS_POLICY = "ascii-printable-v1";
+const NORMALIZED_EMAIL_RE = /^[a-z0-9.!#$%&'*+\/?^_\x60{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+const LOOKUP_ID_RE = /^[0-9a-f]{64}$/;
+const COMMITMENT_DOMAIN = "keygrain-account-defaults-v1\0";
+const V3_AAD_DOMAIN = "keygrain-sync-v3\0";
+
+function assertCanonicalDefaults(defaults) {
+  if (defaults === null || typeof defaults !== "object" || Array.isArray(defaults)) {
+    throw new TypeError("defaults must be a plain object");
+  }
+  const prototype = Object.getPrototypeOf(defaults);
+  if (prototype !== null && prototype !== Object.prototype) {
+    throw new TypeError("defaults must not inherit fields");
+  }
+  const ownKeys = Object.getOwnPropertyNames(defaults).sort();
+  if (Object.getOwnPropertySymbols(defaults).length !== 0 ||
+      ownKeys.join("\0") !== "length\0policy\0schema\0symbols") {
+    throw new TypeError("defaults must contain exactly the canonical fields");
+  }
+  for (const key of ownKeys) {
+    const descriptor = Object.getOwnPropertyDescriptor(defaults, key);
+    if (!descriptor || !descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, "value")) {
+      throw new TypeError("defaults fields must be enumerable data properties");
+    }
+  }
+  if (!Number.isSafeInteger(defaults.schema) || defaults.schema !== DEFAULTS_SCHEMA) {
+    throw new RangeError("unsupported defaults schema");
+  }
+  if (!Number.isSafeInteger(defaults.length) || defaults.length < 8 || defaults.length > 128) {
+    throw new RangeError("defaults length is invalid");
+  }
+  if (defaults.policy !== DEFAULTS_POLICY) {
+    throw new RangeError("defaults policy is invalid");
+  }
+  if (typeof defaults.symbols !== "string" || defaults.symbols.length === 0) {
+    throw new TypeError("defaults symbols are invalid");
+  }
+  for (let i = 0; i < defaults.symbols.length; i++) {
+    const code = defaults.symbols.charCodeAt(i);
+    if (code < 0x21 || code > 0x7e) {
+      throw new RangeError("defaults symbols are invalid");
+    }
+  }
+  if (UPPER.length + LOWER.length + DIGITS.length + defaults.symbols.length > 256) {
+    throw new RangeError("defaults charset is too large");
+  }
+  return defaults;
+}
+
+function canonicalAccountDefaultsJSON(defaults) {
+  assertCanonicalDefaults(defaults);
+  return "{\"length\":" + defaults.length +
+    ",\"policy\":" + JSON.stringify(defaults.policy) +
+    ",\"schema\":" + defaults.schema +
+    ",\"symbols\":" + JSON.stringify(defaults.symbols) + "}";
+}
+
+function assertNormalizedEmail(normalizedEmail) {
+  if (typeof normalizedEmail !== "string" || normalizedEmail.length < 1 ||
+      normalizedEmail.length > 254 || !NORMALIZED_EMAIL_RE.test(normalizedEmail)) {
+    throw new TypeError("normalized email is invalid");
+  }
+}
+
+function assertStrengthenedKey(strengthened) {
+  if (!(strengthened instanceof Uint8Array) || strengthened.length !== 32) {
+    throw new TypeError("strengthened key must be exactly 32 bytes");
+  }
+}
+
+async function deriveDefaultsCommitment(strengthened, normalizedEmail, defaults) {
+  assertStrengthenedKey(strengthened);
+  assertNormalizedEmail(normalizedEmail);
+  const canonical = canonicalAccountDefaultsJSON(defaults);
+  const encoder = new TextEncoder();
+  const strengthenedCopy = new Uint8Array(strengthened);
+  const derivationMessage = encoder.encode(normalizedEmail + ":keygrain-defaults-commitment");
+  let commitKey;
+  try {
+    commitKey = await hmacSHA256(strengthenedCopy, derivationMessage);
+    const commitmentMessage = encoder.encode(COMMITMENT_DOMAIN + canonical);
+    const commitment = await hmacSHA256(commitKey, commitmentMessage);
+    return Array.from(commitment, b => b.toString(16).padStart(2, "0")).join("");
+  } finally {
+    strengthenedCopy.fill(0);
+    derivationMessage.fill(0);
+    if (commitKey) commitKey.fill(0);
+  }
+}
+
+function assertLookupId(lookupId) {
+  if (typeof lookupId !== "string" || !LOOKUP_ID_RE.test(lookupId)) {
+    throw new TypeError("lookup id is invalid");
+  }
+}
+
+function buildV3SyncAAD(lookupId, defaultsState, commitment) {
+  assertLookupId(lookupId);
+  if (defaultsState !== "UNSEALED" && defaultsState !== "ABSENT" && defaultsState !== "PRESENT") {
+    throw new TypeError("defaults state is invalid");
+  }
+  if (defaultsState === "PRESENT") {
+    if (typeof commitment !== "string" || !/^[0-9a-f]{64}$/.test(commitment)) {
+      throw new TypeError("present defaults commitment is invalid");
+    }
+  } else if (commitment !== null) {
+    throw new TypeError("unsealed or absent defaults must not have a commitment");
+  }
+  return new TextEncoder().encode(V3_AAD_DOMAIN + lookupId + "\0" + defaultsState + "\0" +
+    (commitment || ""));
+}
+
+function unsafeSyncCapability(reason) {
+  return {status: "unsafe", writer_status: "blocked", reason};
+}
+
+function hasLegacySyncResponseShape(response) {
+  if (response === null || typeof response !== "object" || Array.isArray(response) ||
+      !Number.isSafeInteger(response.version) || !Array.isArray(response.services)) return false;
+  const blob = Object.getOwnPropertyDescriptor(response, "encrypted_blob");
+  const checksum = Object.getOwnPropertyDescriptor(response, "checksum");
+  return !!blob && typeof blob.value === "string" && blob.value.length > 0 &&
+    !!checksum && typeof checksum.value === "string" && /^[0-9a-f]{64}$/.test(checksum.value);
+}
+
+/**
+ * Classify the capability envelope returned by the sync server.
+ *
+ * An entirely absent envelope is the only legacy result. A complete exact
+ * strict envelope is recognized, but this existing v2 writer cannot satisfy
+ * its protocol-3 minimum and therefore must not write it. Every partial,
+ * malformed, or contradictory envelope is unsafe rather than a reason to
+ * fall back to a v2 PUT.
+ */
+function classifySyncCapabilities(metadata) {
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return unsafeSyncCapability("capability_metadata_malformed");
+  }
+
+  const hasPayloadVersion = "payload_version" in metadata;
+  const hasMinWriterProtocol = "min_writer_protocol" in metadata;
+  const hasCapabilities = "capabilities" in metadata;
+  const presentCount = [hasPayloadVersion, hasMinWriterProtocol, hasCapabilities]
+    .filter(Boolean).length;
+
+  if (presentCount === 0) {
+    return {
+      status: "legacy",
+      writer_status: "legacy_v2",
+      reason: "capability_metadata_absent"
+    };
+  }
+  if (presentCount !== 3) {
+    return unsafeSyncCapability("capability_metadata_incomplete");
+  }
+
+  const payloadVersion = metadata.payload_version;
+  const minWriterProtocol = metadata.min_writer_protocol;
+  const capabilities = metadata.capabilities;
+  if (!Number.isSafeInteger(payloadVersion) ||
+      !Number.isSafeInteger(minWriterProtocol) ||
+      !Array.isArray(capabilities) ||
+      capabilities.some(capability => typeof capability !== "string")) {
+    return unsafeSyncCapability("capability_metadata_malformed");
+  }
+
+  const exactCapability = capabilities.length === 1 && capabilities[0] === STRICT_SYNC_CAPABILITY;
+  if (minWriterProtocol === STRICT_SYNC_MIN_WRITER_PROTOCOL &&
+      (payloadVersion !== STRICT_SYNC_PAYLOAD_VERSION || !exactCapability)) {
+    return unsafeSyncCapability("min_writer_protocol_contradiction");
+  }
+  if (payloadVersion !== STRICT_SYNC_PAYLOAD_VERSION) {
+    return unsafeSyncCapability("payload_version_unsupported");
+  }
+  if (minWriterProtocol !== STRICT_SYNC_MIN_WRITER_PROTOCOL) {
+    return unsafeSyncCapability("min_writer_protocol_unsupported");
+  }
+  if (!exactCapability) {
+    return unsafeSyncCapability("capability_unsupported");
+  }
+
+  return {
+    status: "strict_compatible",
+    writer_status: "upgrade_required",
+    reason: "strict_account_requires_protocol_3",
+    payload_version: payloadVersion,
+    min_writer_protocol: minWriterProtocol,
+    capabilities: [...capabilities]
+  };
+}
+
 async function getSyncServer() {
   const data = await chrome.storage.local.get("settings");
   return (data.settings && data.settings.serverUrl) || DEFAULT_SYNC_SERVER;
@@ -569,6 +768,10 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     if (getResp.status === 200) {
       remoteExists = true;
       const remote = await getResp.json();
+      const capabilityStatus = classifySyncCapabilities(remote);
+      if (capabilityStatus.status !== "legacy" || !hasLegacySyncResponseShape(remote)) {
+        throw new Error("upgrade_required");
+      }
       etag = (getResp.headers.get("ETag") || "").replace(/"/g, "");
       remoteMetadata = remote.services;
 
