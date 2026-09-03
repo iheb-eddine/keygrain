@@ -78,6 +78,16 @@ jobs:
         run: |
           set -o pipefail
           node test-popup-modules.mjs | tee popup-test-output.txt
+      - name: Run unlock foundation tests
+        working-directory: extension/tests
+        run: |
+          set -o pipefail
+          node test-unlock-foundation.mjs | tee unlock-foundation-test-output.txt
+      - name: Run state manager tests
+        working-directory: extension/tests
+        run: |
+          set -o pipefail
+          node test-state-manager.mjs | tee state-manager-test-output.txt
       - name: Check test count baseline
         working-directory: extension/tests
         run: |
@@ -101,17 +111,19 @@ jobs:
           }
           MAIN_COUNT=$(extract_passed test-output.txt)
           POPUP_COUNT=$(extract_passed popup-test-output.txt)
-          ACTUAL_COUNT=$((MAIN_COUNT + POPUP_COUNT))
+          FOUNDATION_COUNT=$(extract_passed unlock-foundation-test-output.txt)
+          STATE_COUNT=$(extract_passed state-manager-test-output.txt)
+          ACTUAL_COUNT=$((MAIN_COUNT + POPUP_COUNT + FOUNDATION_COUNT + STATE_COUNT))
           BASELINE=$(grep '^js=' ../../.test-baselines | cut -d= -f2)
           if [ -z "$BASELINE" ]; then
             echo "::error::Missing js test baseline" >&2
             exit 1
           fi
           if [ "$ACTUAL_COUNT" -lt "$BASELINE" ]; then
-            echo "::error::TEST COUNT REGRESSION: js (main: $MAIN_COUNT, popup: $POPUP_COUNT, actual: $ACTUAL_COUNT, baseline: $BASELINE)"
+            echo "::error::TEST COUNT REGRESSION: js (main: $MAIN_COUNT, popup: $POPUP_COUNT, foundation: $FOUNDATION_COUNT, state: $STATE_COUNT, actual: $ACTUAL_COUNT, baseline: $BASELINE)"
             exit 1
           fi
-          echo "Test count OK: js main=$MAIN_COUNT + popup=$POPUP_COUNT = $ACTUAL_COUNT >= baseline=$BASELINE"
+          echo "Test count OK: js main=$MAIN_COUNT + popup=$POPUP_COUNT + foundation=$FOUNDATION_COUNT + state=$STATE_COUNT = $ACTUAL_COUNT >= baseline=$BASELINE"
 
   test-js-slow:
     runs-on: ubuntu-latest

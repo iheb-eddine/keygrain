@@ -24,7 +24,7 @@
     }
   },
   "background": {
-    "scripts": ["lib/public_suffix_list.js", "public-suffix.js", "lib/hash-wasm-argon2.js", "keygrain.js", "totp.js", "sync.js", "autofill.js", "inline-autofill.js", "background.js"]
+    "scripts": ["lib/public_suffix_list.js", "public-suffix.js", "lib/hash-wasm-argon2.js", "keygrain.js", "unlock-state.js", "totp.js", "sync.js", "autofill.js", "inline-autofill.js", "background.js"]
   },
   "commands": {
     "fill_credentials": {

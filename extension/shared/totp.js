@@ -112,11 +112,15 @@ async function generateTOTP(seed, time, {digits = 6, period = 30, algorithm = "S
 
 async function deriveTOTPSeed(secret, email, site) {
   const enc = new TextEncoder();
+  const strengthenGeneration = getStrengthenGeneration();
   const strengthened = await strengthenSecret(secret, email);
+  assertStrengthenGeneration(strengthenGeneration);
   const normalized = normalizeSite(site);
   if (!normalized) throw new Error("site must not be empty");
   const message = enc.encode(normalized + ":" + email.toLowerCase() + ":keygrain-totp");
-  return hmacSHA256(strengthened, message);
+  const seed = await hmacSHA256(strengthened, message);
+  assertStrengthenGeneration(strengthenGeneration);
+  return seed;
 }
 
 async function getTOTPCode(service, secret) {

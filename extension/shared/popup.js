@@ -2388,13 +2388,9 @@
   }
 
   autolockExtend.addEventListener("click", async () => {
-    await sendMsg({action: "heartbeat"});
+    await sendMsg({action: "extendSensitive"});
     autolockWarning.classList.add("hidden");
   });
-
-  // === Auto-lock heartbeat ===
-  document.addEventListener("click", () => sendMsg({action: "heartbeat"}));
-  document.addEventListener("keydown", () => sendMsg({action: "heartbeat"}));
 
   // === Popup-active lease (Frozen Req 14) ===
   // The background skips its 5-minute sync while this lease is valid, so a popup sync

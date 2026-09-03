@@ -27,9 +27,13 @@ async function pinDecryptSecret(pin, stored) {
 
 async function deriveStorageKey(secret, email) {
   const enc = new TextEncoder();
+  const strengthenGeneration = getStrengthenGeneration();
   const strengthened = await strengthenSecret(secret, email);
+  assertStrengthenGeneration(strengthenGeneration);
   const message = enc.encode(email.toLowerCase() + ":keygrain-local-storage");
-  return hmacSHA256(strengthened, message);
+  const key = await hmacSHA256(strengthened, message);
+  assertStrengthenGeneration(strengthenGeneration);
+  return key;
 }
 
 // Local encrypted payload, version 2 (Sync v3 — see

@@ -8,17 +8,24 @@ async function getSyncServer() {
 
 async function deriveLookupId(secret, email) {
   const enc = new TextEncoder();
+  const strengthenGeneration = getStrengthenGeneration();
   const strengthened = await strengthenSecret(secret, email);
+  assertStrengthenGeneration(strengthenGeneration);
   const message = enc.encode(email.toLowerCase() + ":keygrain-id");
   const hash = await hmacSHA256(strengthened, message);
+  assertStrengthenGeneration(strengthenGeneration);
   return Array.from(hash, b => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function deriveEncryptionKey(secret, email) {
   const enc = new TextEncoder();
+  const strengthenGeneration = getStrengthenGeneration();
   const strengthened = await strengthenSecret(secret, email);
+  assertStrengthenGeneration(strengthenGeneration);
   const message = enc.encode(email.toLowerCase() + ":keygrain-encryption");
-  return hmacSHA256(strengthened, message);
+  const key = await hmacSHA256(strengthened, message);
+  assertStrengthenGeneration(strengthenGeneration);
+  return key;
 }
 
 async function encryptBlob(keyBytes, plaintext, additionalData) {
