@@ -226,6 +226,58 @@ def test_get_no_cache(home, monkeypatch, capsys):
     assert code != 0 and "No local cache" in err
 
 
+def test_sync_upgrade_required_has_safe_copy_and_preserves_cache(home, monkeypatch, capsys):
+    _do_sync(monkeypatch, capsys)  # establish the prior cache
+    cache_path = cache_mod.cache_path(EMAIL)
+    before = open(cache_path, "rb").read()
+    calls = []
+
+    def raise_upgrade(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise sync_client.UpgradeRequired("http_426")
+
+    monkeypatch.setattr(sync_client, "download_sync_content", raise_upgrade)
+    code, out, err = run(monkeypatch, capsys,
+                         ["sync", "--email", EMAIL, "--secret-env", "KG_SECRET"])
+    assert code != 0
+    assert out == ""
+    assert err.strip() == "Update Keygrain to continue syncing this account."
+    assert "http_426" not in err
+    assert "Upgrade required" not in err
+    assert open(cache_path, "rb").read() == before
+    assert len(calls) == 1  # terminal outcome is not retried
+
+
+def test_sync_incompatible_metadata_has_same_safe_copy_and_preserves_cache(
+    home, monkeypatch, capsys
+):
+    _do_sync(monkeypatch, capsys)  # establish the prior cache
+    cache_path = cache_mod.cache_path(EMAIL)
+    before = open(cache_path, "rb").read()
+    def raise_incompatible(*args, **kwargs):
+        raise sync_client.UpgradeRequired(
+            sync_client.CapabilityMetadataClassification.STRICT
+        )
+
+    monkeypatch.setattr(sync_client, "download_sync_content", raise_incompatible)
+    code, out, err = run(monkeypatch, capsys,
+                         ["sync", "--email", EMAIL, "--secret-env", "KG_SECRET"])
+    assert code != 0
+    assert out == ""
+    assert err.strip() == "Update Keygrain to continue syncing this account."
+    assert "strict" not in err.lower()
+    assert "capabil" not in err.lower()
+    assert open(cache_path, "rb").read() == before
+
+
+def test_sync_legacy_response_still_writes_cache(home, monkeypatch, capsys):
+    code, out, err = _do_sync(monkeypatch, capsys)
+    assert code == 0
+    assert out == ""
+    assert err.strip() == "Synced 4 service(s) to local cache."
+    assert cache_mod.resolve_account() == EMAIL
+
+
 def test_sync_404_leaves_cache_untouched(home, monkeypatch, capsys):
     _do_sync(monkeypatch, capsys)  # establish a cache
     before = open(cache_mod.cache_path(EMAIL), "rb").read()

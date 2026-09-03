@@ -22,14 +22,10 @@ import java.util.concurrent.atomic.AtomicReference
  *    unit-test compile classpath (android.jar) com.sun.net.httpserver is not
  *    available. java.net is.
  *  - The tests call the internal [SyncTransport.doDelete] directly rather than the
- *    public suspend [SyncManager.deleteServerData]: on the plain-JVM unit test
- *    runtime (no Robolectric / returnDefaultValues) android.util.Base64 — used by
- *    deleteServerData to build the auth header — throws "not mocked". This is the
- *    same pre-existing limitation that stops the existing sync()/doGet/doPut
- *    paths from being unit-tested (see SshEngineTest, which uses java.util.Base64
- *    for the identical reason). doDelete itself is pure JVM (HttpURLConnection),
- *    so the meaningful HTTP behavior is fully covered; the auth header here is
- *    built with java.util.Base64.
+ *    public suspend [SyncManager.deleteServerData] so the HTTP mapping remains a
+ *    plain-JVM contract test independent of Android storage/context setup. The
+ *    auth header here is built with java.util.Base64, matching the production
+ *    java.util.Base64 UTF-8 auth encoding byte-for-byte.
  */
 class SyncManagerDeleteTest {
 

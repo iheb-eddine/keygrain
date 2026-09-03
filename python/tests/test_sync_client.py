@@ -8,6 +8,7 @@ encryption_key are then exercised on top of those verified primitives.
 
 import base64
 import hashlib
+import hmac
 import json
 
 import pytest
@@ -159,6 +160,213 @@ def test_auth_and_encryption_and_lookup_are_independent():
     assert lid != enc
 
 
+# --- Account-defaults canonical representation ---
+
+
+def _valid_defaults(**overrides):
+    defaults = {
+        "schema": 1,
+        "length": 20,
+        "symbols": DEFAULT_SYMBOLS,
+        "policy": "ascii-printable-v1",
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+def test_canonical_account_defaults_json_is_compact_sorted_and_exact():
+    assert sc.canonical_account_defaults_json(_valid_defaults()) == (
+        '{"length":20,"policy":"ascii-printable-v1","schema":1,'
+        '"symbols":"!@#$%&*-_=+?"}'
+    )
+
+
+def test_canonical_account_defaults_json_escapes_quote_and_backslash():
+    assert sc.canonical_account_defaults_json(
+        _valid_defaults(length=32, symbols='"\\!')
+    ) == '{"length":32,"policy":"ascii-printable-v1","schema":1,"symbols":"\\"\\\\!"}'
+
+
+@pytest.mark.parametrize(
+    "defaults",
+    [
+        None,
+        [],
+        {"schema": 1, "length": 20, "symbols": DEFAULT_SYMBOLS},
+        _valid_defaults(extra=True),
+        _valid_defaults(schema=True),
+        _valid_defaults(length=False),
+        _valid_defaults(length=20.0),
+        _valid_defaults(symbols=DEFAULT_SYMBOLS.encode()),
+        _valid_defaults(policy=True),
+        _valid_defaults(symbols=""),
+        _valid_defaults(symbols="has space"),
+        _valid_defaults(symbols="\x7f"),
+    ],
+)
+def test_canonical_account_defaults_json_rejects_malformed_values(defaults):
+    with pytest.raises((TypeError, ValueError)):
+        sc.canonical_account_defaults_json(defaults)
+
+
+def test_canonical_account_defaults_json_enforces_length_boundaries():
+    assert '"length":8' in sc.canonical_account_defaults_json(_valid_defaults(length=8))
+    assert '"length":128' in sc.canonical_account_defaults_json(_valid_defaults(length=128))
+    for length in (7, 129):
+        with pytest.raises(ValueError):
+            sc.canonical_account_defaults_json(_valid_defaults(length=length))
+
+
+def test_canonical_account_defaults_json_enforces_actual_charset_boundary():
+    fixed_charset_length = len(sc.UPPER) + len(sc.LOWER) + len(sc.DIGITS)
+    symbols = "!" * (256 - fixed_charset_length)
+    assert len(symbols) == 201
+    sc.canonical_account_defaults_json(_valid_defaults(symbols=symbols))
+    with pytest.raises(ValueError):
+        sc.canonical_account_defaults_json(_valid_defaults(symbols=symbols + "!"))
+
+
+def test_canonical_account_defaults_json_rejects_dict_subclasses():
+    class Defaults(dict):
+        pass
+
+    with pytest.raises(TypeError):
+        sc.canonical_account_defaults_json(Defaults(_valid_defaults()))
+
+
+# --- Defaults commitment ---
+
+
+def test_defaults_commitment_matches_frozen_vector_and_preserves_key():
+    key = bytes.fromhex(
+        "d7b935b8298f476c6046cb71501fcb8c9a53327df3cc4e05c696fea7ef3d035a"
+    )
+    original = key
+    assert sc.derive_defaults_commitment(key, EMAIL, _valid_defaults()) == (
+        "44d37dd56a969d6e4f88886827063e9cbcf44576e8b606e24e588e94e809296f"
+    )
+    assert key == original
+
+
+def test_defaults_commitment_accepts_unchanged_bytes_like_keys():
+    key = bytearray.fromhex(
+        "d7b935b8298f476c6046cb71501fcb8c9a53327df3cc4e05c696fea7ef3d035a"
+    )
+    original = key[:]
+    expected = sc.derive_defaults_commitment(key, EMAIL, _valid_defaults())
+    assert expected == sc.derive_defaults_commitment(memoryview(key), EMAIL, _valid_defaults())
+    assert key == original
+
+
+@pytest.mark.parametrize("bad_key", ["x" * 32, b"x" * 31, b"x" * 33, bytearray(31)])
+def test_defaults_commitment_rejects_non_32_byte_keys(bad_key):
+    with pytest.raises((TypeError, ValueError)):
+        sc.derive_defaults_commitment(bad_key, EMAIL, _valid_defaults())
+
+
+@pytest.mark.parametrize(
+    "bad_email",
+    [
+        "Test@gmail.com",
+        " test@gmail.com",
+        "test@gmail.com ",
+        "test@例子.com",
+        "test@x.com\x00",
+        "test@x.com\\ud800",
+        "a" * 249 + "@x.com",
+        "test@@gmail.com",
+        "test@-gmail.com",
+        "test@gmail..com",
+    ],
+)
+def test_defaults_commitment_rejects_non_normalized_emails(bad_email):
+    key = bytes(32)
+    with pytest.raises((TypeError, ValueError)):
+        sc.derive_defaults_commitment(key, bad_email, _valid_defaults())
+
+
+def test_defaults_commitment_has_email_defaults_and_domain_separation():
+    key = bytes.fromhex(
+        "d7b935b8298f476c6046cb71501fcb8c9a53327df3cc4e05c696fea7ef3d035a"
+    )
+    expected = sc.derive_defaults_commitment(key, EMAIL, _valid_defaults())
+    assert expected != sc.derive_defaults_commitment(key, "other@gmail.com", _valid_defaults())
+    assert expected != sc.derive_defaults_commitment(key, EMAIL, _valid_defaults(length=21))
+    assert expected != sc.derive_defaults_commitment(key, EMAIL, _valid_defaults(symbols="@"))
+    commit_key = hmac.new(
+        key,
+        (EMAIL + ":keygrain-defaults-commitment").encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    wrong_domain = hmac.new(
+        commit_key,
+        b"keygrain-account-defaults-v1" + sc.canonical_account_defaults_json(_valid_defaults()).encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    assert expected != wrong_domain
+
+
+# --- v3 sync AAD ---
+
+
+def test_build_v3_sync_aad_matches_exact_bytes_for_each_state():
+    lookup_id = "0123456789abcdef" * 4
+    commitment = "ab" * 32
+    expected = {
+        "UNSEALED": "6b6579677261696e2d73796e632d7633003031323334353637383961626364656630313233343536373839616263646566303132333435363738396162636465663031323334353637383961626364656600554e5345414c454400",
+        "ABSENT": "6b6579677261696e2d73796e632d7633003031323334353637383961626364656630313233343536373839616263646566303132333435363738396162636465663031323334353637383961626364656600414253454e5400",
+        "PRESENT": "6b6579677261696e2d73796e632d763300303132333435363738396162636465663031323334353637383961626364656630313233343536373839616263646566303132333435363738396162636465660050524553454e540061626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162",
+    }
+    for state, expected_hex in expected.items():
+        actual = sc.build_v3_sync_aad(
+            lookup_id, state, commitment if state == "PRESENT" else None
+        )
+        assert actual.hex() == expected_hex
+        original = actual[:]
+        actual_mutable = bytearray(actual)
+        actual_mutable[0] ^= 0xFF
+        assert bytes(actual_mutable) != original
+        assert sc.build_v3_sync_aad(
+            lookup_id, state, commitment if state == "PRESENT" else None
+        ).hex() == expected_hex
+
+
+@pytest.mark.parametrize(
+    "lookup_id",
+    ["", "A" * 64, "0" * 63, "0" * 65, "0" * 63 + "!", "0" * 32 + "\x00" + "0" * 31],
+)
+def test_build_v3_sync_aad_rejects_malformed_lookup_ids(lookup_id):
+    with pytest.raises(TypeError):
+        sc.build_v3_sync_aad(lookup_id, "ABSENT")
+
+
+def test_build_v3_sync_aad_rejects_invalid_states_and_commitment_tuples():
+    lookup_id = "01" * 32
+    commitment = "ab" * 32
+    with pytest.raises(TypeError):
+        sc.build_v3_sync_aad(lookup_id, "UNKNOWN")
+    for state in ("UNSEALED", "ABSENT"):
+        with pytest.raises(TypeError):
+            sc.build_v3_sync_aad(lookup_id, state, "")
+        with pytest.raises(TypeError):
+            sc.build_v3_sync_aad(lookup_id, state, commitment)
+    with pytest.raises(TypeError):
+        sc.build_v3_sync_aad(lookup_id, "PRESENT")
+    for bad_commitment in (commitment.upper(), commitment[:-1], commitment + "0", "g" * 64):
+        with pytest.raises(TypeError):
+            sc.build_v3_sync_aad(lookup_id, "PRESENT", bad_commitment)
+
+
+def test_build_v3_sync_aad_domain_separates_lookup_state_and_commitment():
+    lookup_id = "01" * 32
+    commitment = "ab" * 32
+    present = sc.build_v3_sync_aad(lookup_id, "PRESENT", commitment)
+    assert present != sc.build_v3_sync_aad("02" * 32, "PRESENT", commitment)
+    assert present != sc.build_v3_sync_aad(lookup_id, "ABSENT")
+    assert present != sc.build_v3_sync_aad(lookup_id, "PRESENT", "cd" * 32)
+    assert present.startswith(b"keygrain-sync-v3\x00")
+
+
 # --- Server blob round-trip (build a blob exactly like the extension) ---
 
 def _make_server_blob(enc_key: bytes, lookup_id: str, content: dict):
@@ -282,6 +490,63 @@ def _server_payload(content: dict):
     return json.dumps(
         {"version": 1, "services": metadata, "encrypted_blob": blob_b64, "checksum": checksum}
     ).encode()
+
+
+@pytest.mark.parametrize("payload, expected", [
+    ({"services": []}, sc.CapabilityMetadataClassification.LEGACY_ABSENT),
+    (
+        {"payload_version": 3, "min_writer_protocol": 3,
+         "capabilities": ["account_defaults_immutable_v1"]},
+        sc.CapabilityMetadataClassification.STRICT,
+    ),
+    ({"payload_version": 3}, sc.CapabilityMetadataClassification.PARTIAL),
+    ({"payload_version": None, "min_writer_protocol": 3, "capabilities": []},
+     sc.CapabilityMetadataClassification.MALFORMED),
+    ({"payload_version": 3.0, "min_writer_protocol": 3, "capabilities": []},
+     sc.CapabilityMetadataClassification.MALFORMED),
+    ({"payload_version": 3, "min_writer_protocol": 3, "capabilities": ["ok", 4]},
+     sc.CapabilityMetadataClassification.MALFORMED),
+    ({"payload_version": 2, "min_writer_protocol": 3, "capabilities": []},
+     sc.CapabilityMetadataClassification.CONTRADICTORY),
+    ({"payload_version": 3, "min_writer_protocol": 3,
+      "capabilities": ["account_defaults_immutable_v1", "unexpected"]},
+     sc.CapabilityMetadataClassification.CONTRADICTORY),
+    ({"payload_version": 2, "min_writer_protocol": 2, "capabilities": ["other"]},
+     sc.CapabilityMetadataClassification.UNSUPPORTED),
+])
+def test_classify_capability_metadata(payload, expected):
+    assert sc.classify_capability_metadata(payload) == expected
+
+
+def test_classify_non_dict_as_malformed():
+    assert sc.classify_capability_metadata([]) == sc.CapabilityMetadataClassification.MALFORMED
+
+
+def test_incompatible_metadata_rejected_before_blob_access(monkeypatch):
+    class ExplodingBlobPayload(dict):
+        def __contains__(self, key):
+            if key in {"encrypted_blob", "checksum"}:
+                raise AssertionError(f"incompatible response touched {key}")
+            return super().__contains__(key)
+
+    payload = ExplodingBlobPayload({
+        "payload_version": 3,
+        "min_writer_protocol": 3,
+        "capabilities": ["account_defaults_immutable_v1"],
+    })
+    monkeypatch.setattr(sc.json, "loads", lambda _body: payload)
+    monkeypatch.setattr(sc, "_urlopen", lambda req, timeout=None: _FakeResponse(b"ignored"))
+    with pytest.raises(sc.UpgradeRequired) as exc_info:
+        sc.download_sync_content("https://keygrain.com", SECRET, EMAIL)
+    assert exc_info.value.reason == sc.CapabilityMetadataClassification.STRICT
+
+
+def test_download_426_maps_to_terminal_upgrade_required(monkeypatch):
+    monkeypatch.setattr(sc, "_urlopen", _raise_http(426))
+    with pytest.raises(sc.UpgradeRequired) as exc_info:
+        sc.download_sync_content("https://keygrain.com", SECRET, EMAIL)
+    assert exc_info.value.reason == "http_426"
+    assert str(exc_info.value) == "Upgrade required."
 
 
 def test_download_enriches_id_and_updated_at(monkeypatch):
