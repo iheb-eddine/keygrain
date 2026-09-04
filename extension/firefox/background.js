@@ -110,31 +110,26 @@ async function firefoxReconcileIndicators({after, projection, check}) {
     check();
     const deadline = after && (after.state === "full" ? after.fullExpiresAt : after.state === "metadata" ? after.metadataExpiresAt : null);
 
-    const sessionStore = getFirefoxSessionStorage();
-    if (sessionStore && after) {
-      const sessionData = await sessionStore.get("keygrainSession");
-      const session = sessionData?.keygrainSession;
-      if (session && session.email) {
+    if (after) {
+      await updateSession(async (session) => {
+        if (!session || !session.email) return session;
         if (after.state === "locked") {
-          await sessionStore.remove("keygrainSession");
+          return null;
         } else {
-          const settings = await firefoxOwner.loadSettings();
-          const metaTailSec = settings?.metadataTailSeconds !== undefined ? settings.metadataTailSeconds : (KEYGRAIN_DEFAULT_SETTINGS?.metadataTailSeconds || 28500);
           const fullExpiresAt = after.state === "full" ? after.fullExpiresAt : null;
-          const metadataTailAnchor = after.metadataExpiresAt || (fullExpiresAt ? fullExpiresAt + metaTailSec * 1000 : null);
+          const metadataTailAnchor = after.metadataTailAnchor;
           const metadata = extractMetadata();
-          await sessionStore.set({
-            keygrainSession: {
-              ...session,
-              secret: (after.state === "full" && session.secret) ? session.secret : null,
-              fullExpiresAt,
-              metadataExpiresAt: after.metadataExpiresAt,
-              metadataTailAnchor,
-              metadata,
-            }
-          });
+          return {
+            ...session,
+            secret: (after.state === "full" && session.secret) ? session.secret : null,
+            fullExpiresAt,
+            metadataExpiresAt: after.metadataExpiresAt,
+            metadataTailAnchor,
+            activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
+            metadata,
+          };
         }
-      }
+      });
     }
     if (deadline !== null && deadline !== undefined) {
       check();
@@ -413,6 +408,7 @@ async function firefoxProvePasswordContext({context, deliveryNonce}) {
     const timer = setTimeout(() => { firefoxPasswordPendingProofs.delete(deliveryNonce); reject(Object.assign(new Error("timeout"), {code: "KEYGRAIN_CONTEXT_ERROR"})); }, KeygrainBrowserOwner.KEYGRAIN_PASSWORD_DELIVERY_TTL_MS);
     firefoxPasswordPendingProofs.set(deliveryNonce, {challenge, context, timer, resolve, reject});
   });
+  proof.catch(() => {});
   const probe = {action: "keygrain.password.contextProbe", challenge, deliveryNonce};
   try {
     await firefoxInjectBridge(context);
@@ -453,6 +449,7 @@ async function firefoxDeliverPassword({context, deliveryNonce, password, email})
     const timer = setTimeout(() => { firefoxPasswordPendingDeliveries.delete(key); firefoxClearBinding(deliveryNonce); reject(Object.assign(new Error("timeout"), {code: "KEYGRAIN_FILL_DELIVERY_ERROR"})); }, KeygrainBrowserOwner.KEYGRAIN_PASSWORD_DELIVERY_TTL_MS);
     firefoxPasswordPendingDeliveries.set(key, {resolve, timer});
   });
+  result.catch(() => {});
   const delivery = {action: "keygrain.password.fillResult", deliveryNonce, password, email};
   let direct = null;
   try { direct = await browser.tabs.sendMessage(binding.tabId, delivery, {frameId: binding.frameId !== undefined ? binding.frameId : 0}); }
@@ -577,6 +574,7 @@ async function firefoxProveTotpContext({context, deliveryNonce}) {
     }, KeygrainBrowserOwner.KEYGRAIN_TOTP_DELIVERY_TTL_MS);
     firefoxTotpPendingProofs.set(deliveryNonce, {challenge, context, timer, resolve, reject});
   });
+  proof.catch(() => {});
   try {
     await firefoxInjectBridge(context);
     const direct = await browser.tabs.sendMessage(context.tabId, {action: "keygrain.totp.contextProbe", challenge, deliveryNonce}, {frameId: context.frameId !== undefined ? context.frameId : 0});
@@ -618,6 +616,7 @@ async function firefoxDeliverTotp({context, deliveryNonce, code}) {
     }, KeygrainBrowserOwner.KEYGRAIN_TOTP_DELIVERY_TTL_MS);
     firefoxTotpPendingDeliveries.set(deliveryNonce, {resolve, reject, timer});
   });
+  result.catch(() => {});
   let direct = null;
   try {
     direct = await browser.tabs.sendMessage(binding.tabId, {action: "keygrain.totp.fillResult", deliveryNonce, code}, {frameId: binding.frameId !== undefined ? binding.frameId : 0});
@@ -861,6 +860,25 @@ const firefoxOwner = KeygrainBrowserOwner.createOwner({
   authenticateAndPrepare: readAndPrepare,
 });
 
+
+let sessionUpdateQueue = Promise.resolve();
+function updateSession(updater) {
+  sessionUpdateQueue = sessionUpdateQueue.then(async () => {
+    try {
+      const sessionStore = getFirefoxSessionStorage();
+      if (!sessionStore) return;
+      const data = await sessionStore.get("keygrainSession");
+      const session = data?.keygrainSession || {};
+      const nextSession = await updater(session);
+      if (nextSession === null) {
+        await sessionStore.remove("keygrainSession");
+      } else if (nextSession !== undefined) {
+        await sessionStore.set({ keygrainSession: nextSession });
+      }
+    } catch (_) {}
+  }).catch(() => {});
+  return sessionUpdateQueue;
+}
 function getFirefoxSessionStorage() {
   try {
     if (typeof browser !== "undefined" && browser?.storage?.session) return browser.storage.session;
@@ -893,35 +911,35 @@ function extractMetadata() {
 }
 
 async function saveSession({ email, secret, snap }) {
-  try {
-    const sessionStore = getFirefoxSessionStorage();
-    if (!sessionStore) return;
+  await updateSession(async (session) => {
     if (snap && (snap.state === "full" || snap.state === "metadata")) {
-      const settings = await firefoxOwner.loadSettings();
-      const metaTailSec = settings?.metadataTailSeconds !== undefined ? settings.metadataTailSeconds : (KEYGRAIN_DEFAULT_SETTINGS?.metadataTailSeconds || 28500);
       const fullExpiresAt = snap.state === "full" ? snap.fullExpiresAt : null;
-      const metadataTailAnchor = snap.metadataExpiresAt || (fullExpiresAt ? fullExpiresAt + metaTailSec * 1000 : null);
+      const metadataTailAnchor = snap.metadataTailAnchor;
       const metadata = extractMetadata();
-      await sessionStore.set({
-        keygrainSession: {
-          email,
-          secret: (snap.state === "full" && secret) ? secret : null,
-          fullExpiresAt,
-          metadataExpiresAt: snap.metadataExpiresAt,
-          metadataTailAnchor,
-          metadata,
-        }
-      });
+      const activeTail = snap.state === "full"
+        ? (snap.metadataTailAnchor && snap.fullExpiresAt ? Math.round((snap.metadataTailAnchor - snap.fullExpiresAt) / 1000) : null)
+        : (session.activeMetadataTailSeconds ?? null);
+      return {
+        ...session,
+        email,
+        secret: (snap.state === "full" && secret) ? secret : null,
+        fullExpiresAt,
+        metadataExpiresAt: snap.metadataExpiresAt,
+        metadataTailAnchor,
+        activeMetadataTailSeconds: activeTail,
+        metadata,
+      };
     } else {
-      await sessionStore.remove("keygrainSession");
+      return null;
     }
-  } catch (_) {}
+  });
 }
 
 async function clearMemorySession() {
+  await updateSession(() => null);
   try {
     const sessionStore = getFirefoxSessionStorage();
-    if (sessionStore) await sessionStore.remove(["keygrainSession", "pendingAutofillIntent"]);
+    if (sessionStore) await sessionStore.remove("pendingAutofillIntent");
   } catch (_) {}
   try {
     if (typeof clearStrengthenCache === "function") clearStrengthenCache();
@@ -1047,11 +1065,23 @@ const startupPromise = (async () => {
     if (session && session.email) {
       const now = Date.now();
       if (session.secret && session.fullExpiresAt && now < session.fullExpiresAt) {
-        const prepared = await readAndPrepare({
-          email: session.email,
-          secret: session.secret,
-          popupSessionId: "sw-restore-" + Date.now(),
-        });
+        let prepared;
+        try {
+          prepared = await readAndPrepare({
+            email: session.email,
+            secret: session.secret,
+            popupSessionId: "sw-restore-" + Date.now(),
+          });
+        } catch (error) {
+          if (error.code === "ACCOUNT_NOT_FOUND") {
+            prepared = {
+              fullData: { services: [], wallets: [], walletAuditLog: [], tombstones: [], deletionReview: [], email: session.email, secret: session.secret },
+              records: [],
+            };
+          } else {
+            throw error;
+          }
+        }
         const payload = firefoxOwner.preparedUnlock ? firefoxOwner.preparedUnlock(prepared) : prepared;
         firefoxOwner.restoreSession({
           email: session.email,
@@ -1059,9 +1089,7 @@ const startupPromise = (async () => {
           records: payload.records,
           fullExpiresAt: session.fullExpiresAt,
           metadataTailAnchor: session.metadataTailAnchor,
-          activeMetadataTailSeconds: (session.metadataTailAnchor && session.fullExpiresAt)
-            ? Math.round((session.metadataTailAnchor - session.fullExpiresAt) / 1000)
-            : null,
+          activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
         });
       } else if (session.metadataTailAnchor && now < session.metadataTailAnchor && Array.isArray(session.metadata)) {
         firefoxOwner.restoreSession({
@@ -1069,21 +1097,10 @@ const startupPromise = (async () => {
           metadata: session.metadata,
           metadataExpiresAt: session.metadataExpiresAt || session.metadataTailAnchor,
           metadataTailAnchor: session.metadataTailAnchor,
-          activeMetadataTailSeconds: (session.metadataTailAnchor && session.fullExpiresAt)
-            ? Math.round((session.metadataTailAnchor - session.fullExpiresAt) / 1000)
-            : null,
+          activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
         });
-        if (session.secret) {
-          await sessionStore?.set({
-            keygrainSession: {
-              ...session,
-              secret: null,
-              fullExpiresAt: null,
-            }
-          });
-        }
       } else {
-        await sessionStore?.remove("keygrainSession");
+        await clearMemorySession();
       }
     }
   } catch (_) {}
@@ -1121,19 +1138,18 @@ if (browser.alarms?.onAlarm?.addListener) {
         if (snap.state === "locked") {
           await clearMemorySession();
         } else if (snap.state === "metadata") {
-          const sessionStore = getFirefoxSessionStorage();
-          if (sessionStore) {
-            const sessionData = await sessionStore.get("keygrainSession");
-            const session = sessionData?.keygrainSession;
-            if (session) {
-              session.secret = null;
-              session.fullExpiresAt = null;
-              session.metadataExpiresAt = snap.metadataExpiresAt;
-              session.metadataTailAnchor = snap.metadataExpiresAt;
-              session.metadata = extractMetadata();
-              await sessionStore.set({ keygrainSession: session });
-            }
-          }
+          await updateSession(async (session) => {
+            if (!session) return session;
+            return {
+              ...session,
+              secret: null,
+              fullExpiresAt: null,
+              metadataExpiresAt: snap.metadataExpiresAt,
+              metadataTailAnchor: snap.metadataTailAnchor,
+              activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
+              metadata: extractMetadata(),
+            };
+          });
         }
       }
     }).catch(() => {});
@@ -1414,6 +1430,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
         await broadcastInline({action: "inlineDisabled"});
       }
       await firefoxOwner.reconcile("setting_changed");
+      if (message.enabled) {
+        await broadcastInline({action: "inlineLockChanged"});
+      }
       return {ok: true};
     })();
   }
@@ -1685,6 +1704,28 @@ browser.runtime.onMessage.addListener((message, sender) => {
       return KeygrainBrowserOwner.success({ wallets: updatedWallets });
     }).catch(safeMessageError);
   }
+  if (action === "deleteServerData") {
+    return startupPromise.then(async () => {
+      const snap = firefoxOwner.snapshot();
+      if (snap.state !== "full") return KeygrainBrowserOwner.safeFailure("LOCKED");
+      let secret = null;
+      let email = null;
+      const opHandle = firefoxOwner.manager.beginSensitiveOperation({capture: fullData => ({secret: fullData?.secret, email: fullData?.email})});
+      try {
+        const input = firefoxOwner.manager.getSensitiveOperationInput(opHandle);
+        secret = input?.secret || null;
+        email = input?.email || null;
+      } finally {
+        try { firefoxOwner.manager.completeSensitiveOperation(opHandle, "delete_server_data"); } catch (_) {}
+      }
+      if (!secret || !email) return KeygrainBrowserOwner.safeFailure("CREDENTIALS_UNAVAILABLE");
+      const res = await deleteServerData(secret, email);
+      if (res?.ok) {
+        await browser.storage.local.remove(["lastSyncTime", "lastSyncETag", "syncKnownUUIDs", "lastSuccessfulSyncAt"]);
+      }
+      return KeygrainBrowserOwner.success(res);
+    }).catch(safeMessageError);
+  }
   if (action === "issueUnlockChallenge") {
     try {
       if (!KeygrainBrowserOwner.isTrustedExtensionPage(sender, browser.runtime.id, "unlock", "firefox", KEYGRAIN_EXTENSION_ORIGIN)
@@ -1692,7 +1733,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
         || typeof message.popupSessionId !== "string" || message.popupSessionId.length < 1) {
         return Promise.resolve(KeygrainBrowserOwner.safeFailure(KeygrainBrowserOwner.CONTEXT_ERROR));
       }
-      return firefoxIngressPromise
+      return startupPromise
+        .then(() => firefoxIngressPromise)
         .then(ingress => ingress.issueChallenge({sender, popupSessionId: message.popupSessionId}))
         .then(challenge => KeygrainBrowserOwner.success({challenge}))
         .catch(safeMessageError);
@@ -1706,7 +1748,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
         || !message.envelope || typeof message.envelope !== "object" || Array.isArray(message.envelope)) {
         return Promise.resolve(KeygrainBrowserOwner.safeFailure(KeygrainBrowserOwner.CONTEXT_ERROR));
       }
-      return firefoxIngressPromise
+      return startupPromise
+        .then(() => firefoxIngressPromise)
         .then(ingress => ingress.admitUnlock({sender, popupSessionId: message.popupSessionId, isCreate: Boolean(message.isCreate)}, message.envelope))
         .catch(safeMessageError);
     } catch (_) { return Promise.resolve(KeygrainBrowserOwner.safeFailure(KeygrainBrowserOwner.CONTEXT_ERROR)); }
@@ -1746,18 +1789,18 @@ browser.runtime.onMessage.addListener((message, sender) => {
         if (snap.state === "locked") {
           await clearMemorySession();
         } else if (snap.state === "full" || snap.state === "metadata") {
-          const sessionData = await sessionStore?.get("keygrainSession");
-          const session = sessionData?.keygrainSession;
-          if (session) {
-            const settings = await firefoxOwner.loadSettings();
-            const metaTailSec = settings?.metadataTailSeconds !== undefined ? settings.metadataTailSeconds : (KEYGRAIN_DEFAULT_SETTINGS?.metadataTailSeconds || 28500);
-            session.secret = snap.state === "full" ? session.secret : null;
-            session.fullExpiresAt = snap.state === "full" ? snap.fullExpiresAt : null;
-            session.metadataExpiresAt = snap.metadataExpiresAt;
-            session.metadataTailAnchor = snap.metadataExpiresAt || (snap.fullExpiresAt ? snap.fullExpiresAt + metaTailSec * 1000 : null);
-            session.metadata = extractMetadata();
-            await sessionStore?.set({ keygrainSession: session });
-          }
+          await updateSession(async (session) => {
+            if (!session) return session;
+            return {
+              ...session,
+              secret: snap.state === "full" ? session.secret : null,
+              fullExpiresAt: snap.state === "full" ? snap.fullExpiresAt : null,
+              metadataExpiresAt: snap.metadataExpiresAt,
+              metadataTailAnchor: snap.metadataTailAnchor,
+              activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
+              metadata: extractMetadata(),
+            };
+          });
         }
       }
       return res;
@@ -1772,18 +1815,18 @@ browser.runtime.onMessage.addListener((message, sender) => {
         if (snap.state === "locked") {
           await clearMemorySession();
         } else if (snap.state === "full" || snap.state === "metadata") {
-          const sessionData = await sessionStore?.get("keygrainSession");
-          const session = sessionData?.keygrainSession;
-          if (session) {
-            const settings = await firefoxOwner.loadSettings();
-            const metaTailSec = settings?.metadataTailSeconds !== undefined ? settings.metadataTailSeconds : (KEYGRAIN_DEFAULT_SETTINGS?.metadataTailSeconds || 28500);
-            session.secret = snap.state === "full" ? session.secret : null;
-            session.fullExpiresAt = snap.state === "full" ? snap.fullExpiresAt : null;
-            session.metadataExpiresAt = snap.metadataExpiresAt;
-            session.metadataTailAnchor = snap.metadataExpiresAt || (snap.fullExpiresAt ? snap.fullExpiresAt + metaTailSec * 1000 : null);
-            session.metadata = extractMetadata();
-            await sessionStore?.set({ keygrainSession: session });
-          }
+          await updateSession(async (session) => {
+            if (!session) return session;
+            return {
+              ...session,
+              secret: snap.state === "full" ? session.secret : null,
+              fullExpiresAt: snap.state === "full" ? snap.fullExpiresAt : null,
+              metadataExpiresAt: snap.metadataExpiresAt,
+              metadataTailAnchor: snap.metadataTailAnchor,
+              activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
+              metadata: extractMetadata(),
+            };
+          });
         }
       }
       return res;

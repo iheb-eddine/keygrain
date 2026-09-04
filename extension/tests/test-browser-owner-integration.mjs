@@ -209,7 +209,7 @@ for (const browserName of ['chrome', 'firefox']) {
     });
     assert.equal(result.error, undefined);
     assert.deepEqual(result.prepared.fullData.services, [{id: 'svc', unknown: {kept: true}}]);
-    assert.deepEqual(result.log, ['read', 'sync:[[],[],[],[]]', 'deriveStorageKey', 'encryptServices', 'set:services', 'clearKey']);
+    assert.deepEqual(result.log, ['read', 'sync:[[],[],[],[],0,null]', 'deriveStorageKey', 'encryptServices', 'set:services', 'clearKey']);
   });
 
   await test(`${browserName}: clean bootstrap rejects null sync collections without owner write`, async () => {
@@ -217,7 +217,7 @@ for (const browserName of ['chrome', 'firefox']) {
       syncResult: {services: null, wallets: [], wallet_audit_log: [], tombstones: [], review: []},
     });
     assert(result.error);
-    assert.deepEqual(result.log, ['read', 'sync:[[],[],[],[]]']);
+    assert.deepEqual(result.log, ['read', 'sync:[[],[],[],[],0,null]']);
   });
 
   await test(`${browserName}: explicit null local services is not clean bootstrap`, async () => {
@@ -277,7 +277,7 @@ for (const browserName of ['chrome', 'firefox']) {
   await test(`${browserName}: sync error and persistence failure do not run cleanup`, async () => {
     const syncFailure = await runOwnerPrepare(browserName, {syncError: true});
     assert(syncFailure.error);
-    assert.deepEqual(syncFailure.log, ['read', 'sync:[[],[],[],[]]']);
+    assert.deepEqual(syncFailure.log, ['read', 'sync:[[],[],[],[],0,null]']);
     const writeFailure = await runOwnerPrepare(browserName, {
       stored: {version: 1, services: [{id: 'legacy'}]}, failSet: true,
     });
@@ -734,3 +734,184 @@ assert.match(chromeTotpBlock, /pending\.reject\?\.\(/);
 assert.match(firefoxTotpBlock, /proof\.reject\?\.\(/);
 assert.match(firefoxTotpBlock, /pending\.reject\?\.\(/);
 console.log('indicator reconciliation tests passed');
+
+// Worker Hibernation & Re-hydration Lifecycle Test:
+// Simulates background worker process termination, passage of time past full lease,
+// re-hydration from storage.session, and clean transition to metadata state with exact lease.
+for (const browserName of ['chrome', 'firefox']) {
+  const bgSource = readFileSync(resolve(__dirname, '..', browserName, 'background.js'), 'utf8');
+
+  // Verify critical invariants in background.js source code:
+  // 1. Session persistence saves metadataTailAnchor
+  assert.match(bgSource, /metadataTailAnchor/,
+    `${browserName}: saves metadataTailAnchor into storage.session`);
+  // 2. Startup restoration recognizes metadataTailAnchor when full lease has expired
+  assert.match(bgSource, /session\.metadataTailAnchor\s*&&\s*now\s*<\s*session\.metadataTailAnchor/,
+    `${browserName}: restores metadata mode using metadataTailAnchor after full lease expiry`);
+  // 3. metadataTailAnchor is passed into restoreSession
+  assert.match(bgSource, /metadataTailAnchor\s*:\s*session\.metadataTailAnchor/,
+    `${browserName}: passes metadataTailAnchor to restoreSession`);
+
+  // Now simulate the full runtime hibernation and recovery lifecycle
+  let mockTime = 1000000;
+  const mockStorageSession = {};
+  const mockAlarms = {};
+
+  const makeCtx = () => {
+    const ctx = createContext({
+      Array, ArrayBuffer, Date: class extends Date {
+        constructor(...args) {
+          if (args.length === 0) super(mockTime);
+          else super(...args);
+        }
+        static now() { return mockTime; }
+      },
+      Error, JSON, Map, Math, Number, Object, Promise, RegExp, Set, String, URL, Uint8Array, console,
+    });
+    runInContext('globalThis = this;', ctx);
+    runInContext(readFileSync(resolve(__dirname, '..', 'shared', 'unlock-state.js'), 'utf8'), ctx);
+    runInContext('globalThis.KeygrainInline = {computeMatchPatterns: () => []};', ctx);
+    runInContext(readFileSync(resolve(__dirname, '..', 'shared', 'browser-owner.js'), 'utf8'), ctx);
+    return ctx;
+  };
+
+  // --- Process 1: Unlock and setup session ---
+  const ctx1 = makeCtx();
+  const settings = { version: 1, fullLeaseSeconds: 60, metadataTailSeconds: 14400 };
+  const adapter1 = {
+    browser: browserName,
+    storage: { async get() { return { keygrainSecurityLeaseSettings: settings }; }, async set() {}, async remove() {} },
+    async reconcileIndicators(payload) {
+      const snap = payload.after;
+      if (snap.state === 'locked') {
+        delete mockStorageSession.keygrainSession;
+        delete mockAlarms['keygrain-state-wake'];
+      } else {
+        const fullExpiresAt = snap.state === 'full' ? snap.fullExpiresAt : null;
+        mockStorageSession.keygrainSession = {
+          email: 'user@example.com',
+          secret: snap.state === 'full' ? 'master-secret' : null,
+          fullExpiresAt,
+          metadataExpiresAt: snap.metadataExpiresAt,
+          metadataTailAnchor: snap.metadataTailAnchor,
+          metadata: [{ id: 'svc-1', name: 'GitHub', site: 'github.com', email: 'user@example.com' }],
+        };
+        const deadline = snap.state === 'full' ? snap.fullExpiresAt : snap.metadataExpiresAt;
+        if (deadline) mockAlarms['keygrain-state-wake'] = { when: deadline };
+      }
+    },
+  };
+  ctx1._adapter = adapter1;
+  runInContext('globalThis.owner = KeygrainBrowserOwner.createOwner({adapter:_adapter, settings:{version:1,fullLeaseSeconds:60,metadataTailSeconds:14400}, clock:()=>Date.now()})', ctx1);
+
+  // Unlock with 60s full lease + 14400s metadata tail
+  runInContext(`
+    owner.manager.unlockFull({
+      fullData: {
+        secret: "master-secret",
+        email: "user@example.com",
+        services: [{ id: "svc-1", name: "GitHub", site: "github.com", email: "user@example.com", password: "pwd" }]
+      },
+      records: [{ id: "svc-1", name: "GitHub", site: "github.com", email: "user@example.com" }]
+    });
+    owner.reconcile("unlock");
+  `, ctx1);
+
+  await runInContext('owner.whenReconciled()', ctx1);
+
+  // Verify Worker 1 established state and scheduled wake alarm
+  const snap1 = runInContext('owner.snapshot()', ctx1);
+  assert.equal(snap1.state, 'full');
+  assert.equal(snap1.fullExpiresAt, mockTime + 60 * 1000);
+  assert.equal(snap1.metadataTailAnchor, mockTime + (60 + 14400) * 1000);
+  assert.equal(mockStorageSession.keygrainSession.secret, 'master-secret');
+  assert.equal(mockAlarms['keygrain-state-wake'].when, mockTime + 60 * 1000);
+
+  // --- PROCESS TERMINATION (Simulate worker kill / heap eviction) ---
+  // Invalidate and drop all Worker 1 references.
+  ctx1.owner = null;
+  ctx1._adapter = null;
+
+  // --- ADVANCE TIME PAST FULL LEASE (+70s) ---
+  mockTime += 70 * 1000;
+
+  // --- Process 2: Worker wakes up from cold start ---
+  // A new worker heap is constructed. It reads mockStorageSession.keygrainSession.
+  const ctx2 = makeCtx();
+  const sessionData = mockStorageSession.keygrainSession;
+  assert.ok(sessionData, 'session survived in storage.session');
+  assert.ok(sessionData.metadataTailAnchor, 'metadataTailAnchor was preserved across hibernation');
+
+  // Verify that fullExpiresAt is now in the past, but metadataTailAnchor is still valid:
+  const now2 = mockTime;
+  assert.ok(sessionData.fullExpiresAt < now2, 'full lease is expired');
+  assert.ok(now2 < sessionData.metadataTailAnchor, 'metadata tail anchor is still valid');
+
+  const adapter2 = {
+    browser: browserName,
+    storage: { async get() { return { keygrainSecurityLeaseSettings: settings }; }, async set() {}, async remove() {} },
+    async reconcileIndicators(payload) {
+      const snap = payload.after;
+      if (snap.state === 'locked') {
+        delete mockStorageSession.keygrainSession;
+        delete mockAlarms['keygrain-state-wake'];
+      } else {
+        const fullExpiresAt = snap.state === 'full' ? snap.fullExpiresAt : null;
+        mockStorageSession.keygrainSession = {
+          email: sessionData.email,
+          secret: snap.state === 'full' ? sessionData.secret : null,
+          fullExpiresAt,
+          metadataExpiresAt: snap.metadataExpiresAt,
+          metadataTailAnchor: snap.metadataTailAnchor,
+          metadata: sessionData.metadata,
+        };
+        const deadline = snap.state === 'full' ? snap.fullExpiresAt : snap.metadataExpiresAt;
+        if (deadline) mockAlarms['keygrain-state-wake'] = { when: deadline };
+      }
+    },
+  };
+  ctx2._adapter = adapter2;
+  runInContext('globalThis.owner = KeygrainBrowserOwner.createOwner({adapter:_adapter, settings:{version:1,fullLeaseSeconds:60,metadataTailSeconds:14400}, clock:()=>Date.now()})', ctx2);
+
+  // Re-hydrate session as startupPromise does in background.js:
+  ctx2._session = sessionData;
+  runInContext(`
+    owner.restoreSession({
+      email: _session.email,
+      metadata: _session.metadata,
+      metadataExpiresAt: _session.metadataExpiresAt || _session.metadataTailAnchor,
+      metadataTailAnchor: _session.metadataTailAnchor,
+      activeMetadataTailSeconds: (_session.metadataTailAnchor && _session.fullExpiresAt)
+        ? Math.round((_session.metadataTailAnchor - _session.fullExpiresAt) / 1000)
+        : null,
+    });
+    owner.reconcile("wake");
+  `, ctx2);
+
+  await runInContext('owner.whenReconciled()', ctx2);
+
+  // Verify Worker 2 successfully restored directly into METADATA state
+  const snap2 = runInContext('owner.snapshot()', ctx2);
+  assert.equal(snap2.state, 'metadata', 'state must be metadata, not locked or full');
+  assert.equal(snap2.hasFullData, false, 'fullData must not exist in metadata state');
+  // Verify metadata tail calculation: remaining duration must be precisely 14400 - 10s (70s passed since unlock, but full lease was 60s, so 10s into metadata tail)
+  const remainingSeconds = Math.round((snap2.metadataExpiresAt - mockTime) / 1000);
+  assert.equal(remainingSeconds, 14400 - 10, 'remaining metadata tail must not reset to initial full configured value');
+  // Verify storage session updated to metadata-only (secret dropped)
+  assert.equal(mockStorageSession.keygrainSession.secret, null, 'secret dropped from storage.session');
+  // Verify new alarm deadline is set to metadata expiry
+  assert.equal(mockAlarms['keygrain-state-wake'].when, snap2.metadataExpiresAt);
+
+  // --- ADVANCE TIME PAST METADATA EXPIRY ---
+  mockTime = snap2.metadataExpiresAt + 1000;
+  runInContext('owner.reconcile("wake")', ctx2);
+  await runInContext('owner.whenReconciled()', ctx2);
+
+  const snap3 = runInContext('owner.snapshot()', ctx2);
+  assert.equal(snap3.state, 'locked', 'state transitions to locked after metadata expiry');
+  assert.equal(mockStorageSession.keygrainSession, undefined, 'session removed from storage when locked');
+  assert.equal(mockAlarms['keygrain-state-wake'], undefined, 'wake alarm cleared when locked');
+
+  console.log(`  ✓ ${browserName}: worker hibernation, process death, and re-hydration lifecycle verified`);
+}
+

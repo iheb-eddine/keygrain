@@ -117,10 +117,13 @@ function projectMetadataState(records) {
       const entry = {};
       for (const key of ["id", "site", "name", "email"]) {
         const descriptor = Object.getOwnPropertyDescriptor(record, key);
-        if (!descriptor || descriptor.value === null) {
+        if (!descriptor) {
           entry[key] = null;
-        } else if (!Object.prototype.hasOwnProperty.call(descriptor, "value")
-          || typeof descriptor.value !== "string") {
+        } else if (!Object.prototype.hasOwnProperty.call(descriptor, "value")) {
+          throw stateError("KEYGRAIN_METADATA_ERROR");
+        } else if (descriptor.value === null || descriptor.value === undefined) {
+          entry[key] = null;
+        } else if (typeof descriptor.value !== "string") {
           throw stateError("KEYGRAIN_METADATA_ERROR");
         } else {
           entry[key] = descriptor.value;
@@ -156,7 +159,7 @@ function clearMemory(value, seen = new Set()) {
 
 function cloneData(value, seen = new Map(), depth = 0) {
   if (depth > 32) throw stateError("KEYGRAIN_STALE_OPERATION");
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (value === null || value === undefined || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw stateError("KEYGRAIN_STALE_OPERATION");
     return value;
@@ -335,6 +338,7 @@ class KeygrainStateManager {
       metadataWarningAt: metadata ? this._metadataExpiresAt - KEYGRAIN_METADATA_WARNING_LEAD_SECONDS * 1000 : null,
       metadataAvailable: metadata,
       hasFullData: full && this._fullData !== null,
+      metadataTailAnchor: (full || metadata) ? this._metadataTailAnchor : null,
     });
   }
 
@@ -648,7 +652,9 @@ class KeygrainStateManager {
     let input;
     try {
       view = cloneData(this._fullData);
-      input = cloneData(capture(view));
+      const rawCapture = capture(view);
+      if (rawCapture === undefined) throw stateError("KEYGRAIN_STALE_OPERATION");
+      input = cloneData(rawCapture);
     } catch (_) {
       throw stateError("KEYGRAIN_STALE_OPERATION");
     } finally {

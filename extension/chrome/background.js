@@ -113,31 +113,26 @@ async function chromeReconcileIndicators({after, projection, check}) {
     check();
     const deadline = after && (after.state === "full" ? after.fullExpiresAt : after.state === "metadata" ? after.metadataExpiresAt : null);
 
-    const sessionStore = chrome.storage?.session;
-    if (sessionStore && after) {
-      const sessionData = await sessionStore.get("keygrainSession");
-      const session = sessionData?.keygrainSession;
-      if (session && session.email) {
+    if (after) {
+      await updateSession(async (session) => {
+        if (!session || !session.email) return session;
         if (after.state === "locked") {
-          await sessionStore.remove("keygrainSession");
+          return null;
         } else {
-          const settings = await chromeOwner.loadSettings();
-          const metaTailSec = settings?.metadataTailSeconds !== undefined ? settings.metadataTailSeconds : (KEYGRAIN_DEFAULT_SETTINGS?.metadataTailSeconds || 28500);
           const fullExpiresAt = after.state === "full" ? after.fullExpiresAt : null;
-          const metadataTailAnchor = after.metadataExpiresAt || (fullExpiresAt ? fullExpiresAt + metaTailSec * 1000 : null);
+          const metadataTailAnchor = after.metadataTailAnchor;
           const metadata = extractMetadata();
-          await sessionStore.set({
-            keygrainSession: {
-              ...session,
-              secret: (after.state === "full" && session.secret) ? session.secret : null,
-              fullExpiresAt,
-              metadataExpiresAt: after.metadataExpiresAt,
-              metadataTailAnchor,
-              metadata,
-            }
-          });
+          return {
+            ...session,
+            secret: (after.state === "full" && session.secret) ? session.secret : null,
+            fullExpiresAt,
+            metadataExpiresAt: after.metadataExpiresAt,
+            metadataTailAnchor,
+            activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
+            metadata,
+          };
         }
-      }
+      });
     }
     if (deadline !== null && deadline !== undefined) {
       check();
@@ -427,6 +422,7 @@ async function chromeProvePasswordContext({context, deliveryNonce}) {
     const timer = setTimeout(() => { chromePasswordPendingProofs.delete(deliveryNonce); reject(Object.assign(new Error("timeout"), {code: "KEYGRAIN_CONTEXT_ERROR"})); }, KeygrainBrowserOwner.KEYGRAIN_PASSWORD_DELIVERY_TTL_MS);
     chromePasswordPendingProofs.set(deliveryNonce, {challenge, context, timer, resolve, reject});
   });
+  proof.catch(() => {});
   const probe = {action: "keygrain.password.contextProbe", challenge, deliveryNonce};
   try {
     await chromeInjectBridge(context);
@@ -455,6 +451,7 @@ async function chromeDeliverPassword({context, deliveryNonce, password, email}) 
     const timer = setTimeout(() => { chromePasswordPendingDeliveries.delete(key); chromeClearBinding(deliveryNonce); reject(Object.assign(new Error("timeout"), {code: "KEYGRAIN_FILL_DELIVERY_ERROR"})); }, KeygrainBrowserOwner.KEYGRAIN_PASSWORD_DELIVERY_TTL_MS);
     chromePasswordPendingDeliveries.set(key, {resolve, timer});
   });
+  result.catch(() => {});
   const delivery = {action: "keygrain.password.fillResult", deliveryNonce, password, email};
   try { chrome.tabs.sendMessage(binding.tabId, delivery, {frameId: binding.frameId !== undefined ? binding.frameId : 0}).catch(() => {}); }
   catch (_) { chromeClearBinding(deliveryNonce); throw Object.assign(new Error("delivery"), {code: "KEYGRAIN_FILL_DELIVERY_ERROR"}); }
@@ -566,6 +563,7 @@ async function chromeProveTotpContext({context, deliveryNonce}) {
     }, KeygrainBrowserOwner.KEYGRAIN_TOTP_DELIVERY_TTL_MS);
     chromeTotpPendingProofs.set(deliveryNonce, {challenge, context, timer, resolve, reject});
   });
+  proof.catch(() => {});
   try {
     await chromeInjectBridge(context);
     await chrome.tabs.sendMessage(context.tabId, {action: "keygrain.totp.contextProbe", challenge, deliveryNonce}, {frameId: context.frameId !== undefined ? context.frameId : 0});
@@ -595,6 +593,7 @@ async function chromeDeliverTotp({context, deliveryNonce, code}) {
     }, KeygrainBrowserOwner.KEYGRAIN_TOTP_DELIVERY_TTL_MS);
     chromeTotpPendingDeliveries.set(deliveryNonce, {resolve, reject, timer});
   });
+  result.catch(() => {});
   try {
     chrome.tabs.sendMessage(binding.tabId, {action: "keygrain.totp.fillResult", deliveryNonce, code}, {frameId: binding.frameId !== undefined ? binding.frameId : 0}).catch(() => {});
   } catch (_) {
@@ -827,6 +826,25 @@ const chromeOwner = KeygrainBrowserOwner.createOwner({
   authenticateAndPrepare: readAndPrepare,
 });
 
+let sessionUpdateQueue = Promise.resolve();
+function updateSession(updater) {
+  sessionUpdateQueue = sessionUpdateQueue.then(async () => {
+    try {
+      const sessionStore = chrome.storage?.session;
+      if (!sessionStore) return;
+      const data = await sessionStore.get("keygrainSession");
+      const session = data?.keygrainSession || {};
+      const nextSession = await updater(session);
+      if (nextSession === null) {
+        await sessionStore.remove("keygrainSession");
+      } else if (nextSession !== undefined) {
+        await sessionStore.set({ keygrainSession: nextSession });
+      }
+    } catch (_) {}
+  }).catch(() => {});
+  return sessionUpdateQueue;
+}
+
 function extractMetadata() {
   try {
     const services = chromeOwner.getServicesList ? (chromeOwner.getServicesList() || []) : [];
@@ -851,35 +869,35 @@ function extractMetadata() {
 }
 
 async function saveSession({ email, secret, snap }) {
-  try {
-    const sessionStore = chrome.storage?.session;
-    if (!sessionStore) return;
+  await updateSession(async (session) => {
     if (snap && (snap.state === "full" || snap.state === "metadata")) {
-      const settings = await chromeOwner.loadSettings();
-      const metaTailSec = settings?.metadataTailSeconds !== undefined ? settings.metadataTailSeconds : (KEYGRAIN_DEFAULT_SETTINGS?.metadataTailSeconds || 28500);
       const fullExpiresAt = snap.state === "full" ? snap.fullExpiresAt : null;
-      const metadataTailAnchor = snap.metadataExpiresAt || (fullExpiresAt ? fullExpiresAt + metaTailSec * 1000 : null);
+      const metadataTailAnchor = snap.metadataTailAnchor;
       const metadata = extractMetadata();
-      await sessionStore.set({
-        keygrainSession: {
-          email,
-          secret: (snap.state === "full" && secret) ? secret : null,
-          fullExpiresAt,
-          metadataExpiresAt: snap.metadataExpiresAt,
-          metadataTailAnchor,
-          metadata,
-        }
-      });
+      const activeTail = snap.state === "full"
+        ? (snap.metadataTailAnchor && snap.fullExpiresAt ? Math.round((snap.metadataTailAnchor - snap.fullExpiresAt) / 1000) : null)
+        : (session.activeMetadataTailSeconds ?? null);
+      return {
+        ...session,
+        email,
+        secret: (snap.state === "full" && secret) ? secret : null,
+        fullExpiresAt,
+        metadataExpiresAt: snap.metadataExpiresAt,
+        metadataTailAnchor,
+        activeMetadataTailSeconds: activeTail,
+        metadata,
+      };
     } else {
-      await sessionStore.remove("keygrainSession");
+      return null;
     }
-  } catch (_) {}
+  });
 }
 
 async function clearMemorySession() {
+  await updateSession(() => null);
   try {
     const sessionStore = chrome.storage?.session;
-    if (sessionStore) await sessionStore.remove(["keygrainSession", "pendingAutofillIntent"]);
+    if (sessionStore) await sessionStore.remove("pendingAutofillIntent");
   } catch (_) {}
   try {
     if (typeof clearStrengthenCache === "function") clearStrengthenCache();
@@ -1004,11 +1022,23 @@ const startupPromise = (async () => {
     if (session && session.email) {
       const now = Date.now();
       if (session.secret && session.fullExpiresAt && now < session.fullExpiresAt) {
-        const prepared = await readAndPrepare({
-          email: session.email,
-          secret: session.secret,
-          popupSessionId: "sw-restore-" + Date.now(),
-        });
+        let prepared;
+        try {
+          prepared = await readAndPrepare({
+            email: session.email,
+            secret: session.secret,
+            popupSessionId: "sw-restore-" + Date.now(),
+          });
+        } catch (error) {
+          if (error.code === "ACCOUNT_NOT_FOUND") {
+            prepared = {
+              fullData: { services: [], wallets: [], walletAuditLog: [], tombstones: [], deletionReview: [], email: session.email, secret: session.secret },
+              records: [],
+            };
+          } else {
+            throw error;
+          }
+        }
         const payload = chromeOwner.preparedUnlock ? chromeOwner.preparedUnlock(prepared) : prepared;
         chromeOwner.restoreSession({
           email: session.email,
@@ -1016,9 +1046,7 @@ const startupPromise = (async () => {
           records: payload.records,
           fullExpiresAt: session.fullExpiresAt,
           metadataTailAnchor: session.metadataTailAnchor,
-          activeMetadataTailSeconds: (session.metadataTailAnchor && session.fullExpiresAt)
-            ? Math.round((session.metadataTailAnchor - session.fullExpiresAt) / 1000)
-            : null,
+          activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
         });
       } else if (session.metadataTailAnchor && now < session.metadataTailAnchor && Array.isArray(session.metadata)) {
         chromeOwner.restoreSession({
@@ -1026,21 +1054,10 @@ const startupPromise = (async () => {
           metadata: session.metadata,
           metadataExpiresAt: session.metadataExpiresAt || session.metadataTailAnchor,
           metadataTailAnchor: session.metadataTailAnchor,
-          activeMetadataTailSeconds: (session.metadataTailAnchor && session.fullExpiresAt)
-            ? Math.round((session.metadataTailAnchor - session.fullExpiresAt) / 1000)
-            : null,
+          activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
         });
-        if (session.secret) {
-          await chrome.storage?.session?.set({
-            keygrainSession: {
-              ...session,
-              secret: null,
-              fullExpiresAt: null,
-            }
-          });
-        }
       } else {
-        await chrome.storage?.session?.remove("keygrainSession");
+        await clearMemorySession();
       }
     }
   } catch (_) {}
@@ -1078,19 +1095,18 @@ if (chrome.alarms?.onAlarm?.addListener) {
         if (snap.state === "locked") {
           await clearMemorySession();
         } else if (snap.state === "metadata") {
-          const sessionStore = chrome.storage?.session;
-          if (sessionStore) {
-            const sessionData = await sessionStore.get("keygrainSession");
-            const session = sessionData?.keygrainSession;
-            if (session) {
-              session.secret = null;
-              session.fullExpiresAt = null;
-              session.metadataExpiresAt = snap.metadataExpiresAt;
-              session.metadataTailAnchor = snap.metadataExpiresAt;
-              session.metadata = extractMetadata();
-              await sessionStore.set({ keygrainSession: session });
-            }
-          }
+          await updateSession(async (session) => {
+            if (!session) return session;
+            return {
+              ...session,
+              secret: null,
+              fullExpiresAt: null,
+              metadataExpiresAt: snap.metadataExpiresAt,
+              metadataTailAnchor: snap.metadataTailAnchor,
+              activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
+              metadata: extractMetadata(),
+            };
+          });
         }
       }
     }).catch(() => {});
@@ -1369,6 +1385,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await broadcastInline({action: "inlineDisabled"});
       }
       await chromeOwner.reconcile("setting_changed");
+      if (message.enabled) {
+        await broadcastInline({action: "inlineLockChanged"});
+      }
       sendResponse({ok: true});
     })();
     return true;
@@ -1646,6 +1665,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }).catch(err => sendResponse(safeMessageError(err)));
     return true;
   }
+  if (action === "deleteServerData") {
+    startupPromise.then(async () => {
+      const snap = chromeOwner.snapshot();
+      if (snap.state !== "full") return sendResponse(KeygrainBrowserOwner.safeFailure("LOCKED"));
+      let secret = null;
+      let email = null;
+      const opHandle = chromeOwner.manager.beginSensitiveOperation({capture: fullData => ({secret: fullData?.secret, email: fullData?.email})});
+      try {
+        const input = chromeOwner.manager.getSensitiveOperationInput(opHandle);
+        secret = input?.secret || null;
+        email = input?.email || null;
+      } finally {
+        try { chromeOwner.manager.completeSensitiveOperation(opHandle, "delete_server_data"); } catch (_) {}
+      }
+      if (!secret || !email) return sendResponse(KeygrainBrowserOwner.safeFailure("CREDENTIALS_UNAVAILABLE"));
+      const res = await deleteServerData(secret, email);
+      if (res?.ok) {
+        await chrome.storage.local.remove(["lastSyncTime", "lastSyncETag", "syncKnownUUIDs", "lastSuccessfulSyncAt"]);
+      }
+      sendResponse(KeygrainBrowserOwner.success(res));
+    }).catch(err => sendResponse(safeMessageError(err)));
+    return true;
+  }
   if (action === "issueUnlockChallenge") {
     try {
       if (!KeygrainBrowserOwner.isTrustedExtensionPage(sender, chrome.runtime.id, "unlock", "chrome", KEYGRAIN_EXTENSION_ORIGIN)
@@ -1654,7 +1696,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse(KeygrainBrowserOwner.safeFailure(KeygrainBrowserOwner.CONTEXT_ERROR));
         return false;
       }
-      chromeIngressPromise
+      startupPromise
+        .then(() => chromeIngressPromise)
         .then(ingress => ingress.issueChallenge({sender, popupSessionId: message.popupSessionId}))
         .then(challenge => sendResponse(KeygrainBrowserOwner.success({challenge})))
         .catch(err => sendResponse(safeMessageError(err)));
@@ -1673,7 +1716,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse(KeygrainBrowserOwner.safeFailure(KeygrainBrowserOwner.CONTEXT_ERROR));
         return false;
       }
-      chromeIngressPromise
+      startupPromise
+        .then(() => chromeIngressPromise)
         .then(ingress => ingress.admitUnlock({sender, popupSessionId: message.popupSessionId, isCreate: Boolean(message.isCreate)}, message.envelope))
         .then(res => sendResponse(res))
         .catch(err => sendResponse(safeMessageError(err)));
@@ -1721,18 +1765,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (snap.state === "locked") {
           await clearMemorySession();
         } else if (snap.state === "full" || snap.state === "metadata") {
-          const sessionData = await chrome.storage?.session?.get("keygrainSession");
-          const session = sessionData?.keygrainSession;
-          if (session) {
-            const settings = await chromeOwner.loadSettings();
-            const metaTailSec = settings?.metadataTailSeconds !== undefined ? settings.metadataTailSeconds : (KEYGRAIN_DEFAULT_SETTINGS?.metadataTailSeconds || 28500);
-            session.secret = snap.state === "full" ? session.secret : null;
-            session.fullExpiresAt = snap.state === "full" ? snap.fullExpiresAt : null;
-            session.metadataExpiresAt = snap.metadataExpiresAt;
-            session.metadataTailAnchor = snap.metadataExpiresAt || (snap.fullExpiresAt ? snap.fullExpiresAt + metaTailSec * 1000 : null);
-            session.metadata = extractMetadata();
-            await chrome.storage?.session?.set({ keygrainSession: session });
-          }
+          await updateSession(async (session) => {
+            if (!session) return session;
+            return {
+              ...session,
+              secret: snap.state === "full" ? session.secret : null,
+              fullExpiresAt: snap.state === "full" ? snap.fullExpiresAt : null,
+              metadataExpiresAt: snap.metadataExpiresAt,
+              metadataTailAnchor: snap.metadataTailAnchor,
+              activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
+              metadata: extractMetadata(),
+            };
+          });
         }
       }
       sendResponse(res);
@@ -1747,18 +1791,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (snap.state === "locked") {
           await clearMemorySession();
         } else if (snap.state === "full" || snap.state === "metadata") {
-          const sessionData = await chrome.storage?.session?.get("keygrainSession");
-          const session = sessionData?.keygrainSession;
-          if (session) {
-            const settings = await chromeOwner.loadSettings();
-            const metaTailSec = settings?.metadataTailSeconds !== undefined ? settings.metadataTailSeconds : (KEYGRAIN_DEFAULT_SETTINGS?.metadataTailSeconds || 28500);
-            session.secret = snap.state === "full" ? session.secret : null;
-            session.fullExpiresAt = snap.state === "full" ? snap.fullExpiresAt : null;
-            session.metadataExpiresAt = snap.metadataExpiresAt;
-            session.metadataTailAnchor = snap.metadataExpiresAt || (snap.fullExpiresAt ? snap.fullExpiresAt + metaTailSec * 1000 : null);
-            session.metadata = extractMetadata();
-            await chrome.storage?.session?.set({ keygrainSession: session });
-          }
+          await updateSession(async (session) => {
+            if (!session) return session;
+            return {
+              ...session,
+              secret: snap.state === "full" ? session.secret : null,
+              fullExpiresAt: snap.state === "full" ? snap.fullExpiresAt : null,
+              metadataExpiresAt: snap.metadataExpiresAt,
+              metadataTailAnchor: snap.metadataTailAnchor,
+              activeMetadataTailSeconds: session.activeMetadataTailSeconds ?? null,
+              metadata: extractMetadata(),
+            };
+          });
         }
       }
       sendResponse(res);

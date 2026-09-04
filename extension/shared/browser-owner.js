@@ -871,6 +871,7 @@
       } catch (exception) {
         if (exception?.code === "KEYGRAIN_SETTINGS_STORAGE_ERROR") return safeFailure(SETTINGS_STORAGE_ERROR);
         if (exception?.code === "KEYGRAIN_CONFIRMATION_ERROR") return safeFailure("KEYGRAIN_CONFIRMATION_ERROR");
+        if (exception?.code === "ACCOUNT_NOT_FOUND") return safeFailure("ACCOUNT_NOT_FOUND");
         if (exception?.code === AUTH_PROTOCOL_ERROR || exception?.code === CONTEXT_ERROR) return safeFailure(exception.code);
         return safeFailure(UNLOCK_FAILED);
       }

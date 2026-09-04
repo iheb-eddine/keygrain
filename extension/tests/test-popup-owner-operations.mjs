@@ -588,7 +588,7 @@ runInContext(`globalThis.authNow=1000; globalThis.authOwner=KeygrainBrowserOwner
   settings:{version:1,fullLeaseSeconds:60,metadataTailSeconds:14400}, clock:()=>authNow,
   authenticateAndPrepare:async ({email,secret})=>({fullData:{secret,email,services:[{id:'auth-service',site:'auth.example',name:'Auth',email:'service@example.com'}],wallets:[],walletAuditLog:[],tombstones:[],deletionReview:[]},records:[{id:'auth-service',site:'auth.example',name:'Auth',email:'service@example.com'}]}),
 }); globalThis.authSender={id:'ext',tab:null,url:'chrome-extension://ext/popup.html'}`, context);
-const authResultRaw = await runInContext(`authOwner.unlock(authSender,'ext',{action:'unlock',email:'  Account@Example.COM ',secret:'auth-secret',popupSessionId:'auth-popup',confirmationId:null},'chrome','chrome-extension://ext')`, context);
+const authResultRaw = await runInContext(`authOwner.unlock(authSender,'ext',{action:'unlock',email:'  Account@Example.COM ',secret:'auth-secret',popupSessionId:'auth-popup',confirmationId:null,isCreate:false},'chrome','chrome-extension://ext')`, context);
 const authResult = JSON.parse(JSON.stringify(authResultRaw));
 assert.equal(authResult.ok, true, 'real owner.unlock installs authenticated identity only after manager commit');
 assert.equal(JSON.stringify(authResult).includes('auth-secret'), false);
@@ -604,14 +604,14 @@ const expiredMetadataRaw = await runInContext(`authOwner.dispatchPopupRequest(au
 const expiredMetadata = JSON.parse(JSON.stringify(expiredMetadataRaw));
 assert.equal(expiredMetadata.code, 'KEYGRAIN_METADATA_ERROR', 'metadata expiry clears the identity authority');
 runInContext('authNow=14462000', context);
-const authAgainRaw = await runInContext(`authOwner.unlock(authSender,'ext',{action:'unlock',email:'Account@Example.COM',secret:'auth-secret',popupSessionId:'auth-popup-2',confirmationId:null},'chrome','chrome-extension://ext')`, context);
+const authAgainRaw = await runInContext(`authOwner.unlock(authSender,'ext',{action:'unlock',email:'Account@Example.COM',secret:'auth-secret',popupSessionId:'auth-popup-2',confirmationId:null,isCreate:false},'chrome','chrome-extension://ext')`, context);
 const authAgain = JSON.parse(JSON.stringify(authAgainRaw));
 assert.equal(authAgain.ok, true);
 const lockEverythingRaw = await runInContext(`authOwner.dispatchPopupRequest(authSender,'ext',{action:'keygrain.popup.lockEverything'},'chrome','chrome-extension://ext')`, context);
 const lockEverything = JSON.parse(JSON.stringify(lockEverythingRaw));
 assert.equal(lockEverything.result.state, 'locked', 'lock-everything clears the authenticated identity authority');
 runInContext(`globalThis.failOwner=KeygrainBrowserOwner.createOwner({adapter:{browser:'chrome',storage:identityStorage},settings:{version:1,fullLeaseSeconds:60,metadataTailSeconds:14400},clock:()=>1000,authenticateAndPrepare:async()=>{throw new Error('bad-auth')}})`, context);
-const failedAuthRaw = await runInContext(`failOwner.unlock(authSender,'ext',{action:'unlock',email:'Account@Example.COM',secret:'wrong',popupSessionId:'failed-popup',confirmationId:null},'chrome','chrome-extension://ext')`, context);
+const failedAuthRaw = await runInContext(`failOwner.unlock(authSender,'ext',{action:'unlock',email:'Account@Example.COM',secret:'wrong',popupSessionId:'failed-popup',confirmationId:null,isCreate:false},'chrome','chrome-extension://ext')`, context);
 const failedAuth = JSON.parse(JSON.stringify(failedAuthRaw));
 assert.equal(failedAuth.code, 'KEYGRAIN_UNLOCK_FAILED', 'failed authentication never installs identity');
 assert.equal(JSON.parse(runInContext(`JSON.stringify(failOwner.snapshot())`, context)).state, 'locked');
@@ -619,7 +619,7 @@ assert.equal(runInContext(`Object.prototype.hasOwnProperty.call(authOwner,'authe
 assert.doesNotMatch(lifecycleSource, /notifyKeygrainPopupDataReplacement/);
 
 // Verify settings can be read and written in metadata mode
-await runInContext('authNow=14463000; authOwner.unlock(authSender,"ext",{action:"unlock",email:"Account@Example.COM",secret:"auth-secret",popupSessionId:"auth-popup-3",confirmationId:null},"chrome","chrome-extension://ext")', context);
+await runInContext('authNow=14463000; authOwner.unlock(authSender,"ext",{action:"unlock",email:"Account@Example.COM",secret:"auth-secret",popupSessionId:"auth-popup-3",confirmationId:null,isCreate:false},"chrome","chrome-extension://ext")', context);
 runInContext('authNow=14524000; authOwner.reconcile("full_expiry")', context);
 assert.equal(JSON.parse(runInContext('JSON.stringify(authOwner.snapshot())', context)).state, 'metadata');
 const metaSettingsRes = JSON.parse(JSON.stringify(await runInContext('authOwner.dispatchPopupRequest(authSender,"ext",{action:"keygrain.popup.settings",patch:{defaultLength:24}},"chrome","chrome-extension://ext")', context)));
@@ -627,7 +627,7 @@ assert.equal(metaSettingsRes.ok, true, 'settings patch succeeds in metadata mode
 assert.equal(metaSettingsRes.result.settings.defaultLength, 24, 'metadata mode settings patch persists value');
 
 // Verify 1800s exceptional lease settings update in full mode and extend
-await runInContext('authNow=14525000; authOwner.unlock(authSender,"ext",{action:"unlock",email:"Account@Example.COM",secret:"auth-secret",popupSessionId:"auth-popup-4",confirmationId:null},"chrome","chrome-extension://ext")', context);
+await runInContext('authNow=14525000; authOwner.unlock(authSender,"ext",{action:"unlock",email:"Account@Example.COM",secret:"auth-secret",popupSessionId:"auth-popup-4",confirmationId:null,isCreate:false},"chrome","chrome-extension://ext")', context);
 const full30mSettingsRes = JSON.parse(JSON.stringify(await runInContext('authOwner.dispatchPopupRequest(authSender,"ext",{action:"keygrain.popup.settings",patch:{fullLeaseSeconds:1800}},"chrome","chrome-extension://ext")', context)));
 assert.equal(full30mSettingsRes.ok, true, 'settings patch with 1800s fullLeaseSeconds succeeds');
 assert.equal(full30mSettingsRes.result.settings.fullLeaseSeconds, 1800);
@@ -646,12 +646,12 @@ runInContext('authNow=14526000 + 1801000; authOwner.reconcile("full_expiry")', c
 assert.equal(JSON.parse(runInContext('JSON.stringify(authOwner.snapshot())', context)).state, 'metadata');
 
 // Unlocking without confirmation when 1800s must fail closed
-const failReauthNoConf = JSON.parse(JSON.stringify(await runInContext('authOwner.unlock(authSender,"ext",{action:"unlock",email:"Account@Example.COM",secret:"auth-secret",popupSessionId:"auth-popup-5",confirmationId:null},"chrome","chrome-extension://ext")', context)));
+const failReauthNoConf = JSON.parse(JSON.stringify(await runInContext('authOwner.unlock(authSender,"ext",{action:"unlock",email:"Account@Example.COM",secret:"auth-secret",popupSessionId:"auth-popup-5",confirmationId:null,isCreate:false},"chrome","chrome-extension://ext")', context)));
 assert.equal(failReauthNoConf.ok, false, 'unlock without confirmation fails when 1800s');
 
 // Unlocking with issued confirmation succeeds
 runInContext('globalThis.confId = authOwner.issueConfirmation("auth-popup-5", authSender.url);', context);
-const succeedReauthWithConf = JSON.parse(JSON.stringify(await runInContext('authOwner.unlock(authSender,"ext",{action:"unlock",email:"Account@Example.COM",secret:"auth-secret",popupSessionId:"auth-popup-5",confirmationId:globalThis.confId},"chrome","chrome-extension://ext")', context)));
+const succeedReauthWithConf = JSON.parse(JSON.stringify(await runInContext('authOwner.unlock(authSender,"ext",{action:"unlock",email:"Account@Example.COM",secret:"auth-secret",popupSessionId:"auth-popup-5",confirmationId:globalThis.confId,isCreate:false},"chrome","chrome-extension://ext")', context)));
 assert.equal(succeedReauthWithConf.ok, true, 'unlock with issued confirmation succeeds when 1800s');
 assert.equal(JSON.parse(runInContext('JSON.stringify(authOwner.snapshot())', context)).state, 'full');
 

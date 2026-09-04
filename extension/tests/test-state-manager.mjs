@@ -175,7 +175,7 @@ test('restart constructs locked with no restored runtime state', () => {
 
 test('snapshot contains authority metadata only', () => {
   createManager(); unlock(); const value = snapshot();
-  assert.deepEqual(Object.keys(value).sort(), ['authorizationGeneration','fullExpiresAt','fullWarningAt','hasFullData','metadataAvailable','metadataExpiresAt','metadataWarningAt','state','stateGeneration'].sort());
+  assert.deepEqual(Object.keys(value).sort(), ['authorizationGeneration','fullExpiresAt','fullWarningAt','hasFullData','metadataAvailable','metadataExpiresAt','metadataTailAnchor','metadataWarningAt','state','stateGeneration'].sort());
   for (const forbidden of ['secret','password','records','metadata','operationInput','result','key']) assert.equal(Object.prototype.hasOwnProperty.call(value, forbidden), false, forbidden);
 });
 
@@ -305,4 +305,20 @@ test('explicit manager operations expose no generic full-data or credential auth
   for (const method of ['getFullData','getSecrets','getRecords','setSecrets','setSecret','setEmail','getSecret','getEmail']) assert.equal(runInContext(`typeof manager[${JSON.stringify(method)}]`, ctx), 'undefined', method);
 });
 
+test('unlockFull and cloneData gracefully tolerate undefined and null optional record fields', () => {
+  createManager();
+  unlock(JSON.stringify([
+    { id: "s1", site: "example.com", name: null, email: "user@example.com" },
+    { id: "s2", site: "github.com", name: undefined, email: undefined }
+  ]));
+  setNow(61000);
+  const meta = JSON.parse(runInContext('JSON.stringify(manager.getMetadata())', ctx));
+  assert.equal(meta.length, 2);
+  assert.equal(meta[0].name, null);
+  assert.equal(meta[0].email, "user@example.com");
+  assert.equal(meta[1].name, null);
+  assert.equal(meta[1].email, null);
+});
+
 console.log(`${passed} tests: ${passed} passed, 0 failed`);
+

@@ -16,3 +16,4 @@ node test-wallet-contract.mjs
 node test-ssh-contract.mjs
 node test-password-fill-contract.mjs
 node test-sync-v3-preservation.mjs
+node test-hibernation-lifecycle.mjs
