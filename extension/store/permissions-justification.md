@@ -47,7 +47,7 @@ Keygrain generates deterministic passwords from a master secret and fills them i
 **Code locations:**
 - `background.js`: `chrome.scripting.executeScript({target: {tabId: tab.id}, files: ["content.js"]})`
 
-**Note:** Firefox MV2 uses `browser.tabs.executeScript()` instead, which is covered by the `activeTab` permission and does not require a separate `scripting` permission.
+**Firefox MV3:** uses `browser.scripting.executeScript()` with the `scripting` permission and the same user-approved host/active-tab boundary as Chrome MV3.
 
 ## Permission: `storage`
 
@@ -94,7 +94,7 @@ Keygrain generates deterministic passwords from a master secret and fills them i
 - Derived `auth_password` in the HTTP Basic password field. The server stores a bcrypt hash; the bcrypt hash itself is not transmitted.
 - HTTPS is required for the production sync endpoint; HTTP is not safe for non-loopback deployments.
 
-## Permission: `optional_host_permissions` (Chrome) / `optional_permissions` (Firefox) — `*://*/*`
+## Permission: `optional_host_permissions` (Chrome and Firefox MV3) — `*://*/*`
 
 **What it does:** Allows the user to grant the extension access to saved website origins for
 native in-field autofill.
@@ -122,4 +122,4 @@ saved sites.
 | `storage` | Encrypted data + settings | Persistent site list across sessions |
 | `tabs` | Badge count + background tab access | Visual indicator, shortcut/menu fill |
 | `host_permissions` | Sync server communication | Cross-device encrypted sync |
-| `optional_host_permissions` (Chrome) / `optional_permissions` (Firefox) | User-approved saved-site access | Inline autofill without opening the popup |
+| `optional_host_permissions` (Chrome and Firefox MV3) | User-approved saved-site access | Inline autofill without opening the popup |

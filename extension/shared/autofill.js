@@ -3,7 +3,7 @@
 // No top-level DOM / window / chrome access. This file is loaded into four
 // environments and must be safe in all of them:
 //   - Chrome MV3 service worker   (importScripts in chrome/background.js)
-//   - Firefox MV2 background page (manifest background.scripts)
+//   - Firefox MV3 event page (manifest background.scripts)
 //   - the content isolated world  (executeScript before content.js)
 //   - the Node test VM            (buildContext() in tests/test.mjs)
 // Helpers are defined at top level AND exposed via globalThis.KeygrainAutofill
@@ -358,3 +358,7 @@ globalThis.KeygrainAutofill = {
   pickOtpField,
   otpCodeFitsField,
 };
+if (typeof window !== "undefined") {
+  window.KeygrainAutofill = globalThis.KeygrainAutofill;
+}
+

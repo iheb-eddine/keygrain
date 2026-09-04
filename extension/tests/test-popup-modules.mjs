@@ -210,6 +210,70 @@ await test('C10: decryptServices output structure', async () => {
   assert(Array.isArray(result.walletAuditLog));
 });
 
+await test('C11: legacy payload reads expose null pendingSync without changing v2 writer', async () => {
+  const legacy = {version: 2, services: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: []};
+  ctx._legacy = legacy;
+  const decoded = runInContext(`validateLocalPayload(_legacy)`, ctx);
+  assert.equal(decoded.pendingSync, null);
+  const encrypted = await runInContext(`encryptServices(_key, "test@gmail.com", [], [], [])`, ctx);
+  assert.equal(encrypted.version, 2);
+  const decrypted = await runInContext(`decryptServices(_key, "test@gmail.com", _enc)`, ctx);
+  assert.equal(decrypted.pendingSync, null);
+});
+await test('C12: v3 payload validates exact marker and round-trips in the existing envelope', async () => {
+  const mutationId = await runInContext(`createLocalMutationId()`, ctx);
+  assert.equal(mutationId.length, 43);
+  ctx._v3 = {version: 3, services: [{id: 's1'}], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: {version: 1, mutationId, updateVersion: 42}};
+  const validated = runInContext(`validateLocalPayload(_v3)`, ctx);
+  assert.equal(validated.payloadVersion, 3);
+  assert.equal(validated.pendingSync.mutationId, mutationId);
+  ctx._v3Key = await runInContext(`deriveStorageKey("my-master-secret", "test@gmail.com")`, ctx);
+  const encrypted = await runInContext(`encryptServicesV3(_v3Key, "test@gmail.com", _v3)`, ctx);
+  ctx._v3Encrypted = encrypted;
+  const decrypted = await runInContext(`decryptServices(_v3Key, "test@gmail.com", _v3Encrypted)`, ctx);
+  assert.equal(decrypted.payloadVersion, 3);
+  assert.equal(decrypted.pendingSync.mutationId, mutationId);
+  for (const invalid of [
+    {...ctx._v3, pending_sync: {version: 2, mutationId, updateVersion: 42}},
+    {...ctx._v3, pending_sync: {version: 1, mutationId: mutationId + 'A', updateVersion: 42}},
+    {...ctx._v3, pending_sync: {version: 1, mutationId: 'AQ', updateVersion: 42}},
+    {...ctx._v3, pending_sync: {version: 1, mutationId, updateVersion: -1}},
+    {...ctx._v3, pending_sync: {version: 1, mutationId, updateVersion: 1.5}},
+  ]) {
+    ctx._invalidV3 = invalid;
+    assert.throws(() => runInContext(`validateLocalPayload(_invalidV3)`, ctx), /invalid_local_payload/);
+  }
+});
+await test('C13: canonical v3 JSON and fingerprint use fixed top-level order and sorted nested keys', async () => {
+  const empty = {version: 3, services: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: null};
+  ctx._emptyV3 = empty;
+  assert.equal(runInContext(`canonicalLocalPayloadJson(_emptyV3)`, ctx), '{"version":3,"services":[],"wallets":[],"wallet_audit_log":[],"tombstones":[],"deletion_review":[],"pending_sync":null}');
+  assert.equal(await runInContext(`fingerprintLocalPayload(_emptyV3)`, ctx), '6d27aad8f905c093cbab06d40841fdaed7b7843d79985ba5b537040efd8c7b8e');
+  ctx._orderedA = {...empty, services: [{z: 1, nested: {z: 2, a: 1}, a: 0}]};
+  ctx._orderedB = {...empty, services: [{a: 0, nested: {a: 1, z: 2}, z: 1}]};
+  assert.equal(await runInContext(`fingerprintLocalPayload(_orderedA)`, ctx), await runInContext(`fingerprintLocalPayload(_orderedB)`, ctx));
+});
+await test('C14: canonical payload rejects accessors, symbols, prototypes, cycles, and unsafe numbers', async () => {
+  const base = {version: 3, services: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: null};
+  const accessor = {...base};
+  Object.defineProperty(accessor, 'services', {enumerable: true, get() { return []; }});
+  const symbol = {...base, services: [{[Symbol('x')]: 1}]};
+  const prototype = {...base, services: [Object.create({inherited: true})]};
+  const cycle = {...base}; cycle.services = [cycle];
+  const unsafe = {...base, services: [{value: Number.MAX_SAFE_INTEGER + 1}]};
+  for (const invalid of [accessor, symbol, prototype, cycle, unsafe]) {
+    ctx._invalidCanonical = invalid;
+    assert.throws(() => runInContext(`canonicalLocalPayloadJson(_invalidCanonical)`, ctx), /invalid_local_payload/);
+  }
+});
+await test('C15: pending_sync is not part of the existing sync plaintext domain', async () => {
+  const syncSource = readFileSync(resolve(shared, 'sync.js'), 'utf8');
+  assert.doesNotMatch(syncSource, /pending_sync/);
+  ctx._syncParsed = {services: [], wallets: [], wallet_audit_log: [], pending_sync: {version: 1, mutationId: 'local-only'}};
+  const parsed = runInContext(`parseBlobContent(_syncParsed)`, ctx);
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed, 'pending_sync'), false);
+});
+
 // ============================================================
 // POPUP-DIALOG TESTS
 // ============================================================

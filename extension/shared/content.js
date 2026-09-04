@@ -1,185 +1,299 @@
-// content.js — thin DOM adapter over the pure KeygrainAutofill.* helpers.
-// Injected (after autofill.js) only on an explicit user gesture. Responsibilities:
-//   - a SYNCHRONOUS {action:"getFillContext"} snapshot (carries no secret)
-//   - fire-and-forget {action:"fill"} / {action:"fillContextMenu"} bounded single fill
-// NO auto-submit: only sets values + dispatches input/change.
-// Injection guard is intentionally on `window`, NOT globalThis: SET and READ here in the same world => symmetric and correct on Chrome and Firefox. Do NOT "fix" it to globalThis (same rationale as inline-autofill-ui.js): only cross-file helper reads needed globalThis.
+// Keygrain B1 content boundary. This file is a DOM adapter only: the worker owns
+// service selection, derivation, proof binding, and the only credential payload.
 if (!window.__keygrain_injected) {
   window.__keygrain_injected = true;
+  const runtime = globalThis.browser?.runtime || globalThis.chrome?.runtime;
+  const KEYGRAIN_PASSWORD_DELIVERY_TTL_MS = 5000;
+  const KEYGRAIN_PASSWORD_MAX_OUTPUT_UTF8 = 128;
+  const KEYGRAIN_PASSWORD_MAX_EMAIL_UTF8 = 254;
+  const KEYGRAIN_SAFE_FAILURE = Object.freeze({ok: false, code: "KEYGRAIN_CONTEXT_ERROR", message: "This action is not available from this context."});
+  const KEYGRAIN_MIGRATION_FAILURE = Object.freeze({ok: false, code: "KEYGRAIN_CONSUMER_MIGRATION_REQUIRED", message: "Update Keygrain to continue."});
+  let documentNonce = null;
+  let slot = {documentNonce: null, pendingChallenge: null, pendingDeliveryNonce: null, proven: null, timer: null};
+  let totpSlot = {documentNonce: null, pendingChallenge: null, pendingDeliveryNonce: null, proven: null, timer: null};
+  const KEYGRAIN_TOTP_MAX_FIELD_UTF8 = 256;
+  const KEYGRAIN_TOTP_DELIVERY_TTL_MS = 5000;
+  const KEYGRAIN_TOTP_SAFE_FAILURE = Object.freeze({ok: false, code: "KEYGRAIN_CONTEXT_ERROR", message: "This action is not available from this context."});
+  const KEYGRAIN_TOTP_PROTOCOL_FAILURE = Object.freeze({ok: false, code: "KEYGRAIN_AUTH_PROTOCOL_ERROR", message: "Invalid authentication request."});
+  const KEYGRAIN_TOTP_DELIVERY_FAILURE = Object.freeze({ok: false, code: "KEYGRAIN_TOTP_DELIVERY_ERROR", message: "The TOTP code could not be delivered."});
 
-  const FILL_WAIT_MS = 2000;
-  let currentFillToken = 0;
-  let currentOtpFillToken = 0;
-  let lastContextMenuTarget = null;
+  function randomNonce() {
+    try {
+      if (!globalThis.crypto || typeof crypto.getRandomValues !== "function") return null;
+      const bytes = new Uint8Array(24);
+      crypto.getRandomValues(bytes);
+      let value = "";
+      for (const byte of bytes) value += byte.toString(16).padStart(2, "0");
+      bytes.fill(0);
+      return value;
+    } catch (_) { return null; }
+  }
+  documentNonce = randomNonce();
+  slot.documentNonce = documentNonce;
 
-  document.addEventListener("contextmenu", (e) => {
-    lastContextMenuTarget = e.target;
-  });
+  function exactData(value, keys) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    try {
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== null) {
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, "constructor");
+        const standardKeys = Reflect.ownKeys(Object.prototype);
+        if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, "value")
+          || typeof descriptor.value !== "function" || descriptor.value.name !== "Object"
+          || Reflect.ownKeys(prototype).length !== standardKeys.length
+          || Reflect.ownKeys(prototype).some(key => !standardKeys.includes(key))) return false;
+      }
+    } catch (_) { return false; }
+    let ownKeys;
+    try { ownKeys = Reflect.ownKeys(value); } catch (_) { return false; }
+    if (ownKeys.length !== keys.length || ownKeys.some((key, index) => key !== keys[index])) return false;
+    return keys.every(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return !!descriptor && descriptor.enumerable && Object.prototype.hasOwnProperty.call(descriptor, "value");
+    });
+  }
 
-  // Snapshot every <input> as a descriptor, stamping an opaque `key` (index into
-  // the parallel `els` array) so a picked descriptor maps back to its element.
-  // `key` lives ONLY within a single synchronous collect -> pick -> fill cycle;
-  // it never crosses the message boundary.
-  function collectFieldDescriptors() {
+  function workerSenderURL() {
+    try {
+      if (!runtime || typeof runtime.getURL !== "function") return null;
+      return globalThis.browser?.runtime ? runtime.getURL("background.js") : runtime.getURL("/");
+    } catch (_) { return null; }
+  }
+
+  function validWorkerSender(sender) {
+    try {
+      if (!runtime || !sender || sender.id !== runtime.id) return false;
+      if (typeof sender.url === "string" && sender.url) {
+        const workerUrl = workerSenderURL();
+        if (workerUrl && sender.url !== workerUrl && !sender.url.startsWith(runtime.getURL(""))) {
+          return false;
+        }
+      }
+      return true;
+    } catch (_) { return false; }
+  }
+
+  function validPageContext() {
+    try { return location.protocol === "http:" || location.protocol === "https:"; } catch (_) { return false; }
+  }
+
+  function clearSlot() {
+    if (slot.timer) clearTimeout(slot.timer);
+    slot = {documentNonce, pendingChallenge: null, pendingDeliveryNonce: null, proven: null, timer: null};
+  }
+
+  function armSlot(challenge, deliveryNonce, sender) {
+    clearSlot();
+    slot.pendingChallenge = challenge;
+    slot.pendingDeliveryNonce = deliveryNonce;
+    const tabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+    const frameId = sender && Number.isInteger(sender.frameId) ? sender.frameId : null;
+    slot.proven = {
+      challenge, deliveryNonce, senderTabId: tabId, senderFrameId: frameId,
+      pageOrigin: location.origin, senderDocumentIdOrNull: sender && sender.documentId !== undefined ? sender.documentId : null,
+    };
+    slot.timer = setTimeout(clearSlot, KEYGRAIN_PASSWORD_DELIVERY_TTL_MS);
+  }
+
+  function clearTotpSlot() {
+    if (totpSlot.timer) clearTimeout(totpSlot.timer);
+    totpSlot = {documentNonce, pendingChallenge: null, pendingDeliveryNonce: null, proven: null, timer: null};
+  }
+
+  function armTotpSlot(challenge, deliveryNonce, sender) {
+    clearTotpSlot();
+    totpSlot.pendingChallenge = challenge;
+    totpSlot.pendingDeliveryNonce = deliveryNonce;
+    const tabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+    const frameId = sender && Number.isInteger(sender.frameId) ? sender.frameId : null;
+    totpSlot.proven = {
+      challenge, deliveryNonce, senderTabId: tabId, senderFrameId: frameId,
+      pageOrigin: location.origin, senderDocumentIdOrNull: sender && sender.documentId !== undefined ? sender.documentId : null,
+    };
+    totpSlot.timer = setTimeout(clearTotpSlot, KEYGRAIN_TOTP_DELIVERY_TTL_MS);
+  }
+
+  function boundedTotpText(value) {
+    if (typeof value !== "string" || !value) return false;
+    try { return new TextEncoder().encode(value).byteLength <= KEYGRAIN_TOTP_MAX_FIELD_UTF8; } catch (_) { return false; }
+  }
+
+  function handleTotpProbe(message, sender, sendResponse) {
+    if (!validWorkerSender(sender) || !validPageContext()
+      || !exactData(message, ["action", "challenge", "deliveryNonce"])
+      || message.action !== "keygrain.totp.contextProbe" || !boundedTotpText(message.challenge)
+      || !boundedTotpText(message.deliveryNonce) || !documentNonce) return false;
+    let hasOtpField = false;
+    try {
+      const {descriptors} = fieldDescriptors();
+      const key = KeygrainAutofill.pickOtpField(descriptors);
+      const descriptor = key === null || key === undefined ? null : descriptors[key];
+      hasOtpField = !!descriptor && descriptor.visible === true && descriptor.disabled !== true
+        && descriptor.readOnly !== true && KeygrainAutofill.isOtpDescriptor(descriptor);
+    } catch (_) { clearTotpSlot(); return false; }
+    if (!hasOtpField) return false;
+    armTotpSlot(message.challenge, message.deliveryNonce, sender);
+    const proof = {action: "keygrain.totp.contextProof", challenge: message.challenge, nonce: documentNonce, hasOtpField: true};
+    sendProof(proof);
+    sendResponse(proof);
+    return true;
+  }
+
+  function handleTotpDelivery(message, sender, sendResponse) {
+    const shapeValid = exactData(message, ["action", "deliveryNonce", "code"]);
+    const senderTabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+    const senderFrameId = sender && Number.isInteger(sender.frameId) ? sender.frameId : null;
+    if (!validWorkerSender(sender) || !validPageContext() || !totpSlot.proven
+      || senderTabId !== totpSlot.proven.senderTabId || senderFrameId !== totpSlot.proven.senderFrameId
+      || (sender && sender.documentId !== undefined ? sender.documentId : null) !== totpSlot.proven.senderDocumentIdOrNull
+      || totpSlot.proven.pageOrigin !== location.origin || !shapeValid
+      || message.action !== "keygrain.totp.fillResult" || message.deliveryNonce !== totpSlot.proven.deliveryNonce) {
+      clearTotpSlot();
+      const failure = shapeValid ? KEYGRAIN_TOTP_SAFE_FAILURE : KEYGRAIN_TOTP_PROTOCOL_FAILURE;
+      sendResponse(failure);
+      return true;
+    }
+    if (!/^[0-9]{6}$|^[0-9]{8}$/.test(message.code)) {
+      clearTotpSlot(); sendResponse(KEYGRAIN_TOTP_DELIVERY_FAILURE); return true;
+    }
+    let field = null;
+    try {
+      const {descriptors, els} = fieldDescriptors();
+      const key = KeygrainAutofill.pickOtpField(descriptors);
+      if (key === null || key === undefined || !els[key] || descriptors[key]?.visible !== true
+        || descriptors[key]?.disabled === true || descriptors[key]?.readOnly === true
+        || !KeygrainAutofill.isOtpDescriptor(descriptors[key])
+        || !KeygrainAutofill.otpCodeFitsField(message.code.length, descriptors[key]?.maxlength)) {
+        clearTotpSlot(); sendResponse(KEYGRAIN_TOTP_DELIVERY_FAILURE); return true;
+      }
+      field = els[key];
+    } catch (_) { clearTotpSlot(); sendResponse(KEYGRAIN_TOTP_DELIVERY_FAILURE); return true; }
+    clearTotpSlot();
+    try {
+      fillField(field, message.code);
+    } catch (_) { sendResponse(KEYGRAIN_TOTP_DELIVERY_FAILURE); return true; }
+    const response = {ok: true, result: {codeFilled: true}};
+    sendProof(response);
+    sendResponse(response);
+    return true;
+  }
+
+  function fieldDescriptors() {
     const els = Array.from(document.querySelectorAll("input"));
     const active = document.activeElement;
-    const descriptors = els.map((el, i) => {
-      const d = KeygrainAutofill.describeField(el, active);
-      d.key = i;
-      return d;
+    const descriptors = els.map((el, index) => {
+      const descriptor = KeygrainAutofill.describeField(el, active);
+      descriptor.key = index;
+      return descriptor;
     });
-    return { descriptors, els };
+    return {descriptors, els};
   }
 
-  // Native setter bypasses framework-controlled (React/Vue/Angular) inputs.
-  // Only sets a value + dispatches input/change — never submits.
   function fillField(field, value) {
-    const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-    nativeSet.call(field, value);
-    field.dispatchEvent(new Event("input", { bubbles: true }));
-    field.dispatchEvent(new Event("change", { bubbles: true }));
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(field, value);
+    field.dispatchEvent(new Event("input", {bubbles: true}));
+    field.dispatchEvent(new Event("change", {bubbles: true}));
   }
 
-  // Synchronous; no waiting; NO secret returned to the background.
-  function getFillContextSnapshot() {
-    const { descriptors } = collectFieldDescriptors();
-    return {
-      pageEmail: KeygrainAutofill.extractPageEmail(descriptors),
-      hasUsernameField: descriptors.some((d) => KeygrainAutofill.isFillableUsernameDescriptor(d)),
-      hasPasswordField: descriptors.some((d) => KeygrainAutofill.isPasswordDescriptor(d)),
-      hasOtpField: descriptors.some((d) => KeygrainAutofill.isOtpDescriptor(d)),           // autofillOtpForTab settle loop
-      focusedIsOtp: (() => {                                                                 // the context-aware shortcut probe (§D3)
-        const a = document.activeElement;
-        if (!a || a.tagName !== "INPUT") return false;
-        return KeygrainAutofill.isOtpDescriptor(KeygrainAutofill.describeField(a, a));
-      })(),
-    };
+  function b1Fill(password, email) {
+    const {descriptors, els} = fieldDescriptors();
+    const passwordKey = KeygrainAutofill.pickPasswordField(descriptors);
+    const usernameKey = email === null ? null : KeygrainAutofill.pickUsernameField(descriptors);
+    const passwordField = passwordKey === null || passwordKey === undefined ? null : els[passwordKey];
+    const usernameField = usernameKey === null || usernameKey === undefined ? null : els[usernameKey];
+    let emailFilled = false;
+    if (usernameField && email !== null) { fillField(usernameField, email); emailFilled = true; }
+    let passwordFilled = false;
+    if (passwordField) { fillField(passwordField, password); passwordFilled = true; }
+    return {passwordFilled, emailFilled};
   }
 
-  // Bounded single fill. A newer invocation supersedes any prior pending observer
-  // via the fill token. Exactly one observer + one FILL_WAIT_MS timer, both
-  // deterministically torn down on first fill, supersession, or timeout.
-  function performFill(password, email) {
-    const token = ++currentFillToken;
-    let filled = false;
-    let observer = null;
-    let timer = null;
-
-    function cleanup() {
-      if (observer) { observer.disconnect(); observer = null; }
-      if (timer) { clearTimeout(timer); timer = null; }
-    }
-
-    // true  = done (filled, superseded, or nothing left to do this call)
-    // false = no password field present yet (keep observing within bounds)
-    function tryFill() {
-      if (token !== currentFillToken) { cleanup(); return true; }
-      if (filled) return true;
-      const { descriptors, els } = collectFieldDescriptors();
-      const pwKey = KeygrainAutofill.pickPasswordField(descriptors);
-      const unKey = email ? KeygrainAutofill.pickUsernameField(descriptors) : null;
-      const unEl = unKey == null ? null : els[unKey];
-      const pwEl = pwKey == null ? null : els[pwKey];
-      if (unEl && email) fillField(unEl, email);
-      if (pwEl) {
-        fillField(pwEl, password);
-        filled = true;
-        cleanup();
-        return true;
-      }
-      return false;
-    }
-
-    if (tryFill()) return;
-    // Password field not present yet (multi-step / late render) — observe, bounded.
-    observer = new MutationObserver(() => { tryFill(); });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    timer = setTimeout(cleanup, FILL_WAIT_MS);
+  function safeText(value, max) {
+    if (typeof value !== "string") return false;
+    try { return new TextEncoder().encode(value).byteLength <= max; } catch (_) { return false; }
   }
 
-  // Bounded single OTP fill (mirrors performFill): pick the OTP field, apply the
-  // over-length guard, native-set the code + dispatch input/change, NO submit. Uses
-  // a SEPARATE otp fill token (performFill's password path is untouched) + one bounded
-  // MutationObserver + one FILL_WAIT_MS timer for a late-rendered OTP field (multi-step),
-  // all deterministically torn down on fill/supersede/timeout. Returns {filled, reason(, max)}
-  // for the popup's honest status (bg/inline callers ignore it; the guard still protects them):
-  //   no OTP field yet -> {filled:false, reason:"no_field"} (+ arm observer for a late render)
-  //   code too long    -> {filled:false, reason:"field_too_small", max:<maxlength>}
-  //   filled           -> {filled:true}
-  function performOtpFill(code) {
-    const token = ++currentOtpFillToken;
-    let observer = null;
-    let timer = null;
-
-    function cleanup() {
-      if (observer) { observer.disconnect(); observer = null; }
-      if (timer) { clearTimeout(timer); timer = null; }
-    }
-
-    // Result object when an OTP field is present (filled or too-small); null when no
-    // OTP field exists yet (keep observing within bounds).
-    function attempt() {
-      const c = code == null ? "" : String(code);
-      const { descriptors, els } = collectFieldDescriptors();
-      const otpKey = KeygrainAutofill.pickOtpField(descriptors);
-      if (otpKey == null) return null;
-      const otpDesc = descriptors[otpKey];
-      if (!KeygrainAutofill.otpCodeFitsField(c.length, otpDesc.maxlength)) {
-        return { filled: false, reason: "field_too_small", max: otpDesc.maxlength };
-      }
-      fillField(els[otpKey], c);
-      return { filled: true };
-    }
-
-    const first = attempt();
-    if (first) return first; // OTP field present (filled or too-small) — no observer needed
-    // No OTP field yet (multi-step / late render) — observe, bounded. Fire-and-forget for
-    // this late path; the popup already received {filled:false, reason:"no_field"}.
-    observer = new MutationObserver(() => {
-      if (token !== currentOtpFillToken) { cleanup(); return; } // superseded by a newer call
-      if (attempt()) cleanup();                                  // filled or determined too-small — stop
-    });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    timer = setTimeout(cleanup, FILL_WAIT_MS);
-    return { filled: false, reason: "no_field" };
+  function sendProof(proof) {
+    try { if (runtime && typeof runtime.sendMessage === "function") void Promise.resolve(runtime.sendMessage(proof)).catch(() => {}); } catch (_) {}
   }
 
-  // Prefer the last right-clicked target; else fill the resolved password field.
-  // Behavior preserved from the prior implementation; only the fallback password
-  // lookup now uses the shared picker.
-  function fillContextMenu(password, email) {
-    const target = lastContextMenuTarget;
-    if (target && target.tagName === "INPUT" && target.type === "password") {
-      fillField(target, password);
-      return;
-    }
-    if (target && target.tagName === "INPUT" && email) {
-      fillField(target, email);
-      return;
-    }
-    const { descriptors, els } = collectFieldDescriptors();
-    const pwKey = KeygrainAutofill.pickPasswordField(descriptors);
-    if (pwKey != null) fillField(els[pwKey], password);
+  function handleProbe(message, sender, sendResponse) {
+    if (!validWorkerSender(sender) || !validPageContext() || !exactData(message, ["action", "challenge", "deliveryNonce"])
+      || message.action !== "keygrain.password.contextProbe" || !safeText(message.challenge, 256)
+      || !message.challenge || !safeText(message.deliveryNonce, 256) || !message.deliveryNonce
+      || !documentNonce) return false;
+    armSlot(message.challenge, message.deliveryNonce, sender);
+    let hasPasswordField = false;
+    let hasUsernameField = false;
+    try {
+      const {descriptors} = fieldDescriptors();
+      hasPasswordField = descriptors.some(descriptor => KeygrainAutofill.isPasswordDescriptor(descriptor));
+      hasUsernameField = descriptors.some(descriptor => KeygrainAutofill.isFillableUsernameDescriptor(descriptor));
+    } catch (_) { clearSlot(); return false; }
+    const proof = {action: "keygrain.password.contextProof", challenge: message.challenge, nonce: documentNonce, hasPasswordField, hasUsernameField};
+    sendProof(proof);
+    sendResponse(proof);
+    return true;
   }
 
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.action === "getFillContext") {
-      sendResponse(getFillContextSnapshot());
+  function handleDelivery(message, sender, sendResponse) {
+    const senderTabId = sender && sender.tab && Number.isInteger(sender.tab.id) ? sender.tab.id : null;
+    const senderFrameId = sender && Number.isInteger(sender.frameId) ? sender.frameId : null;
+    if (!validWorkerSender(sender) || !validPageContext() || !slot.proven
+      || senderTabId !== slot.proven.senderTabId || senderFrameId !== slot.proven.senderFrameId
+      || (sender && sender.documentId !== undefined ? sender.documentId : null) !== slot.proven.senderDocumentIdOrNull
+      || slot.proven.pageOrigin !== location.origin || !exactData(message, ["action", "deliveryNonce", "password", "email"])
+      || message.action !== "keygrain.password.fillResult" || message.deliveryNonce !== slot.proven.deliveryNonce) {
+      clearSlot();
+      sendResponse(!exactData(message, ["action", "deliveryNonce", "password", "email"]) || message?.action !== "keygrain.password.fillResult"
+        ? {ok: false, code: "KEYGRAIN_AUTH_PROTOCOL_ERROR", message: "Invalid authentication request."} : KEYGRAIN_SAFE_FAILURE);
       return true;
     }
-    if (msg.action === "fill") {
-      performFill(msg.password, msg.email);
-      return; // fire-and-forget
-    }
-    if (msg.action === "fillOtp") {
-      // performOtpFill returns synchronously with the initial-attempt result; the popup
-      // awaits it for honest status. bg/inline callers ignore the response.
-      sendResponse(performOtpFill(msg.code));
+    if (typeof message.password !== "string" || message.password.length < 8 || message.password.length > 128
+      || !safeText(message.password, KEYGRAIN_PASSWORD_MAX_OUTPUT_UTF8)
+      || !(message.email === null || (safeText(message.email, KEYGRAIN_PASSWORD_MAX_EMAIL_UTF8) && message.email.length > 0))) {
+      clearSlot();
+      const failure = {ok: false, code: "KEYGRAIN_FILL_DELIVERY_ERROR", message: "The password could not be filled."};
+      sendProof(failure);
+      sendResponse(failure);
       return true;
     }
-    if (msg.action === "fillContextMenu") {
-      fillContextMenu(msg.password, msg.email);
-      return; // fire-and-forget
+    const proven = slot.proven;
+    clearSlot();
+    let result;
+    try { result = b1Fill(message.password, message.email); }
+    catch (_) {
+      const failure = {ok: false, code: "KEYGRAIN_FILL_DELIVERY_ERROR", message: "The password could not be filled."};
+      sendProof(failure);
+      sendResponse(failure);
+      return true;
     }
-  });
+    const response = {ok: true, result: {passwordFilled: result.passwordFilled, emailFilled: result.emailFilled}};
+    sendProof(response);
+    void proven;
+    sendResponse(response);
+    return true;
+  }
+
+  function onMessage(message, sender, sendResponse) {
+    const action = (() => {
+      try {
+        const descriptor = message && typeof message === "object" ? Object.getOwnPropertyDescriptor(message, "action") : null;
+        return descriptor && Object.prototype.hasOwnProperty.call(descriptor, "value") ? descriptor.value : null;
+      } catch (_) { return null; }
+    })();
+    if (action === "keygrain.password.contextProbe") return handleProbe(message, sender, sendResponse);
+    if (action === "keygrain.password.fillResult") return handleDelivery(message, sender, sendResponse);
+    if (action === "keygrain.totp.contextProbe") return handleTotpProbe(message, sender, sendResponse);
+    if (action === "keygrain.totp.fillResult") return handleTotpDelivery(message, sender, sendResponse);
+    if (action === "fill" || action === "fillContextMenu" || action === "fillOtp" || action === "getFillContext") {
+      sendResponse(KEYGRAIN_MIGRATION_FAILURE);
+      return true;
+    }
+    return false;
+  }
+
+  if (runtime?.onMessage?.addListener) runtime.onMessage.addListener(onMessage);
+  window.addEventListener?.("pagehide", () => { clearSlot(); clearTotpSlot(); });
 }

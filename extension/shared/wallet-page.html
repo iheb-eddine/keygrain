@@ -31,6 +31,16 @@ RECOMMENDED USAGE:
     <label for="wallet-email">Email</label>
     <input type="email" id="wallet-email" autocomplete="email">
 
+    <div id="secret-group">
+      <label for="wallet-secret">Master Secret</label>
+      <input type="password" id="wallet-secret" autocomplete="off">
+      <div id="wallet-fingerprint" role="img" aria-label="Secret fingerprint" style="display:flex; height:6px; border-radius:3px; overflow:hidden; margin-top:4px;"></div>
+      <p style="font-size:0.75rem; color:var(--text-secondary); margin:2px 0 0;">Visual fingerprint — confirms the same secret.</p>
+    </div>
+    <div id="session-unlocked-badge" class="hidden" style="margin-top: 12px; margin-bottom: 4px; padding: 8px 12px; background: rgba(0, 150, 136, 0.1); border-left: 3px solid #009688; border-radius: 4px; font-size: 0.85rem; color: var(--text-primary, #333);">
+      🔓 Unlocked via active Keygrain session (<span id="unlocked-email-badge"></span>). Master secret entry not required.
+    </div>
+
     <label for="wallet-name">Wallet name <span style="font-size:0.75rem">(lowercase, digits, hyphens only)</span></label>
     <input type="text" id="wallet-name" placeholder="e.g. personal, savings" pattern="[a-z0-9\-]+" autocomplete="off">
 
