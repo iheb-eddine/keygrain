@@ -1497,6 +1497,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (!derived?.code) return;
         let origin;
         try { origin = new URL(tabUrl).origin; } catch { return; }
+        const context = {tabId: sender.tab?.id != null ? sender.tab.id : null, frameId: sender.frameId || 0, origin};
         const deliveryNonce = chromeRandomNonce();
         await chromeProveTotpContext({context, deliveryNonce});
         await chromeDeliverTotp({context, deliveryNonce, code: derived.code});
