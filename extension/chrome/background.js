@@ -742,7 +742,7 @@ function knownUUIDs(data) {
   return data.syncKnownUUIDs;
 }
 
-async function readAndPrepare({email, secret}) {
+async function readAndPrepare({email, secret, isCreate}) {
   const data = await chrome.storage.local.get(["services", "syncKnownUUIDs", "lastSyncTime", "account_email"]);
   const stored = data.services;
   const storedAccountEmail = data.account_email;
@@ -756,7 +756,7 @@ async function readAndPrepare({email, secret}) {
   let migrateMarkers = false;
 
   if (stored === undefined || isDifferentAccount) {
-    const result = await syncWithServer(secret, email, [], [], [], []);
+    const result = await syncWithServer(secret, email, [], [], [], [], 0, isCreate);
     accepted = syncLocalV2(result);
     prepared = preparedFromAccepted(accepted, email, secret);
   } else if (stored && stored.version === 1) {
@@ -978,7 +978,7 @@ function createChromeIngress() {
       const res = await chromeOwner.unlock(
         runtimeContext.sender,
         chrome.runtime.id,
-        {action: "unlock", email, secret, popupSessionId: runtimeContext.popupSessionId, confirmationId},
+        {action: "unlock", email, secret, popupSessionId: runtimeContext.popupSessionId, confirmationId, isCreate: Boolean(runtimeContext?.isCreate)},
         "chrome",
         KEYGRAIN_EXTENSION_ORIGIN,
       );

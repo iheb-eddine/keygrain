@@ -124,6 +124,7 @@
       [AUTH_PROTOCOL_ERROR]: "Invalid authentication request.",
       [CONTEXT_ERROR]: "This action is not available from this context.",
       [UNLOCK_FAILED]: "Unlock failed; try again.",
+      ACCOUNT_NOT_FOUND: "Account not found or incorrect email/password. Use 'Create Account' if you are new.",
       [OPERATION_ERROR]: "The operation could not be completed.",
       [CONSUMER_MIGRATION_REQUIRED]: "Update Keygrain to continue.",
       [SETTINGS_STORAGE_ERROR]: "Security settings could not be loaded safely.",
@@ -590,12 +591,13 @@
 
   function validateUnlockMessage(message) {
     try {
-      exactMessageKeys(message, ["action", "email", "secret", "popupSessionId", "confirmationId"]);
+      exactMessageKeys(message, ["action", "email", "secret", "popupSessionId", "confirmationId", "isCreate"]);
       const action = dataField(message, "action");
       const emailValue = dataField(message, "email");
       const secret = dataField(message, "secret");
       const popupSessionId = dataField(message, "popupSessionId");
       const confirmationId = dataField(message, "confirmationId");
+      const isCreate = message.isCreate === true;
       if (action !== "unlock"
         || typeof secret !== "string" || secret.length === 0
         || typeof popupSessionId !== "string" || popupSessionId.length < 1
@@ -608,6 +610,7 @@
         secret,
         popupSessionId,
         confirmationId,
+        isCreate,
       });
     } catch (exception) {
       if (exception?.code === AUTH_PROTOCOL_ERROR) throw exception;
@@ -837,6 +840,7 @@
           email: request.email,
           secret: request.secret,
           popupSessionId: request.popupSessionId,
+          isCreate: request.isCreate,
         });
         const payload = preparedUnlock(prepared);
         manager.applySettings(loaded);

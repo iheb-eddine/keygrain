@@ -1388,7 +1388,7 @@
               if (!totpRevealed) return;
               const currentRemaining = 30 - (Math.floor(Date.now() / 1000) % 30);
               if (countdownBar?.style) countdownBar.style.width = ((currentRemaining / 30) * 100) + "%";
-              if (currentRemaining > remainingSeconds || currentRemaining === 30) {
+              if (currentRemaining > remainingSeconds) {
                 await updateTotp();
               }
               remainingSeconds = currentRemaining;

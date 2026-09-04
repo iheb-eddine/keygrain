@@ -737,7 +737,7 @@ function migrateLocalPayload(payload, knownUUIDs, now) {
  * Returns: {services, wallets, wallet_audit_log, status, etag, knownUUIDs}
  * Throws on auth/network/server errors.
  */
-async function syncWithServer(secret, email, localServices, localWallets = [], localAuditLog = [], localTombstones = [], retryCount = 0) {
+async function syncWithServer(secret, email, localServices, localWallets = [], localAuditLog = [], localTombstones = [], retryCount = 0, isCreate = false) {
   const lookupId = await deriveLookupId(secret, email);
   const authPassword = await deriveAuthPassword(secret, email);
   const encKey = await deriveEncryptionKey(secret, email);
@@ -808,6 +808,12 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
         validateMetadataIntegrity(remoteMetadata, cachedMeta);
       }
     } else if (getResp.status === 404) {
+      if (!isCreate && localServices.length === 0) {
+        throw Object.assign(new Error("account_not_found"), {code: "ACCOUNT_NOT_FOUND"});
+      }
+      if (!isCreate && localServices.length === 0) {
+        throw Object.assign(new Error("account_not_found"), {code: "ACCOUNT_NOT_FOUND"});
+      }
       // Frozen Req 11: no remote record. NEVER inferred as deletions — see
       // reconcileServices(remoteExists=false). Wallet known-keys are also reset so
       // local wallets are not read as "deleted remotely".
