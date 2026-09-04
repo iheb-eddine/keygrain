@@ -142,7 +142,7 @@ Full specification: [SPEC.md](SPEC.md)
 
 | Platform | Description | Access |
 |----------|-------------|--------|
-| Browser extension | Chrome (MV3) + Firefox (MV2) | [Chrome Web Store](https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha) / [Firefox Add-ons](https://addons.mozilla.org/addon/keygrain/) or build from `extension/` |
+| Browser extension | Chrome (MV3) + Firefox (MV3) | [Chrome Web Store](https://chromewebstore.google.com/detail/keygrain/goeemlncopfbcnppjalfmgdalbhlgdha) / [Firefox Add-ons](https://addons.mozilla.org/addon/keygrain/) or build from `extension/` |
 | Android app | Kotlin + Jetpack Compose | [Join the tester group](https://groups.google.com/g/keygrain-testers), then [opt into closed testing](https://play.google.com/apps/testing/com.secbytech.keygrain) and install through Google Play |
 | Web generator | Client-side PWA | [keygrain.com/generate](https://keygrain.com/generate/) |
 | Python library + CLI | Library and command-line tool | `pip install` from repo |
@@ -183,6 +183,7 @@ cd kotlin && ./gradlew assembleRelease
 - [CLI & Integration Guide](docs/cli-and-integration.md) — command reference and Python library usage
 - [Advanced Features](docs/advanced-features.md) — SSH keys, HD wallets, TOTP seeds
 - [Architecture](docs/architecture.md) — system design and security model
+- [Extension Architecture](docs/extension-architecture.md) — MV3 background lifecycle, crypto isolation, and state machine
 - [Terminology & Style](docs/GLOSSARY.md) — canonical terms and documentation governance
 - [User Guide: Extension](docs/user-guide-extension.md)
 - [User Guide: Android](docs/user-guide-mobile.md)

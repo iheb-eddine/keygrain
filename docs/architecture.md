@@ -55,9 +55,11 @@ Identical implementations in Python, JavaScript, and Kotlin. All produce the sam
 |-------|------|
 | Popup (`popup.js`) | Service list UI, search, CRUD, settings, sync trigger |
 | Content script (`content.js`) | Autofill via native property descriptors |
-| Background (`background.js`) | Session management, local encryption, auto-lock timer |
+| Background (`background.js`) | Session management, local encryption, auto-lock timer, worker authority |
 
 The content script uses `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set` to bypass framework-controlled inputs (React, Angular). The extension uses `activeTab` for access to the current tab. Chrome uses the `scripting` permission for script injection; Firefox's MV2 flow uses `tabs.executeScript` and does not require a separate `scripting` permission.
+
+For the in-depth specification of the Manifest V3 background worker lifecycle, hybrid encrypted message ingress, cryptographic domain separation, and ephemeral dual-tier leasing, see [Extension Architecture Specification](extension-architecture.md).
 
 ### 2.3 Android App
 
@@ -256,7 +258,7 @@ Dual token-bucket rate limiting protects the sync authentication surface against
 | Clock skew → wrong merge winner | Accepted limitation; monotonic timestamp recommendation |
 | Accidental mass deletion | Client-side empty-push protection guardrail |
 
-For the public protocol contract, see [API.md](../API.md). Security guidance is in [SECURITY.md](../SECURITY.md).
+For the public protocol contract, see [API.md](../API.md). Security guidance is in [SECURITY.md](../SECURITY.md). For browser-extension-specific threat models (IPC eavesdropping, worker suspension attacks, tab context isolation), see [Extension Architecture Specification](extension-architecture.md).
 
 ---
 
@@ -264,7 +266,7 @@ For the public protocol contract, see [API.md](../API.md). Security guidance is 
 
 ### 5.1 Browser Extension
 
-The extension stores service configuration and related local account/device state locally; service data is encrypted with the **local storage key** (AES-256-GCM). Generated passwords are derived when needed and are not stored. The master secret and strengthened key are held in memory during an unlocked session and cleared on lock or timeout. If PIN unlock is enabled, an encrypted local copy of the master secret may be retained for that unlock flow.
+The extension stores service configuration and related local account/device state locally; service data is encrypted with the **local storage key** (AES-256-GCM) in `chrome.storage.local`. Generated passwords are derived when needed and are not stored. The master secret and strengthened key are held in memory during an unlocked session and cleared on lock or timeout (configurable auto-lock via `chrome.alarms`). Ephemeral session leases are cached in `chrome.storage.session` for worker restoration across suspensions. If PIN unlock is enabled, an encrypted local copy of the master secret may be retained for that unlock flow.
 
 ### 5.2 Android App
 
@@ -310,3 +312,29 @@ If `deleted_ids` is omitted, the legacy API heuristic applies: an empty push aga
 - `PUT` requires `If-Match: "<etag>"` for existing records
 - Mismatch → 409 Conflict with `current_etag` in response body
 - First PUT (new user) does not require `If-Match`
+---
+
+## 7. Deployment Architecture
+
+```
+Internet ──▶ nginx (TLS termination, Let's Encrypt)
+                │
+                ▼
+         Go binary (port 9860)
+                │
+                ▼
+         /opt/keygrain/data/ (Docker volume)
+```
+
+- **Build:** Docker multi-stage (Go alpine builder → alpine runtime)
+- **Deploy:** GitLab CI → SSH → `docker compose build && up -d`
+- **TLS:** nginx handles certificate renewal and HTTPS termination
+- **IP forwarding:** Set `KEYGRAIN_RATE_LIMIT_TRUSTED_HEADER=X-Real-IP` for nginx to pass real client IP for rate limiting
+
+---
+
+## 8. Related Documentation
+
+- [Extension Architecture Specification](extension-architecture.md) — Comprehensive MV3 background script lifecycle, cryptographic domain separation, state reconciliation, and autofill protocol.
+- [Algorithm Specification](../SPEC.md) — Exact derivation algorithms, parameter constraints, and test vectors.
+- [CLI & Integration Guide](cli-and-integration.md) — Python reference client and CLI usage.
