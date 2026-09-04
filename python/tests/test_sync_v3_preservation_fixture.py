@@ -1,4 +1,4 @@
-"""Independent byte/schema checks for the KG-29 v3 preservation contract.
+"""Independent byte/schema checks for the v3 preservation contract.
 
 This test intentionally does not import a production sync parser or serializer. The
 fixture is a future contract and current clients are not declared v3 preservers.

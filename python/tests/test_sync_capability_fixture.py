@@ -1,4 +1,4 @@
-"""Structural and byte-level checks for the KG-29 public sync contract fixture."""
+"""Structural and byte-level checks for the public sync contract fixture."""
 
 import hashlib
 import json

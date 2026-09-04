@@ -2,7 +2,7 @@
   "fixture": "keygrain-sync-capability-contract",
   "fixture_version": 1,
   "status": "frozen_public_contract_not_runtime_support_claim",
-  "scope": "KG-29 strict capability envelope, immutable defaults lock, transition, ETag, and HTTP errors",
+  "scope": "Strict capability envelope, immutable defaults lock, transition, ETag, and HTTP errors",
   "capability": "account_defaults_immutable_v1",
   "protocol": {
     "legacy_v2": {

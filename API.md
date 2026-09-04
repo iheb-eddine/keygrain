@@ -26,9 +26,9 @@ The server stores a bcrypt hash (cost 12) of the auth_password on first PUT. Sub
 
 The complete byte-level algorithm and the `DEFAULT_SYMBOLS` value are normative in `SPEC.md` §6. Do not implement this contract as a raw-secret HMAC or as an undefined `derive_password_v1` function.
 
-## KG-29 strict capability envelope (v3 contract; implementation pending)
+## Strict capability envelope (v3 contract; implementation pending)
 
-This section freezes the public HTTP contract for the KG-29 immutable account-defaults
+This section freezes the public HTTP contract for the immutable account-defaults
 protocol. It documents a future strict capability rollout; it does **not** claim that the
 current deployed server or any released client implements v3. The machine-readable contract
 fixture is `sync-capability-vectors.json` and is covered by `.fixtures-checksum`.

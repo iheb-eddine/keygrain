@@ -11,7 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Validates the declarative KG-29 v3 contract only. It deliberately does not call
+ * Validates the declarative v3 contract only. It deliberately does not call
  * SyncBlob, SyncManager, or any production parser/serializer: current Android runtime
  * support is not claimed by this fixture.
  */
