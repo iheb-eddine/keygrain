@@ -21,8 +21,17 @@ internal object SyncBlob {
         wallets: List<WalletEntry>,
         auditLog: List<WalletAuditEntry>,
         syncConflicts: List<SyncConflict>
+    ): String = canonicalBlobPayload(services, emptyList(), wallets, auditLog, syncConflicts)
+
+    internal fun canonicalBlobPayload(
+        services: List<ServiceEntry>,
+        sshKeys: List<SshKeyEntry> = emptyList(),
+        wallets: List<WalletEntry>,
+        auditLog: List<WalletAuditEntry>,
+        syncConflicts: List<SyncConflict>
     ): String {
         val orderedServices = services.sortedBy { it.id ?: "" }
+        val orderedSshKeys = sshKeys.sortedBy { "${it.keyName.lowercase()}:${it.email.lowercase()}:${it.id}" }
         val orderedWallets = wallets.sortedBy { it.walletName.lowercase() + ":" + it.chain.lowercase() }
         val orderedAudit = auditLog.sortedBy { "${it.timestamp}\u0000${it.walletName}\u0000${it.chain}\u0000${it.action}" }
         val orderedConflicts = syncConflicts.sortedBy { it.dedupeKey() }
@@ -35,7 +44,9 @@ internal object SyncBlob {
                 if (i > 0) append(",")
                 append(canonicalService(service))
             }
-            append("],\"wallets\":")
+            append("],\"ssh_keys\":")
+                .append(canonicalJson(orderedSshKeys.map { it.toJson() }))
+            append(",\"wallets\":")
                 .append(canonicalJson(orderedWallets.map { it.toJson() }))
             append(",\"wallet_audit_log\":")
                 .append(canonicalJson(orderedAudit.map { it.toJson() }))
@@ -160,6 +171,7 @@ internal object SyncBlob {
 
     data class BlobContent(
         val services: List<ServiceEntry>,
+        val sshKeys: List<SshKeyEntry> = emptyList(),
         val wallets: List<WalletEntry>,
         val auditLog: List<WalletAuditEntry>,
         val syncConflicts: List<SyncConflict>
@@ -168,7 +180,9 @@ internal object SyncBlob {
     fun parseBlobContent(json: String, serviceManager: ServiceManager): BlobContent {
         val trimmed = json.trim()
         if (trimmed.startsWith("[")) {
-            return BlobContent(serviceManager.parseJson(trimmed), emptyList(), emptyList(), emptyList())
+            val services = serviceManager.parseJson(trimmed)
+            val extractedSsh = extractSshKeysFromServices(services)
+            return BlobContent(services, extractedSsh, emptyList(), emptyList(), emptyList())
         }
         val obj = JSONObject(trimmed)
         val servicesArr = obj.optJSONArray("services") ?: JSONArray()
@@ -176,6 +190,14 @@ internal object SyncBlob {
         val walletsArr = obj.optJSONArray("wallets") ?: JSONArray()
         val auditArr = obj.optJSONArray("wallet_audit_log") ?: JSONArray()
         val conflictsArr = obj.optJSONArray("sync_conflicts") ?: JSONArray()
+        val sshArr = obj.optJSONArray("ssh_keys") ?: JSONArray()
+
+        val parsedSshKeys = (0 until sshArr.length()).mapNotNull { i ->
+            try { SshKeyEntry.fromJson(sshArr.getJSONObject(i)) } catch (_: Exception) { null }
+        }
+        val legacySshKeys = extractSshKeysFromServices(services)
+        val combinedSshKeys = reconcileParsedSsh(parsedSshKeys, legacySshKeys)
+
         val wallets = (0 until walletsArr.length()).mapNotNull { i ->
             try { WalletEntry.fromJson(walletsArr.getJSONObject(i)) } catch (_: Exception) { null }
         }
@@ -185,7 +207,47 @@ internal object SyncBlob {
         val conflicts = (0 until conflictsArr.length()).mapNotNull { i ->
             try { SyncConflict.fromJson(conflictsArr.getJSONObject(i)) } catch (_: Exception) { null }
         }
-        return BlobContent(services, wallets, auditLog, conflicts)
+        return BlobContent(services, combinedSshKeys, wallets, auditLog, conflicts)
+    }
+
+    private fun extractSshKeysFromServices(services: List<ServiceEntry>): List<SshKeyEntry> {
+        val list = mutableListOf<SshKeyEntry>()
+        for (svc in services) {
+            val ssh = svc.ssh ?: continue
+            val kn = ssh.optString("key_name", "")
+            if (kn.isNotEmpty()) {
+                list.add(
+                    SshKeyEntry(
+                        id = svc.id ?: java.util.UUID.randomUUID().toString(),
+                        keyName = kn,
+                        counter = ssh.optInt("counter", 1),
+                        email = svc.email,
+                        comment = kn,
+                        createdAt = svc.updatedAt,
+                        updatedAt = svc.updatedAt
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    private fun reconcileParsedSsh(
+        explicitKeys: List<SshKeyEntry>,
+        legacyKeys: List<SshKeyEntry>
+    ): List<SshKeyEntry> {
+        val byKey = mutableMapOf<String, SshKeyEntry>()
+        for (legacy in legacyKeys) {
+            byKey[SshKeyEntry.mergeKey(legacy)] = legacy
+        }
+        for (explicit in explicitKeys) {
+            val k = SshKeyEntry.mergeKey(explicit)
+            val existing = byKey[k]
+            if (existing == null || explicit.updatedAt >= existing.updatedAt) {
+                byKey[k] = explicit
+            }
+        }
+        return byKey.values.toList()
     }
 
 }

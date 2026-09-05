@@ -35,6 +35,34 @@ internal object SyncMerge {
         return Pair(merged, newKeys)
     }
 
+    fun mergeSshKeys(
+        local: List<SshKeyEntry>,
+        remote: List<SshKeyEntry>,
+        knownSshKeys: Set<String>
+    ): Pair<List<SshKeyEntry>, Set<String>> {
+        val remoteByKey = remote.associateBy { SshKeyEntry.mergeKey(it) }
+        val localByKey = local.associateBy { SshKeyEntry.mergeKey(it) }.toMutableMap()
+        val merged = mutableListOf<SshKeyEntry>()
+
+        for ((key, remoteK) in remoteByKey) {
+            val localK = localByKey.remove(key)
+            if (localK != null) {
+                merged.add(if (localK.updatedAt > remoteK.updatedAt) localK else remoteK)
+            } else {
+                if (knownSshKeys.contains(key)) { /* deleted locally */ }
+                else merged.add(remoteK)
+            }
+        }
+
+        for ((key, localK) in localByKey) {
+            if (knownSshKeys.contains(key)) { /* deleted remotely */ }
+            else merged.add(localK)
+        }
+
+        val newKeys = merged.map { SshKeyEntry.mergeKey(it) }.toSet()
+        return Pair(merged, newKeys)
+    }
+
 
     fun mergeAuditLog(
         local: List<WalletAuditEntry>,

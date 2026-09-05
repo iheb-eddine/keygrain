@@ -31,6 +31,12 @@ class SyncManager(
     fun saveWallets(context: Context, wallets: List<WalletEntry>) =
         SyncStore.saveWallets(context, wallets)
 
+    fun saveSshKeys(context: Context, keys: List<SshKeyEntry>) =
+        SyncStore.saveSshKeys(context, keys)
+
+    fun getSshKeys(context: Context): List<SshKeyEntry> =
+        SyncStore.getSshKeys(context)
+
     fun getAuditLog(context: Context): List<WalletAuditEntry> = SyncStore.getAuditLog(context)
 
     fun saveAuditLog(context: Context, log: List<WalletAuditEntry>) =
@@ -54,6 +60,7 @@ class SyncManager(
      */
     private data class RemoteState(
         val services: List<ServiceEntry>,
+        val sshKeys: List<SshKeyEntry>,
         val wallets: List<WalletEntry>,
         val auditLog: List<WalletAuditEntry>,
         val conflicts: List<SyncConflict>,
@@ -61,6 +68,7 @@ class SyncManager(
         val etag: String?,
         val status: String,
         val exists: Boolean,
+        val knownSshKeys: Set<String>,
         val knownWalletKeys: Set<String>
     )
 
@@ -78,8 +86,10 @@ class SyncManager(
     private data class MergedState(
         val rec: SyncReconciler.ReconcileResult,
         val services: List<ServiceEntry>,
+        val sshKeys: List<SshKeyEntry>,
         val wallets: List<WalletEntry>,
         val auditLog: List<WalletAuditEntry>,
+        val newSshKeys: Set<String>,
         val newWalletKeys: Set<String>
     )
 
@@ -135,7 +145,7 @@ class SyncManager(
             when (putResult) {
                 is PutResult.Success -> {
                     val confirmed = persistPushed(putResult, remote, m, serviceManager, context)
-                    SyncResult.Success(confirmed, m.wallets, m.auditLog, syncConflicts, remote.status)
+                    SyncResult.Success(confirmed, m.sshKeys, m.wallets, m.auditLog, syncConflicts, remote.status)
                 }
                 is PutResult.Conflict -> {
                     if (retryCount < 3) {
@@ -215,6 +225,7 @@ class SyncManager(
                 return FetchOutcome.Fetched(
                     RemoteState(
                         services = blobContent.services,
+                        sshKeys = blobContent.sshKeys,
                         wallets = blobContent.wallets,
                         auditLog = blobContent.auditLog,
                         conflicts = blobContent.syncConflicts,
@@ -222,6 +233,7 @@ class SyncManager(
                         etag = getResult.etag,
                         status = "synced",
                         exists = true,
+                        knownSshKeys = SyncStore.getKnownSshKeys(context),
                         knownWalletKeys = SyncStore.getKnownWalletKeys(context)
                     )
                 )
@@ -230,10 +242,12 @@ class SyncManager(
                 // Frozen Req 11: no remote record. NEVER inferred as deletions — see
                 // SyncReconciler.reconcileServices(remoteExists=false). Wallet known-keys are also
                 // reset so local wallets are not read as "deleted remotely".
+                SyncStore.setKnownSshKeys(context, emptySet())
                 SyncStore.setKnownWalletKeys(context, emptySet())
                 return FetchOutcome.Fetched(
                     RemoteState(
                         services = emptyList(),
+                        sshKeys = emptyList(),
                         wallets = emptyList(),
                         auditLog = emptyList(),
                         conflicts = emptyList(),
@@ -241,6 +255,7 @@ class SyncManager(
                         etag = null,
                         status = "created",
                         exists = false,
+                        knownSshKeys = emptySet(),
                         knownWalletKeys = emptySet()
                     )
                 )
@@ -267,11 +282,13 @@ class SyncManager(
             SyncStore.getLastSuccessfulSyncAt(context),
             remote.exists
         )
+        val (mergedSshKeys, newSshKeys) =
+            SyncMerge.mergeSshKeys(SyncStore.getSshKeys(context), remote.sshKeys, remote.knownSshKeys)
         val (mergedWallets, newWKeys) =
             SyncMerge.mergeWallets(SyncStore.getWallets(context), remote.wallets, remote.knownWalletKeys)
         val mergedAuditLog =
             SyncMerge.mergeAuditLog(SyncStore.getAuditLog(context), remote.auditLog)
-        return MergedState(rec, rec.merged, mergedWallets, mergedAuditLog, newWKeys)
+        return MergedState(rec, rec.merged, mergedSshKeys, mergedWallets, mergedAuditLog, newSshKeys, newWKeys)
     }
 
     /** Remote + newly detected conflicts, deduped by key, oldest first, newest 50 kept. */
@@ -310,13 +327,13 @@ class SyncManager(
     ): SyncResult.Success? {
         if (!remote.exists || m.rec.deletedIds.isNotEmpty()) return null
         val localCanon =
-            SyncBlob.canonicalBlobPayload(m.services, m.wallets, m.auditLog, syncConflicts)
+            SyncBlob.canonicalBlobPayload(m.services, m.sshKeys, m.wallets, m.auditLog, syncConflicts)
         val remoteWithMeta = remote.metadata.indices.mapNotNull { i ->
             val id = remote.metadata[i].first ?: return@mapNotNull null
             remote.services[i].copy(id = id, updatedAt = remote.metadata[i].second)
         }
         val remoteCanon = SyncBlob.canonicalBlobPayload(
-            remoteWithMeta, remote.wallets, remote.auditLog, remote.conflicts
+            remoteWithMeta, remote.sshKeys, remote.wallets, remote.auditLog, remote.conflicts
         )
         if (localCanon != remoteCanon) return null
 
@@ -325,9 +342,10 @@ class SyncManager(
         if (m.rec.review.isNotEmpty()) {
             serviceManager.setDeletionReview(serviceManager.getDeletionReview() + m.rec.review)
         }
+        SyncStore.setKnownSshKeys(context, m.newSshKeys)
         SyncStore.setKnownWalletKeys(context, m.newWalletKeys)
         SyncStore.setLastSuccessfulSyncAt(context, System.currentTimeMillis())
-        return SyncResult.Success(m.services, m.wallets, m.auditLog, syncConflicts, "unchanged")
+        return SyncResult.Success(m.services, m.sshKeys, m.wallets, m.auditLog, syncConflicts, "unchanged")
     }
 
     /** Step 3: build the encrypted PUT body. */
@@ -340,19 +358,24 @@ class SyncManager(
         val contentArray = JSONArray()
         val metadataArray = JSONArray()
         for (svc in m.services) {
-            contentArray.put(svc.toJsonContent())
+            val content = svc.toJsonContent().apply {
+                remove("ssh")
+            }
+            contentArray.put(content)
             metadataArray.put(JSONObject().apply {
                 put("id", svc.id)
                 put("updated_at", svc.updatedAt)
             })
         }
 
+        val sshArray = JSONArray().apply { m.sshKeys.forEach { put(it.toJson()) } }
         val walletsArray = JSONArray().apply { m.wallets.forEach { put(it.toJson()) } }
         val auditArray = JSONArray().apply { m.auditLog.forEach { put(it.toJson()) } }
         val conflictsArray = JSONArray().apply { syncConflicts.forEach { put(it.toJson()) } }
 
         val blobPayload = JSONObject().apply {
             put("services", contentArray)
+            put("ssh_keys", sshArray)
             put("wallets", walletsArray)
             put("wallet_audit_log", auditArray)
             put("sync_conflicts", conflictsArray)
@@ -394,6 +417,8 @@ class SyncManager(
             serviceManager.setDeletionReview(serviceManager.getDeletionReview() + m.rec.review)
         }
         SyncStore.setMetadataCache(context, putResult.services)
+        SyncStore.setKnownSshKeys(context, m.newSshKeys)
+        SyncStore.saveSshKeys(context, m.sshKeys)
         SyncStore.setKnownWalletKeys(context, m.newWalletKeys)
         SyncStore.saveWallets(context, m.wallets)
         SyncStore.saveAuditLog(context, m.auditLog)

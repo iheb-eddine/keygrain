@@ -62,6 +62,46 @@ internal object SyncStore {
         prefs.edit().remove("known_uuids").apply()
     }
 
+    /**
+     * Idempotent migration of legacy embedded SSH configurations from ServiceEntry records
+     * into SshKeyEntry records in SyncStore.
+     */
+    fun migrateLegacySshKeys(context: Context, serviceManager: ServiceManager) {
+        val existingSshKeys = getSshKeys(context).toMutableList()
+        val existingKeysMap = existingSshKeys.associateBy { SshKeyEntry.mergeKey(it) }.toMutableMap()
+        var changed = false
+
+        val services = serviceManager.getServices()
+        for (svc in services) {
+            val ssh = svc.ssh ?: continue
+            val kn = ssh.optString("key_name", "").trim()
+            if (kn.isNotEmpty()) {
+                val candidate = SshKeyEntry(
+                    id = svc.id ?: java.util.UUID.randomUUID().toString(),
+                    keyName = kn,
+                    counter = ssh.optInt("counter", 1),
+                    email = svc.email.trim(),
+                    comment = kn,
+                    createdAt = svc.updatedAt,
+                    updatedAt = svc.updatedAt
+                )
+                val mergeKey = SshKeyEntry.mergeKey(candidate)
+                val current = existingKeysMap[mergeKey]
+                if (current == null) {
+                    existingKeysMap[mergeKey] = candidate
+                    changed = true
+                } else if (candidate.updatedAt > current.updatedAt) {
+                    existingKeysMap[mergeKey] = candidate
+                    changed = true
+                }
+            }
+        }
+
+        if (changed) {
+            saveSshKeys(context, existingKeysMap.values.toList())
+        }
+    }
+
 
     /**
      * The causal barrier used to tell a routine remote deletion (apply silently) from one
@@ -99,6 +139,26 @@ internal object SyncStore {
         getPrefs(context).edit().putString("sync_metadata_cache", arr.toString()).apply()
     }
 
+
+    fun getKnownSshKeys(context: Context): Set<String> =
+        getPrefs(context).getStringSet("known_ssh_keys", emptySet()) ?: emptySet()
+
+    fun setKnownSshKeys(context: Context, keys: Set<String>) {
+        getPrefs(context).edit().putStringSet("known_ssh_keys", keys).apply()
+    }
+
+    fun getSshKeys(context: Context): List<SshKeyEntry> {
+        val json = getPrefs(context).getString("ssh_keys", "[]") ?: "[]"
+        val arr = JSONArray(json)
+        return (0 until arr.length()).mapNotNull { i ->
+            try { SshKeyEntry.fromJson(arr.getJSONObject(i)) } catch (_: Exception) { null }
+        }
+    }
+
+    fun saveSshKeys(context: Context, keys: List<SshKeyEntry>) {
+        val arr = JSONArray().apply { keys.forEach { put(it.toJson()) } }
+        getPrefs(context).edit().putString("ssh_keys", arr.toString()).apply()
+    }
 
     fun getKnownWalletKeys(context: Context): Set<String> =
         getPrefs(context).getStringSet("known_wallet_keys", emptySet()) ?: emptySet()

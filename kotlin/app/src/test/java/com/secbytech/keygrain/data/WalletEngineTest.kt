@@ -169,6 +169,6 @@ class WalletEngineTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun testRejectEntropyWrongSize() {
-        WalletEngine.entropyToMnemonic(ByteArray(16))
+        WalletEngine.entropyToMnemonic(ByteArray(10))
     }
 }

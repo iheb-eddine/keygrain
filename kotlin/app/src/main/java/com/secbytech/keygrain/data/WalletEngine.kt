@@ -35,6 +35,38 @@ object WalletEngine {
 
     fun deriveWalletEntropy(
         secret: ByteArray,
+        walletId: String,
+        words: Int = 24,
+        counter: Int = 1
+    ): ByteArray {
+        require(secret.isNotEmpty()) { "secret must not be empty" }
+        val wid = walletId.lowercase().trim()
+        require(wid.isNotEmpty() && WALLET_NAME_RE.matches(wid)) {
+            "walletId must match [a-z0-9\\-]+, got: \"$wid\""
+        }
+        require(words == 12 || words == 24) { "words must be 12 or 24, got $words" }
+        require(counter >= 1) { "counter must be >= 1" }
+
+        val salt = "keygrain-wallet:$wid".toByteArray(Charsets.UTF_8)
+        val params = org.bouncycastle.crypto.params.Argon2Parameters.Builder(org.bouncycastle.crypto.params.Argon2Parameters.ARGON2_id)
+            .withSalt(salt)
+            .withIterations(3)
+            .withMemoryAsKB(65536)
+            .withParallelism(1)
+            .build()
+        val generator = org.bouncycastle.crypto.generators.Argon2BytesGenerator()
+        generator.init(params)
+        val strengthened = ByteArray(32)
+        generator.generateBytes(secret, strengthened)
+
+        val message = "$wid:$words:$counter:keygrain-wallet".toByteArray(Charsets.UTF_8)
+        val full = Keygrain.hmacSha256(strengthened, message)
+        val entropyBytes = if (words == 12) 16 else 32
+        return full.copyOfRange(0, entropyBytes)
+    }
+
+    fun deriveWalletEntropy(
+        secret: ByteArray,
         email: String,
         walletName: String,
         chain: String,
@@ -56,21 +88,30 @@ object WalletEngine {
     }
 
     fun entropyToMnemonic(entropy: ByteArray): String {
-        require(entropy.size == 32) { "entropy must be 32 bytes, got ${entropy.size}" }
+        require(entropy.size == 16 || entropy.size == 32) {
+            "entropy must be 16 or 32 bytes, got ${entropy.size}"
+        }
         val wl = getWordlist()
+        val is12 = entropy.size == 16
+        val wordCount = if (is12) 12 else 24
 
-        val checksumByte = MessageDigest.getInstance("SHA-256").digest(entropy)[0].toInt() and 0xFF
+        // Checksum bits: 4 bits for 128-bit (16 bytes), 8 bits for 256-bit (32 bytes)
+        val hashFirstByte = MessageDigest.getInstance("SHA-256").digest(entropy)[0].toInt() and 0xFF
 
-        // Build 264-bit value: 256 bits entropy + 8 bits checksum
-        // Use BigInteger for bit manipulation
         var bits = java.math.BigInteger.ZERO
         for (b in entropy) {
             bits = bits.shiftLeft(8).or(java.math.BigInteger.valueOf((b.toInt() and 0xFF).toLong()))
         }
-        bits = bits.shiftLeft(8).or(java.math.BigInteger.valueOf(checksumByte.toLong()))
+
+        if (is12) {
+            val checksum4Bits = hashFirstByte ushr 4
+            bits = bits.shiftLeft(4).or(java.math.BigInteger.valueOf(checksum4Bits.toLong()))
+        } else {
+            bits = bits.shiftLeft(8).or(java.math.BigInteger.valueOf(hashFirstByte.toLong()))
+        }
 
         val words = mutableListOf<String>()
-        for (i in 23 downTo 0) {
+        for (i in (wordCount - 1) downTo 0) {
             val index = bits.shiftRight(i * 11).and(java.math.BigInteger.valueOf(0x7FF)).toInt()
             words.add(wl[index])
         }
@@ -86,6 +127,20 @@ object WalletEngine {
         )
         val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA512")
         return factory.generateSecret(spec).encoded
+    }
+
+    fun deriveWalletMnemonic(
+        secret: ByteArray,
+        walletId: String,
+        words: Int = 24,
+        counter: Int = 1
+    ): String {
+        val entropy1 = deriveWalletEntropy(secret, walletId, words, counter)
+        val entropy2 = deriveWalletEntropy(secret, walletId, words, counter)
+        check(entropy1.contentEquals(entropy2)) {
+            "CRITICAL: Double-derivation mismatch in the wallet expansion step."
+        }
+        return entropyToMnemonic(entropy1)
     }
 
     fun deriveWalletMnemonic(

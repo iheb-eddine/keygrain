@@ -405,7 +405,7 @@ class SyncReconcileTest {
                 "{\"id\":\"i2\",\"updated_at\":2,\"name\":\"B\",\"site\":\"b.com\"," +
                 "\"email\":\"e@x\",\"length\":20,\"symbols\":\"!@\",\"counter\":1," +
                 "\"migrating\":null,\"totp\":null,\"ssh\":null}]," +
-                "\"wallets\":[],\"wallet_audit_log\":[],\"sync_conflicts\":[]}",
+                "\"ssh_keys\":[],\"wallets\":[],\"wallet_audit_log\":[],\"sync_conflicts\":[]}",
             SyncBlob.canonicalBlobPayload(listOf(a, b), emptyList(), emptyList(), emptyList())
         )
     }
