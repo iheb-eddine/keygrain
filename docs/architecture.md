@@ -57,7 +57,7 @@ Identical implementations in Python, JavaScript, and Kotlin. All produce the sam
 | Content script (`content.js`) | Autofill via native property descriptors |
 | Background (`background.js`) | Session management, local encryption, auto-lock timer, worker authority |
 
-The content script uses `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set` to bypass framework-controlled inputs (React, Angular). The extension uses `activeTab` for access to the current tab. Chrome uses the `scripting` permission for script injection; Firefox's MV2 flow uses `tabs.executeScript` and does not require a separate `scripting` permission.
+The content script uses `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set` to bypass framework-controlled inputs (React, Angular). The extension uses `activeTab` and `scripting` permissions for contextual script injection into active tabs across both Chrome and Firefox MV3.
 
 For the in-depth specification of the Manifest V3 background worker lifecycle, hybrid encrypted message ingress, cryptographic domain separation, and ephemeral dual-tier leasing, see [Extension Architecture Specification](extension-architecture.md).
 
