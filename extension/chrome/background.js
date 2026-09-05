@@ -84,7 +84,10 @@ async function chromeCommitPopupEdit(payload) {
     throw KeygrainBrowserOwner.safeFailure("KEYGRAIN_STALE_OPERATION");
   }
   await persistV2(payload.email, payload.secret, payload.fullData);
-  syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || []).catch(() => {});
+  const { offline_mode } = await chrome.storage.local.get("offline_mode");
+  if (!offline_mode) {
+    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || []).catch(() => {});
+  }
   return {ok: true};
 }
 
@@ -93,7 +96,10 @@ async function chromeCommitPopupAdd(payload) {
     throw KeygrainBrowserOwner.safeFailure("KEYGRAIN_STALE_OPERATION");
   }
   await persistV2(payload.email, payload.secret, payload.fullData);
-  syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || []).catch(() => {});
+  const { offline_mode } = await chrome.storage.local.get("offline_mode");
+  if (!offline_mode) {
+    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || []).catch(() => {});
+  }
   return {ok: true};
 }
 
@@ -102,7 +108,10 @@ async function chromeCommitPopupDelete(payload) {
     throw KeygrainBrowserOwner.safeFailure("KEYGRAIN_STALE_OPERATION");
   }
   await persistV2(payload.email, payload.secret, payload.fullData);
-  syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || []).catch(() => {});
+  const { offline_mode } = await chrome.storage.local.get("offline_mode");
+  if (!offline_mode) {
+    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || []).catch(() => {});
+  }
   return {ok: true};
 }
 
@@ -642,7 +651,7 @@ const chromeOwnerAdapter = Object.freeze({
     await chrome.storage.local.remove([
       "services", "syncKnownUUIDs", "lastSyncTime", "lastSuccessfulSyncAt",
       "pinHash", "pinSalt", "pinIterations", "pinLength",
-      "autofillRules", "lastSyncETag", "account_email"
+      "autofillRules", "lastSyncETag", "account_email", "offline_mode"
     ]);
     await clearMemorySession();
     try {
@@ -742,7 +751,7 @@ function knownUUIDs(data) {
 }
 
 async function readAndPrepare({email, secret, isCreate}) {
-  const data = await chrome.storage.local.get(["services", "syncKnownUUIDs", "lastSyncTime", "account_email"]);
+  const data = await chrome.storage.local.get(["services", "syncKnownUUIDs", "lastSyncTime", "account_email", "offline_mode"]);
   const stored = data.services;
   const storedAccountEmail = data.account_email;
   const isDifferentAccount = Boolean(
@@ -755,9 +764,14 @@ async function readAndPrepare({email, secret, isCreate}) {
   let migrateMarkers = false;
 
   if (stored === undefined || isDifferentAccount) {
-    const result = await syncWithServer(secret, email, [], [], [], [], 0, isCreate);
-    accepted = syncLocalV2(result);
-    prepared = preparedFromAccepted(accepted, email, secret);
+    if (data.offline_mode) {
+      accepted = acceptedV2({ version: 2, services: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: null });
+      prepared = preparedFromAccepted(accepted, email, secret);
+    } else {
+      const result = await syncWithServer(secret, email, [], [], [], [], 0, isCreate);
+      accepted = syncLocalV2(result);
+      prepared = preparedFromAccepted(accepted, email, secret);
+    }
   } else if (stored && stored.version === 1) {
     const legacy = validateLocalPayload(stored);
     const migrated = migrateLocalPayload({
@@ -1683,8 +1697,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const res = await deleteServerData(secret, email);
       if (res?.ok) {
         await chrome.storage.local.remove(["lastSyncTime", "lastSyncETag", "syncKnownUUIDs", "lastSuccessfulSyncAt"]);
+        if (message.keepLocal !== false) {
+          await chrome.storage.local.set({ offline_mode: true });
+        }
       }
       sendResponse(KeygrainBrowserOwner.success(res));
+    }).catch(err => sendResponse(safeMessageError(err)));
+    return true;
+  }
+  if (action === "getOfflineMode") {
+    chrome.storage.local.get("offline_mode").then(data => {
+      sendResponse({ ok: true, offline_mode: Boolean(data.offline_mode) });
+    }).catch(err => sendResponse(safeMessageError(err)));
+    return true;
+  }
+  if (action === "setOfflineMode") {
+    chrome.storage.local.set({ offline_mode: Boolean(message.enabled) }).then(() => {
+      sendResponse({ ok: true, offline_mode: Boolean(message.enabled) });
     }).catch(err => sendResponse(safeMessageError(err)));
     return true;
   }

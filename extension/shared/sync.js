@@ -746,6 +746,13 @@ function migrateLocalPayload(payload, knownUUIDs, now) {
  * Throws on auth/network/server errors.
  */
 async function syncWithServer(secret, email, localServices, localWallets = [], localAuditLog = [], localTombstones = [], retryCount = 0, isCreate = false) {
+  const storageArea = (typeof chrome !== "undefined" && chrome.storage?.local) ? chrome.storage.local : (typeof browser !== "undefined" && browser.storage?.local ? browser.storage.local : null);
+  if (storageArea) {
+    const { offline_mode } = await storageArea.get("offline_mode");
+    if (offline_mode) {
+      return { ok: true, status: "offline", offline: true };
+    }
+  }
   const lookupId = await deriveLookupId(secret, email);
   const authPassword = await deriveAuthPassword(secret, email);
   const encKey = await deriveEncryptionKey(secret, email);

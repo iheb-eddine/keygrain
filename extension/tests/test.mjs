@@ -4310,6 +4310,38 @@ await test('sync GET: empty absent-capability blob/checksum is malformed, not le
   }
 });
 
+await test('syncWithServer returns offline status and skips network when offline_mode is true', async () => {
+  resetSyncInstrumentation();
+  const harness = installSyncHarness(syncResponse(200, {services: []}));
+  ctx.chrome.storage.local.get = async key => {
+    if (key === 'offline_mode') return {offline_mode: true};
+    if (key === 'settings') return {settings: {serverUrl: 'https://sync.test'}};
+    return {};
+  };
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], []);
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), {ok: true, status: 'offline', offline: true});
+    assert.equal(harness.fetches.length, 0);
+    assert.deepEqual(syncCounters(), {decrypt: 0, encrypt: 0, atob: 0});
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('background offline mode contract and lifecycle', async () => {
+  const owners = [
+    ['chrome', readFileSync(resolve(root, 'extension', 'chrome', 'background.js'), 'utf8')],
+    ['firefox', readFileSync(resolve(root, 'extension', 'firefox', 'background.js'), 'utf8')],
+  ];
+  for (const [browser, ownerSource] of owners) {
+    assert.match(ownerSource, /action === "getOfflineMode"/, `${browser}: missing getOfflineMode action`);
+    assert.match(ownerSource, /action === "setOfflineMode"/, `${browser}: missing setOfflineMode action`);
+    assert.match(ownerSource, /offline_mode/, `${browser}: missing offline_mode storage key`);
+    assert.doesNotMatch(ownerSource, /offlineMode/, `${browser}: camelCase offlineMode forbidden in background`);
+  }
+});
+
 await test('Keygrain upgrade-required handling is safe and equivalent in both background owners', async () => {
   const owners = [
     ['chrome', readFileSync(resolve(root, 'extension', 'chrome', 'background.js'), 'utf8')],

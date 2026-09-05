@@ -142,6 +142,23 @@
     lockError.classList.add("hidden");
   }
 
+  function updateSyncIndicator(isOffline) {
+    const syncIndicator = document.getElementById("sync-indicator");
+    const syncTime = document.getElementById("sync-time");
+    const syncError = document.getElementById("sync-error");
+    if (!syncIndicator || !syncTime) return;
+    if (isOffline) {
+      syncTime.textContent = "Offline mode \u2014 sync paused";
+      syncIndicator.classList.remove("hidden");
+      syncError?.classList.add("hidden");
+    } else {
+      if (syncTime.textContent === "Offline mode \u2014 sync paused") {
+        syncTime.textContent = "";
+        syncIndicator.classList.add("hidden");
+      }
+    }
+  }
+
   function closeSshDialog() {
     if (!sshDialog) return;
     sshDialog.classList.add("hidden");
@@ -2445,12 +2462,22 @@
   headerExtendBtn?.addEventListener("click", triggerLeaseExtension);
 
   // --- Menu Dropdown Handlers ---
-  menuBtn?.addEventListener("click", (e) => {
+  menuBtn?.addEventListener("click", async (e) => {
     e.stopPropagation();
     if (!menuDropdown) return;
     const isHidden = menuDropdown.classList.contains("hidden");
     menuDropdown.classList.toggle("hidden", !isHidden);
     menuBtn?.setAttribute?.("aria-expanded", String(isHidden));
+    if (isHidden) {
+      try {
+        const offRes = await sendMsg({action: "getOfflineMode"});
+        if (offRes?.ok) {
+          const isOff = Boolean(offRes.offline_mode);
+          offlineBtn?.setAttribute?.("aria-checked", String(isOff));
+          updateSyncIndicator(isOff);
+        }
+      } catch (_) {}
+    }
   });
 
   window.addEventListener("click", (e) => {
@@ -2515,12 +2542,17 @@
     chrome.tabs.create({url: "https://keygrain.com/faq"});
   });
 
-  offlineBtn?.addEventListener("click", () => {
+  offlineBtn?.addEventListener("click", async () => {
     menuDropdown?.classList.add("hidden");
     const currentChecked = offlineBtn?.getAttribute?.("aria-checked") === "true";
     const newOffline = !currentChecked;
     offlineBtn?.setAttribute?.("aria-checked", String(newOffline));
-    showStatus(statusEl, newOffline ? "Offline mode on — sync paused." : "Offline mode off — syncing.");
+    updateSyncIndicator(newOffline);
+    await sendMsg({action: "setOfflineMode", enabled: newOffline});
+    showStatus(statusEl, newOffline ? "Offline mode on \u2014 sync paused." : "Offline mode off \u2014 syncing.");
+    if (!newOffline) {
+      sendMsg({action: "sync"}).catch(() => {});
+    }
   });
 
   switchAccountBtn?.addEventListener("click", () => {
@@ -2589,6 +2621,8 @@
         const keepLocal = deleteServerKeepLocal?.checked !== false;
         if (keepLocal) {
           offlineBtn?.setAttribute?.("aria-checked", "true");
+          updateSyncIndicator(true);
+          await sendMsg({action: "setOfflineMode", enabled: true});
           showStatus(statusEl, "Server data deleted. Local data kept in offline mode.");
           await requestOwnerView();
         } else {
