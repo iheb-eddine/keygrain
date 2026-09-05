@@ -134,6 +134,10 @@
       KEYGRAIN_DERIVATION_ERROR: "Password could not be generated.",
       KEYGRAIN_FILL_DELIVERY_ERROR: "The password could not be filled.",
       KEYGRAIN_SSH_ERROR: "The SSH key could not be generated.",
+      AUTH_FAILED: "Incorrect master secret for this account.",
+      Keygrain_AUTH_FAILED: "Incorrect master secret for this account.",
+      RATE_LIMITED: "Too many attempts. Please wait a moment and try again.",
+      OFFLINE_UNVERIFIED: "Cannot verify account while offline. Please connect to the internet to unlock.",
     };
     return Object.freeze({ok: false, code, message: messages[code] || "Request failed."});
   }
@@ -872,6 +876,9 @@
         if (exception?.code === "KEYGRAIN_SETTINGS_STORAGE_ERROR") return safeFailure(SETTINGS_STORAGE_ERROR);
         if (exception?.code === "KEYGRAIN_CONFIRMATION_ERROR") return safeFailure("KEYGRAIN_CONFIRMATION_ERROR");
         if (exception?.code === "ACCOUNT_NOT_FOUND") return safeFailure("ACCOUNT_NOT_FOUND");
+        if (exception?.code === "Keygrain_AUTH_FAILED" || exception?.code === "AUTH_FAILED") return safeFailure("AUTH_FAILED");
+        if (exception?.code === "RATE_LIMITED") return safeFailure("RATE_LIMITED");
+        if (exception?.code === "OFFLINE_UNVERIFIED") return safeFailure("OFFLINE_UNVERIFIED");
         if (exception?.code === AUTH_PROTOCOL_ERROR || exception?.code === CONTEXT_ERROR) return safeFailure(exception.code);
         return safeFailure(UNLOCK_FAILED);
       }

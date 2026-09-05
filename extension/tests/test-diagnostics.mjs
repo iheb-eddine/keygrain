@@ -22,6 +22,7 @@ const SAFE_CODES = [
   'KEYGRAIN_DERIVATION_ERROR', 'KEYGRAIN_FILL_DELIVERY_ERROR',
   'KEYGRAIN_TOTP_ERROR', 'KEYGRAIN_TOTP_DELIVERY_ERROR', 'KEYGRAIN_SSH_ERROR', 'KEYGRAIN_WALLET_ERROR',
   'ACCOUNT_NOT_FOUND', 'ACCOUNT_EXISTS',
+  'AUTH_FAILED', 'RATE_LIMITED', 'OFFLINE_UNVERIFIED',
 ];
 
 function makeDiagnostics(manifestName, {manifestThrows = false, debugThrows = false} = {}) {
@@ -61,6 +62,9 @@ assert.equal(dev.diagnostics.mapWorkerResponseCode({code: 'KEYGRAIN_TOTP_ERROR'}
 assert.equal(dev.diagnostics.mapWorkerResponseCode({code: 'KEYGRAIN_TOTP_DELIVERY_ERROR'}), 'KEYGRAIN_TOTP_DELIVERY_ERROR');
 assert.equal(dev.diagnostics.mapWorkerResponseCode({code: 'KEYGRAIN_SSH_ERROR'}), 'KEYGRAIN_SSH_ERROR');
 assert.equal(dev.diagnostics.mapWorkerResponseCode({code: 'KEYGRAIN_WALLET_ERROR'}), 'KEYGRAIN_WALLET_ERROR');
+assert.equal(dev.diagnostics.mapWorkerResponseCode({code: 'AUTH_FAILED'}), 'AUTH_FAILED');
+assert.equal(dev.diagnostics.mapWorkerResponseCode({code: 'RATE_LIMITED'}), 'RATE_LIMITED');
+assert.equal(dev.diagnostics.mapWorkerResponseCode({code: 'OFFLINE_UNVERIFIED'}), 'OFFLINE_UNVERIFIED');
 assert.equal(dev.diagnostics.mapWorkerResponseCode({code: 'not-safe', message: 'raw exception'}), 'UNKNOWN');
 assert.equal(dev.diagnostics.mapWorkerResponseCode({code: 'https://example.test/?lookup_id=lookup-123'}), 'UNKNOWN');
 assert.equal(dev.diagnostics.mapWorkerResponseCode(null), 'UNKNOWN');

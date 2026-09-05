@@ -30,6 +30,9 @@
     "KEYGRAIN_WALLET_ERROR",
     "ACCOUNT_NOT_FOUND",
     "ACCOUNT_EXISTS",
+    "AUTH_FAILED",
+    "RATE_LIMITED",
+    "OFFLINE_UNVERIFIED",
   ]);
   const categorySet = new Set(CATEGORIES);
   const safeCodeSet = new Set(SAFE_CODES);

@@ -663,5 +663,21 @@ assert.doesNotMatch(popupJsSource, /searchInput\.value\s*=\s*activeHost;/, 'popu
 assert.match(popupJsSource, /function executePendingAction/, 'executePendingAction is defined');
 assert.match(popupJsSource, /renderFullServiceList\(popupRenderItems,\s*renderEpoch,\s*currentSnapshot\)/, 'executePendingAction can restore full list if search filter obscured target row');
 
+// Verify migration notice dialog and button interception
+assert.match(popupHtml, /id="migration-notice-dialog"/, 'migration-notice-dialog is present in popup.html');
+assert.match(popupHtml, /id="migration-notice-close"/, 'migration-notice-close is present in popup.html');
+assert.match(popupHtml, /Migration from other password managers is temporarily unavailable following our security architecture upgrade/, 'migration notice text matches specification');
+assert.match(popupJsSource, /migrationNoticeDialog\?\.classList\.remove\(["']hidden["']\)/, 'migrateBtn click shows migrationNoticeDialog');
+assert.match(popupJsSource, /migrationNoticeDialog\?\.classList\.add\(["']hidden["']\)/, 'migrationNoticeClose click hides migrationNoticeDialog');
+assert.doesNotMatch(popupJsSource, /chrome\.tabs\.create\(\{\s*url:\s*chrome\.runtime\.getURL\(["']migrate\.html["']\)\s*\}\)/, 'migrateBtn no longer opens migrate.html directly');
+
+// Verify unlock and create account error messages
+assert.match(popupJsSource, /"Account not found\. Please verify your email and master secret, or create a new account\."/);
+assert.match(popupJsSource, /"Incorrect master secret for this account\."/);
+assert.match(popupJsSource, /"Too many attempts\. Please wait a moment and try again\."/);
+assert.match(popupJsSource, /"Cannot verify account while offline\. Please connect to the internet to unlock\."/);
+assert.match(popupJsSource, /"An account with this email and secret already exists\. Use Unlock instead\."/);
+
 console.log('  ✓ owner identity/revision lifecycle remains private, metadata-tail safe, and fail-closed');
 console.log('popup owner operation registry tests passed');
+

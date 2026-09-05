@@ -768,7 +768,18 @@ async function readAndPrepare({email, secret, isCreate}) {
       accepted = acceptedV2({ version: 2, services: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: null });
       prepared = preparedFromAccepted(accepted, email, secret);
     } else {
-      const result = await syncWithServer(secret, email, [], [], [], [], 0, isCreate);
+      let result;
+      try {
+        result = await syncWithServer(secret, email, [], [], [], [], 0, isCreate);
+      } catch (err) {
+        if (err?.code === "NETWORK_ERROR" || err?.message === "network_error") {
+          throw Object.assign(new Error("offline_unverified"), {
+            code: "OFFLINE_UNVERIFIED",
+            message: "Cannot verify account while offline. Please connect to the internet to unlock.",
+          });
+        }
+        throw err;
+      }
       accepted = syncLocalV2(result);
       prepared = preparedFromAccepted(accepted, email, secret);
     }
@@ -985,7 +996,7 @@ function createChromeIngress() {
           return {
             ok: false,
             code: "ACCOUNT_EXISTS",
-            message: "Account already exists. Please use 'Unlock Account' to log in.",
+            message: "An account with this email and secret already exists. Use Unlock instead.",
           };
         }
         try {

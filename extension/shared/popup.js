@@ -269,6 +269,8 @@
   const switchAccountDialog = document.getElementById("switch-account-dialog");
   const switchAccountCancel = document.getElementById("switch-account-cancel");
   const switchAccountConfirm = document.getElementById("switch-account-confirm");
+  const migrationNoticeDialog = document.getElementById("migration-notice-dialog");
+  const migrationNoticeClose = document.getElementById("migration-notice-close");
   const deleteServerBtn = document.getElementById("delete-server-btn");
   const deleteServerDialog = document.getElementById("delete-server-dialog");
   const deleteServerCancel = document.getElementById("delete-server-cancel");
@@ -1808,7 +1810,17 @@
         if (!response?.ok) {
           globalThis.KeygrainDiagnostics?.recordWorkerResponse(response);
           if (response?.code === "ACCOUNT_NOT_FOUND") {
-            showLockError("", "No account found for this email address.<br><a href=\"#\" id=\"lock-switch-create\">Create a new account</a>");
+            showLockError("Account not found. Please verify your email and master secret, or create a new account.", "Account not found. Please verify your email and master secret, or <a href=\"#\" id=\"lock-switch-create\">create a new account</a>.");
+            showStatus(statusEl, "Account not found. Please verify your email and master secret, or create a new account.");
+          } else if (response?.code === "AUTH_FAILED" || response?.code === "Keygrain_AUTH_FAILED") {
+            showLockError("Incorrect master secret for this account.");
+            showStatus(statusEl, "Incorrect master secret for this account.");
+          } else if (response?.code === "RATE_LIMITED") {
+            showLockError("Too many attempts. Please wait a moment and try again.");
+            showStatus(statusEl, "Too many attempts. Please wait a moment and try again.");
+          } else if (response?.code === "OFFLINE_UNVERIFIED" || response?.code === "NETWORK_ERROR") {
+            showLockError("Cannot verify account while offline. Please connect to the internet to unlock.");
+            showStatus(statusEl, "Cannot verify account while offline. Please connect to the internet to unlock.");
           } else {
             showStatus(statusEl, response?.message || "Unlock failed; try again.");
             showLockError(response?.message || "Unlock failed; try again.");
@@ -1881,7 +1893,8 @@
       } else {
         globalThis.KeygrainDiagnostics?.recordWorkerResponse(unlockResponse);
         if (unlockResponse?.code === "ACCOUNT_EXISTS") {
-          showLockError("", "An account already exists for this email address.<br><a href=\"#\" id=\"lock-switch-unlock\">Switch to Unlock Account</a>");
+          showLockError("An account with this email and secret already exists. Use Unlock instead.", "An account with this email and secret already exists.<br><a href=\"#\" id=\"lock-switch-unlock\">Use Unlock instead</a>");
+          showStatus(statusEl, "An account with this email and secret already exists. Use Unlock instead.");
         } else {
           const errMsg = unlockResponse?.message || "Account creation failed; try again.";
           showLockError(errMsg);
@@ -2529,7 +2542,12 @@
 
   migrateBtn?.addEventListener("click", () => {
     menuDropdown?.classList.add("hidden");
-    chrome.tabs.create({url: chrome.runtime.getURL("migrate.html")});
+    migrationNoticeDialog?.classList.remove("hidden");
+    migrationNoticeClose?.focus();
+  });
+
+  migrationNoticeClose?.addEventListener("click", () => {
+    migrationNoticeDialog?.classList.add("hidden");
   });
 
   walletBtn?.addEventListener("click", () => {

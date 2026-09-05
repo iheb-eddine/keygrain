@@ -767,7 +767,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
         headers: {"Authorization": authHeader},
       });
     } catch (e) {
-      throw new Error("network_error");
+      throw Object.assign(new Error("network_error"), {code: "NETWORK_ERROR"});
     }
 
     let remoteServices = [];
@@ -836,13 +836,13 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       knownWKeys = new Set();
       await setKnownWalletKeys(knownWKeys);
     } else if (getResp.status === 401) {
-      throw new Error("auth_failed");
+      throw Object.assign(new Error("auth_failed"), {code: "AUTH_FAILED"});
     } else if (getResp.status === 429) {
-      const err = new Error("rate_limited");
+      const err = Object.assign(new Error("rate_limited"), {code: "RATE_LIMITED"});
       err.retryAfter = parseInt(getResp.headers.get("Retry-After"), 10) || 60;
       throw err;
     } else {
-      throw new Error("server_error");
+      throw Object.assign(new Error("server_error"), {code: "SERVER_ERROR"});
     }
 
     // Step 2: Reconcile
@@ -856,7 +856,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     if (merged.length === 0 && remoteMetadata.length > 0) {
       const declared = new Set(rec.deletedIds);
       const allDeclared = remoteMetadata.every(m => m && m.id && declared.has(m.id));
-      if (!allDeclared) throw new Error("empty_push_blocked");
+      if (!allDeclared) throw Object.assign(new Error("empty_push_blocked"), {code: "EMPTY_PUSH_BLOCKED"});
     }
 
     // Step 3: Build push payload
@@ -921,7 +921,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
         }),
       });
     } catch (e) {
-      throw new Error("network_error");
+      throw Object.assign(new Error("network_error"), {code: "NETWORK_ERROR"});
     }
 
     if (putResp.status === 409) {
@@ -933,9 +933,9 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       }
       throw new Error("conflict");
     }
-    if (putResp.status === 401) throw new Error("auth_failed");
+    if (putResp.status === 401) throw Object.assign(new Error("auth_failed"), {code: "AUTH_FAILED"});
     if (putResp.status === 429) {
-      const err = new Error("rate_limited");
+      const err = Object.assign(new Error("rate_limited"), {code: "RATE_LIMITED"});
       err.retryAfter = parseInt(putResp.headers.get("Retry-After"), 10) || 60;
       throw err;
     }
