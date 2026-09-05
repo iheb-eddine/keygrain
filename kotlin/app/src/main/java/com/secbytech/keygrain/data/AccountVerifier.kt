@@ -5,7 +5,7 @@ import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-sealed interface AccountVerificationResult {
+internal sealed interface AccountVerificationResult {
     data class ExistsValid(
         val services: List<Pair<String?, Long>>,
         val encryptedBlob: String,
@@ -17,15 +17,17 @@ sealed interface AccountVerificationResult {
     data object RateLimited : AccountVerificationResult
     data class NetworkUnavailable(val localMatches: Boolean) : AccountVerificationResult
     data class ServerError(val code: Int, val body: String) : AccountVerificationResult
+    data class UpgradeRequired(val reason: UpgradeRequiredReason) : AccountVerificationResult
 }
 
-sealed interface AccountCreationCheckResult {
+internal sealed interface AccountCreationCheckResult {
     data object CanCreate : AccountCreationCheckResult
     data object AlreadyExistsRemote : AccountCreationCheckResult
     data object AlreadyExistsLocal : AccountCreationCheckResult
     data object RateLimited : AccountCreationCheckResult
     data class ServerError(val code: Int, val body: String) : AccountCreationCheckResult
     data class OfflineAllowed(val reason: String) : AccountCreationCheckResult
+    data class UpgradeRequired(val reason: UpgradeRequiredReason) : AccountCreationCheckResult
 }
 
 internal class AccountVerifier(
@@ -90,6 +92,9 @@ internal class AccountVerifier(
             is GetResult.NetworkError -> {
                 AccountVerificationResult.NetworkUnavailable(localMatches = localMatches)
             }
+            is GetResult.UpgradeRequired -> {
+                AccountVerificationResult.UpgradeRequired(result.reason)
+            }
         }
     }
 
@@ -128,6 +133,9 @@ internal class AccountVerifier(
             }
             is GetResult.NetworkError -> {
                 AccountCreationCheckResult.OfflineAllowed("Device is offline. Account will be created locally.")
+            }
+            is GetResult.UpgradeRequired -> {
+                AccountCreationCheckResult.UpgradeRequired(result.reason)
             }
         }
     }

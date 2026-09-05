@@ -23,6 +23,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.secbytech.keygrain.data.*
+import com.secbytech.keygrain.ui.UserMessages
 import com.secbytech.keygrain.ui.WongPalette
 import com.secbytech.keygrain.ui.util.canUseBiometric
 import kotlinx.coroutines.Dispatchers
@@ -362,6 +363,9 @@ fun AuthScreen(
                                         is AccountVerificationResult.ServerError -> {
                                             unlockError = "Server error (${result.code}). Please try again later."
                                         }
+                                        is AccountVerificationResult.UpgradeRequired -> {
+                                            unlockError = UserMessages.SYNC_UPGRADE_REQUIRED
+                                        }
                                     }
                                 } finally {
                                     secretBytes.fill(0)
@@ -593,6 +597,9 @@ fun AuthScreen(
                                                 secretManager.saveSecret(createSecret)
                                             }
                                             onUnlocked(normalizedEmail, createSecret)
+                                        }
+                                        is AccountCreationCheckResult.UpgradeRequired -> {
+                                            createError = UserMessages.SYNC_UPGRADE_REQUIRED
                                         }
                                     }
                                 } finally {

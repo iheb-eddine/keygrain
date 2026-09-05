@@ -304,6 +304,7 @@ fun MainScreen() {
                                                     is SyncResult.ServerError -> UserMessages.SERVER_ERROR
                                                     is SyncResult.IntegrityError -> UserMessages.INTEGRITY_ERROR
                                                     is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
+                                                    is SyncResult.UpgradeRequired -> UserMessages.SYNC_UPGRADE_REQUIRED
                                                 }
                                             } catch (e: Exception) {
                                                 Log.e("Keygrain", "Manual sync failed", e)
