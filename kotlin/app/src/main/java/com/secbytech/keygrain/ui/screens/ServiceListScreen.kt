@@ -53,7 +53,16 @@ internal fun ServiceListScreen(
     isDemoMode: Boolean = false,
     onLock: () -> Unit,
     onSwitchAccount: () -> Unit,
-    onWipeLocalAndRestart: () -> Unit
+    onWipeLocalAndRestart: () -> Unit,
+    triggerDebouncedSync: () -> Unit = {},
+    offlineMode: Boolean = false,
+    syncGeneration: Int = 0,
+    showAddDialog: Boolean = false,
+    prefillSiteFromFab: String? = null,
+    detectedFullDomainFromFab: String? = null,
+    onDismissAddDialog: (() -> Unit)? = null,
+    onInteraction: () -> Unit = {},
+    onServicesChanged: ((List<ServiceEntry>) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val demoServices = remember { listOf(
@@ -138,9 +147,7 @@ internal fun ServiceListScreen(
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
     var showEditDialog by remember { mutableStateOf<ServiceEntry?>(null) }
     var detailService by remember { mutableStateOf<ServiceEntry?>(null) }
-    var menuExpanded by remember { mutableStateOf(false) }
-    var showHelpScreen by remember { mutableStateOf(false) }
-    var showWalletScreen by remember { mutableStateOf(false) }
+
     var showSwitchAccountDialog by remember { mutableStateOf(false) }
     // Sync v3 deletion review (Frozen Req 7): services this device changed that were
     // deleted on another device. Populated by SyncManager on a confirmed sync.
@@ -148,8 +155,6 @@ internal fun ServiceListScreen(
         mutableStateOf(if (isDemoMode) emptyList() else serviceManager.getDeletionReview())
     }
     var showDeletionReviewScreen by remember { mutableStateOf(false) }
-    var isSyncing by remember { mutableStateOf(false) }
-    var syncFailed by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     // Survivor scope for clipboard 30s auto-clears. Owned by ServiceListScreen so it
@@ -162,18 +167,28 @@ internal fun ServiceListScreen(
     val settingsPrefs = remember {
         context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
     }
-    var offlineMode by remember { mutableStateOf(settingsPrefs.getBoolean("offline_mode", false)) }
 
-    // Delete-server-data flow state
-    var showDeleteServerDialog by remember { mutableStateOf(false) }
-    var keepLocal by remember { mutableStateOf(true) }
-    var deleteInProgress by remember { mutableStateOf(false) }
-    var deleteError by remember { mutableStateOf<String?>(null) }
+    // Auto-sync refresh when syncGeneration increments
+    LaunchedEffect(syncGeneration) {
+        if (!isDemoMode && syncGeneration > 0) {
+            services = serviceManager.getServices()
+            deletionReview = serviceManager.getDeletionReview()
+            onServicesChanged?.invoke(services)
+        }
+    }
 
-    // Auto-sync state
-    var syncGeneration by remember { mutableIntStateOf(0) }
-    var skipNextDebounce by remember { mutableStateOf(false) }
-    var lastSyncTime by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(services) {
+        onServicesChanged?.invoke(services)
+    }
+
+    // React to add dialog trigger from MainScreen FAB
+    LaunchedEffect(showAddDialog) {
+        if (showAddDialog) {
+            prefillSite = prefillSiteFromFab ?: ""
+            detectedFullDomain = detectedFullDomainFromFab
+            onDismissAddDialog?.invoke()
+        }
+    }
 
     // Autofill & Chrome setup state
     var isAutofillEnabled by remember { mutableStateOf(AutofillUtils.isAutofillEnabled(context)) }
@@ -192,10 +207,6 @@ internal fun ServiceListScreen(
         }
     }
 
-    // Tick to force subtitle recomposition every 60s
-    var subtitleTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) { while (true) { delay(60_000); subtitleTick++ } }
-
     // Global TOTP progress ticker (active whenever any service has TOTP enabled)
     val hasTotp = remember(services) { services.any { it.totp != null } }
     var globalTotpProgress by remember { mutableFloatStateOf(1f) }
@@ -213,60 +224,13 @@ internal fun ServiceListScreen(
         syncManager.getSyncEmail(context)?.ifBlank { null }
             ?: services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: ""
 
-
-    fun performAutoSync() {
-        if (isDemoMode || isSyncing || offlineMode || deleteInProgress) return
-        val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
-        if (email.isBlank()) return
-        isSyncing = true
-        val gen = syncGeneration
-        scope.launch {
-            try {
-                val secretBytes = masterSecret.toByteArray()
-                try {
-                    when (syncManager.sync(secretBytes, email, serviceManager, context)) {
-                        is SyncResult.Success -> {
-                            if (syncGeneration != gen) return@launch
-                            syncManager.setSyncEmail(context, email)
-                            skipNextDebounce = true
-                            services = serviceManager.getServices()
-                            deletionReview = serviceManager.getDeletionReview()
-                            lastSyncTime = System.currentTimeMillis()
-                            syncFailed = false
-                        }
-                        else -> { syncFailed = true }
-                    }
-                } finally { secretBytes.fill(0) }
-            } catch (_: Exception) { }
-            finally { isSyncing = false }
-        }
-    }
-
-    fun triggerDebouncedSync() {
-        if (offlineMode || deleteInProgress) return
-        if (skipNextDebounce) { skipNextDebounce = false; return }
-        syncGeneration++
-        val gen = syncGeneration
-        scope.launch {
-            delay(5000)
-            if (syncGeneration == gen) performAutoSync()
-        }
-    }
-
-    // Auto-sync on unlock (initial load)
+    // Initial load
     LaunchedEffect(Unit) {
         if (!isDemoMode) {
-            // Sync v3 one-time migration (design §8): must run before the first v3 sync so
-            // a deletion that had not yet propagated is preserved as a tombstone rather
-            // than lost. Self-guarded (no-op once known_uuids is gone), safe to call every
-            // launch. Runs regardless of offline mode — it only rewrites local state.
-            withContext(Dispatchers.IO) {
-                syncManager.migrateFromKnownUUIDs(context, serviceManager)
-            }
             services = serviceManager.getServices()
             deletionReview = serviceManager.getDeletionReview()
+            onServicesChanged?.invoke(services)
         }
-        performAutoSync()
     }
 
     // Auto-lock timer (15 min)
@@ -356,21 +320,7 @@ internal fun ServiceListScreen(
         }
     }
 
-    if (showWalletScreen) {
-        WalletScreen(
-            masterSecret = masterSecret,
-            isDemoMode = isDemoMode,
-            defaultEmail = syncManager.getSyncEmail(context)
-                ?: services.groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: "",
-            onBack = { showWalletScreen = false }
-        )
-        return
-    }
 
-    if (showHelpScreen) {
-        HelpScreen(onBack = { showHelpScreen = false })
-        return
-    }
 
     if (showDeletionReviewScreen) {
         DeletionReviewScreen(
@@ -474,244 +424,28 @@ internal fun ServiceListScreen(
         return
     }
 
-    Scaffold(
-        topBar = {
-            Column {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text("Keygrain")
-                            @Suppress("UNUSED_EXPRESSION") subtitleTick
-                            val subtitle = when {
-                                isDemoMode -> null
-                                offlineMode -> "Offline"
-                                getMostCommonEmail().isBlank() -> null
-                                isSyncing -> "Syncing…"
-                                lastSyncTime > 0L -> "Synced ${formatRelativeTime(lastSyncTime)}"
-                                syncFailed -> "Not synced"
-                                else -> null
-                            }
-                            if (subtitle != null) {
-                                Text(
-                                    text = subtitle,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    },
-                    actions = {
-                        Box {
-                            IconButton(onClick = {
-                                isAutofillEnabled = AutofillUtils.isAutofillEnabled(context)
-                                menuExpanded = true
-                            }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "Menu")
-                            }
-                            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("Sync") },
-                                    enabled = !offlineMode && !isSyncing,
-                                    onClick = {
-                                        menuExpanded = false
-                                        val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
-                                        if (email.isNotBlank()) {
-                                            isSyncing = true
-                                            val secretBytes = masterSecret.toByteArray()
-                                            scope.launch {
-                                                val msg = try {
-                                                    when (val r = syncManager.sync(secretBytes, email, serviceManager, context)) {
-                                                        is SyncResult.Success -> {
-                                                            syncManager.setSyncEmail(context, email)
-                                                            skipNextDebounce = true
-                                                            services = serviceManager.getServices()
-                                                            deletionReview = serviceManager.getDeletionReview()
-                                                            lastSyncTime = System.currentTimeMillis()
-                                                            UserMessages.syncSuccess(r.services.size)
-                                                        }
-                                                        is SyncResult.AuthError -> UserMessages.AUTH_ERROR
-                                                        is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
-                                                        is SyncResult.ServerError -> UserMessages.SERVER_ERROR
-                                                        is SyncResult.IntegrityError -> UserMessages.INTEGRITY_ERROR
-                                                        is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
-                                                    }
-                                                } catch (e: Exception) {
-                                                    Log.e("Keygrain", "Sync failed", e)
-                                                    UserMessages.NETWORK_ERROR
-                                                } finally {
-                                                    secretBytes.fill(0)
-                                                }
-                                                isSyncing = false
-                                                snackbarHostState.showSnackbar(msg)
-                                            }
-                                        }
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Offline mode") },
-                                    trailingIcon = {
-                                        Switch(
-                                            checked = offlineMode,
-                                            onCheckedChange = null
-                                        )
-                                    },
-                                    onClick = {
-                                        menuExpanded = false
-                                        val newValue = !offlineMode
-                                        offlineMode = newValue
-                                        settingsPrefs.edit().putBoolean("offline_mode", newValue).apply()
-                                        if (!newValue) performAutoSync()
-                                    }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text("Export to file") },
-                                    onClick = {
-                                        menuExpanded = false
-                                        fileEmail = syncManager.getSyncEmail(context)
-                                            ?: services.groupingBy { it.email }.eachCount()
-                                                .maxByOrNull { it.value }?.key ?: ""
-                                        fileAction = "export"
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Import from file") },
-                                    onClick = {
-                                        menuExpanded = false
-                                        fileEmail = syncManager.getSyncEmail(context)
-                                            ?: services.groupingBy { it.email }.eachCount()
-                                                .maxByOrNull { it.value }?.key ?: ""
-                                        fileAction = "import"
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Autofill") },
-                                    trailingIcon = {
-                                        Surface(
-                                            shape = RoundedCornerShape(12.dp),
-                                            color = if (isAutofillEnabled) {
-                                                MaterialTheme.colorScheme.primaryContainer
-                                            } else {
-                                                MaterialTheme.colorScheme.errorContainer
-                                            },
-                                            contentColor = if (isAutofillEnabled) {
-                                                MaterialTheme.colorScheme.onPrimaryContainer
-                                            } else {
-                                                MaterialTheme.colorScheme.onErrorContainer
-                                            }
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(6.dp)
-                                                        .background(
-                                                            color = if (isAutofillEnabled) {
-                                                                MaterialTheme.colorScheme.primary
-                                                            } else {
-                                                                MaterialTheme.colorScheme.error
-                                                            },
-                                                            shape = CircleShape
-                                                        )
-                                                )
-                                                Spacer(modifier = Modifier.width(5.dp))
-                                                Text(
-                                                    text = if (isAutofillEnabled) "Active" else "Off",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                            }
-                                        }
-                                    },
-                                    onClick = {
-                                        menuExpanded = false
-                                        showAutofillSettingsDialog = true
-                                    }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text("Help") },
-                                    onClick = {
-                                        menuExpanded = false
-                                        showHelpScreen = true
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Wallet") },
-                                    onClick = {
-                                        menuExpanded = false
-                                        showWalletScreen = true
-                                    }
-                                )
-                                if (!isDemoMode) {
-                                    HorizontalDivider()
-                                    DropdownMenuItem(
-                                        text = { Text("Switch account") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            showSwitchAccountDialog = true
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Delete server data") },
-                                        onClick = {
-                                            menuExpanded = false
-                                            deleteError = null
-                                            keepLocal = true
-                                            showDeleteServerDialog = true
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                        IconButton(onClick = onLock) {
-                            Icon(Icons.Default.Lock, contentDescription = "Lock")
-                        }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        lockTimerReset.longValue = System.currentTimeMillis()
+                        onInteraction()
                     }
+                }
+            }
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (hasTotp) {
+                LinearProgressIndicator(
+                    progress = { globalTotpProgress },
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
-                if (hasTotp) {
-                    LinearProgressIndicator(
-                        progress = { globalTotpProgress },
-                        modifier = Modifier.fillMaxWidth().height(2.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                }
             }
-        },
-
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        floatingActionButton = {
-            FloatingActionButton(onClick = {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clipText = clipboard.primaryClip?.getItemAt(0)?.text?.toString()?.trim() ?: ""
-                val urlRegex = Regex("^(https?://\\S+|[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z]{2,}(:\\d+)?(/\\S*)?)$", RegexOption.IGNORE_CASE)
-                if (clipText.matches(urlRegex)) {
-                    val normalized = ServiceManager.normalizeSite(clipText)
-                    val psl = PublicSuffixList.getInstance(context)
-                    val registrable = psl.extractRegistrableDomain(normalized)
-                    prefillSite = registrable ?: normalized
-                    detectedFullDomain = if (registrable != null && registrable != normalized) normalized else null
-                } else {
-                    prefillSite = ""
-                    detectedFullDomain = null
-                }
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "Add service")
-            }
-        }
-    ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-            awaitPointerEventScope {
-                while (true) {
-                    awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                    lockTimerReset.longValue = System.currentTimeMillis()
-                }
-            }
-        }) {
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
         // Auto-lock warning banner
         AnimatedVisibility(visible = showLockWarning) {
             Surface(
@@ -875,14 +609,12 @@ internal fun ServiceListScreen(
                     }
                 }
             }
-        }
         } // Column
-        } // Box
-    } // Scaffold
+    } // Box
 
     // --- Dialogs (extracted to ServiceListDialogs.kt) ---
 
-    if (isSyncing) { SyncingDialog() }
+
 
     fileAction?.let { action ->
         FileEmailDialog(
@@ -933,109 +665,5 @@ internal fun ServiceListScreen(
             onDismiss = { showDeleteDialog = null }
         )
     }
-
-    if (showSwitchAccountDialog) {
-        val lastSyncAt = SyncStore.getLastSuccessfulSyncAt(context)
-        val isOffline = offlineMode || lastSyncAt == 0L
-        val unsyncedCount = if (isOffline) 0 else services.count { !it.synced }
-        SwitchAccountDialog(
-            isOfflineAccount = isOffline,
-            unsyncedCount = unsyncedCount,
-            serviceCount = services.size,
-            onExportBackup = {
-                fileEmail = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
-                fileAction = "export"
-                exportLauncher.launch("keygrain-backup.keygrain")
-            },
-            onConfirm = {
-                showSwitchAccountDialog = false
-                onSwitchAccount()
-            },
-            onDismiss = { showSwitchAccountDialog = false }
-        )
-    }
-
-    if (showDeleteServerDialog) {
-        DeleteServerDialog(
-            keepLocal = keepLocal,
-            onKeepLocalChange = { keepLocal = it },
-            deleteInProgress = deleteInProgress,
-            deleteError = deleteError,
-            onConfirm = {
-                deleteError = null
-                // Race guard (a): invalidate any pending debounced sync so it
-                // cannot recreate the record right after we delete it.
-                syncGeneration++
-                deleteInProgress = true
-                val keep = keepLocal
-                val email = syncManager.getSyncEmail(context) ?: getMostCommonEmail()
-                scope.launch {
-                    try {
-                        // No derivable email => there is no server record to target.
-                        val result = if (email.isBlank()) {
-                            DeleteResult.NotFound
-                        } else {
-                            val secretBytes = masterSecret.toByteArray()
-                            try {
-                                syncManager.deleteServerData(secretBytes, email, context)
-                            } finally {
-                                secretBytes.fill(0)
-                            }
-                        }
-                        when (result) {
-                            // SAFETY (Invariant #1): wipe/offline-flip ONLY here (200/404).
-                            is DeleteResult.Success, is DeleteResult.NotFound -> {
-                                if (keep) {
-                                    settingsPrefs.edit().putBoolean("offline_mode", true).apply()
-                                    offlineMode = true
-                                    showDeleteServerDialog = false
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar(
-                                            "Server data deleted. Your data is still on this " +
-                                                "device — turn Offline mode off to sync again."
-                                        )
-                                    }
-                                } else {
-                                    showDeleteServerDialog = false
-                                    onWipeLocalAndRestart()
-                                }
-                            }
-                            is DeleteResult.AuthError ->
-                                deleteError = "Couldn't verify your account. Nothing was changed."
-                            is DeleteResult.RateLimited ->
-                                deleteError = "Too many requests. Wait a moment and try again. Nothing was changed."
-                            is DeleteResult.ServerError, is DeleteResult.NetworkError ->
-                                deleteError = "Couldn't reach the server. Nothing was changed — please try again."
-                        }
-                    } catch (e: Exception) {
-                        // Fail-closed: any unexpected throwable leaves everything untouched.
-                        deleteError = "Something went wrong. Nothing was changed — please try again."
-                    } finally {
-                        deleteInProgress = false
-                    }
-                }
-            },
-            onDismiss = { showDeleteServerDialog = false }
-        )
-    }
-
-    if (showAutofillSettingsDialog) {
-        com.secbytech.keygrain.ui.components.AutofillSettingsDialog(
-            isAutofillEnabled = isAutofillEnabled,
-            onDismiss = { showAutofillSettingsDialog = false },
-            onOpenSystemSettings = {
-                launchAutofillSettings(context)
-            },
-            onLaunchChrome = {
-                val intent = AutofillUtils.createLaunchChromeIntent(context.packageManager)
-                if (intent != null) {
-                    context.startActivity(intent)
-                } else {
-                    launchAutofillSettings(context)
-                }
-            },
-            chromeInstalled = AutofillUtils.getInstalledChromePackage(context.packageManager) != null
-        )
-    }
-
+}
 }
