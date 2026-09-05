@@ -278,8 +278,29 @@ prints it colon-separated — same value.)
 
 > **Note on what this does and does not prove.** Because Google re-signs, the app signing
 > certificate proves the APK came through *our* Play listing and was not modified after
-> Google signed it. It does not prove the bytes match a build you can reproduce yourself —
-> for that, the extension and the Python package are the stronger channels.
+## Verify the Web Generator (PWA)
+
+The web generator is served as static unbundled files at `https://keygrain.com/generate/`. Once loaded, it makes **zero network requests** (all derivation is performed client-side via Web Crypto and WebAssembly).
+
+You can verify that the live site matches this repository:
+
+1. **Compare files directly:**
+   Open `view-source:https://keygrain.com/generate/` in your browser and diff the HTML and JS against `web/index.html` in this repo.
+
+2. **Verify vendored third-party cryptographic libraries:**
+   Keygrain vendors its external cryptographic dependencies directly without npm build tools. You can verify their integrity against official public npm releases:
+
+   ```bash
+   # 1. Argon2id WebAssembly engine (Dani Biro)
+   curl -sL https://cdn.jsdelivr.net/npm/hash-wasm@4.12.0/dist/argon2.umd.min.js | sha256sum
+   # Expected: dcec617a2e1b700fa132d1583a186cb70611113395e869f2dd6cc82b415d3094
+
+   # 2. Ed25519 signing library (TweetNaCl.js)
+   curl -sL https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js | sha256sum
+   # Expected: 3ec535c004aeeb225785d8e93fb33bf99f52e399bd7dfc01969b5629baea5131
+   ```
+
+   Both values match the exact files served in `web/` and bundled in the browser extension.
 
 ## Honest limitations
 

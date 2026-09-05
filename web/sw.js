@@ -1,5 +1,12 @@
-const CACHE = "keygrain-v1";
-const ASSETS = ["./", "./index.html", "./icon-128.png"];
+const CACHE = "keygrain-v2";
+const ASSETS = [
+  "./",
+  "./index.html",
+  "./icon-128.png",
+  "./hash-wasm-argon2.js",
+  "./tweetnacl.js",
+  "./bip39-wordlist.js"
+];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
