@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import json
 import os
 import subprocess
 import sys
@@ -50,16 +51,27 @@ def _cmd_password(args):
 
 
 def _cmd_ssh(args):
+    email = args.email or os.environ.get("KEYGRAIN_EMAIL")
+    if not email:
+        try:
+            email = cache_mod.resolve_account()
+        except cache_mod.AmbiguousAccountError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    if not email:
+        print("Error: Email address required. Specify email or set KEYGRAIN_EMAIL.", file=sys.stderr)
+        sys.exit(1)
+
     secret = _get_secret(args.secret_env)
     try:
         seed, pubkey = derive_ssh_keypair(
-            secret, args.email, key_name=args.name, counter=args.counter
+            secret, email, key_name=args.name, counter=args.counter
         )
     except ValueError as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
 
-    comment = f"{args.email.lower()}:{args.name.lower()}"
+    comment = f"{email.lower()}:{args.name.lower()}"
 
     if args.agent:
         sock = os.environ.get("SSH_AUTH_SOCK", "")
@@ -89,6 +101,17 @@ def _cmd_wallet(args):
         print(BIP44_PATHS[chain])
         return
 
+    email = args.email or os.environ.get("KEYGRAIN_EMAIL")
+    if not email:
+        try:
+            email = cache_mod.resolve_account()
+        except cache_mod.AmbiguousAccountError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    if not email:
+        print("Error: Email address required. Specify email or set KEYGRAIN_EMAIL.", file=sys.stderr)
+        sys.exit(1)
+
     secret = _get_secret(args.secret_env)
 
     # Interactive confirmation unless bypassed
@@ -105,29 +128,76 @@ def _cmd_wallet(args):
             print("Cancelled.", file=sys.stderr)
             sys.exit(3)
 
+    fmt = args.export_format
+    if args.raw or fmt in ("entropy", "raw"):
+        chosen_format = "entropy"
+    elif args.seed or fmt == "seed":
+        chosen_format = "seed"
+    elif fmt:
+        chosen_format = fmt
+    else:
+        chosen_format = "mnemonic"
+
     try:
-        if args.raw:
-            entropy = derive_wallet_entropy(
-                secret, args.email, wallet_name=args.name, chain=args.chain, counter=args.counter
-            )
-            # Double-derivation check
-            entropy2 = derive_wallet_entropy(
-                secret, args.email, wallet_name=args.name, chain=args.chain, counter=args.counter
-            )
-            if entropy != entropy2:
-                print("CRITICAL: Double-derivation mismatch.", file=sys.stderr)
-                sys.exit(2)
+        entropy = derive_wallet_entropy(
+            secret, email, wallet_name=args.name, chain=args.chain, counter=args.counter
+        )
+        # Double-derivation check
+        entropy2 = derive_wallet_entropy(
+            secret, email, wallet_name=args.name, chain=args.chain, counter=args.counter
+        )
+        if entropy != entropy2:
+            print("CRITICAL: Double-derivation mismatch.", file=sys.stderr)
+            sys.exit(2)
+
+        if chosen_format == "entropy":
             print(entropy.hex())
-        elif args.seed:
-            mnemonic = derive_wallet_mnemonic(
-                secret, args.email, wallet_name=args.name, chain=args.chain, counter=args.counter
-            )
-            seed = mnemonic_to_seed(mnemonic)
+            return
+
+        mnemonic = derive_wallet_mnemonic(
+            secret, email, wallet_name=args.name, chain=args.chain, counter=args.counter
+        )
+        seed = mnemonic_to_seed(mnemonic)
+
+        if chosen_format == "seed":
             print(seed.hex())
+        elif chosen_format == "json":
+            chain_lower = args.chain.lower()
+            payload = {
+                "version": "keygrain-bip39-v1",
+                "wallet_id": args.name.lower(),
+                "label": args.name,
+                "chain": chain_lower,
+                "path": BIP44_PATHS.get(chain_lower, ""),
+                "counter": args.counter,
+                "words": len(mnemonic.split()),
+                "mnemonic": mnemonic,
+                "seed_hex": seed.hex(),
+                "entropy_hex": entropy.hex(),
+            }
+            print(json.dumps(payload, indent=2))
+        elif chosen_format in ("sparrow", "electrum"):
+            out = f"""# Keygrain Universal Wallet Export
+# App Format: Sparrow / Electrum Keystore
+# Wallet ID: {args.name.lower()}
+# Chain: {args.chain.lower()}
+# Counter: {args.counter}
+
+keystore:
+  type: bip39
+  mnemonic: {mnemonic}
+  passphrase: ""
+"""
+            print(out.strip())
+        elif chosen_format == "metamask":
+            words = mnemonic.split()
+            out = f"""# Import as Secret Recovery Phrase (SRP)
+# Word Count: {len(words)}
+
+{mnemonic}
+"""
+            print(out.strip())
         else:
-            mnemonic = derive_wallet_mnemonic(
-                secret, args.email, wallet_name=args.name, chain=args.chain, counter=args.counter
-            )
             _display_mnemonic(mnemonic, args.chain.lower(), args.name.lower(), args.counter)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -611,7 +681,7 @@ def main():
         _build_password_parser(pw_parser)
 
         ssh_parser = subparsers.add_parser("ssh", help="Derive an SSH key")
-        ssh_parser.add_argument("email", help="Email address")
+        ssh_parser.add_argument("email", nargs="?", default=None, help="Email address (optional if KEYGRAIN_EMAIL or cache exists)")
         ssh_parser.add_argument("--name", required=True, help="Key name (e.g. github, work-servers)")
         ssh_parser.add_argument("--counter", type=int, default=1, help="Rotation counter (default: 1)")
         ssh_parser.add_argument("--private", action="store_true", help="Output private key (OpenSSH PEM)")
@@ -619,12 +689,13 @@ def main():
         ssh_parser.add_argument("--secret-env", default="KEYGRAIN_SECRET", help="Env var holding the master secret")
 
         wallet_parser = subparsers.add_parser("wallet", help="Derive a wallet mnemonic")
-        wallet_parser.add_argument("email", help="Email address")
+        wallet_parser.add_argument("email", nargs="?", default=None, help="Email address (optional if KEYGRAIN_EMAIL or cache exists)")
         wallet_parser.add_argument("--name", required=True, help="Wallet name (e.g. personal, savings)")
         wallet_parser.add_argument("--chain", required=True, help=f"Chain ({', '.join(sorted(SUPPORTED_CHAINS))})")
         wallet_parser.add_argument("--counter", type=int, default=1, help="Rotation counter (default: 1)")
-        wallet_parser.add_argument("--raw", action="store_true", help="Output raw 32-byte entropy as hex")
-        wallet_parser.add_argument("--seed", action="store_true", help="Output 64-byte BIP-32 seed as hex")
+        wallet_parser.add_argument("--format", "--export", dest="export_format", choices=["mnemonic", "seed", "entropy", "raw", "json", "sparrow", "electrum", "metamask"], default=None, help="Output format (mnemonic, seed, entropy, json, sparrow, electrum, metamask)")
+        wallet_parser.add_argument("--raw", action="store_true", help="Output raw 32-byte entropy as hex (same as --format entropy)")
+        wallet_parser.add_argument("--seed", action="store_true", help="Output 64-byte BIP-32 seed as hex (same as --format seed)")
         wallet_parser.add_argument("--path", action="store_true", help="Show BIP-44 derivation path")
         wallet_parser.add_argument("--yes-i-understand-the-risks", action="store_true", help="Skip interactive confirmation")
         wallet_parser.add_argument("--secret-env", default="KEYGRAIN_SECRET", help="Env var holding the master secret")
