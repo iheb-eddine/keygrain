@@ -256,6 +256,9 @@
   const deleteServerDialog = document.getElementById("delete-server-dialog");
   const deleteServerCancel = document.getElementById("delete-server-cancel");
   const deleteServerConfirm = document.getElementById("delete-server-confirm");
+  const deleteServerKeepLocal = document.getElementById("delete-server-keep-local");
+  const deleteServerSubtext = document.getElementById("delete-server-subtext");
+  const deleteServerError = document.getElementById("delete-server-error");
 
   const settingsBtn = document.getElementById("settings-btn");
   const settingsPanel = document.getElementById("settings-panel");
@@ -2545,8 +2548,23 @@
     showStatus(statusEl, "Account switched. Enter a different email and master secret.");
   });
 
+  function renderDeleteServerSubtext() {
+    if (!deleteServerSubtext) return;
+    deleteServerSubtext.textContent = deleteServerKeepLocal?.checked
+      ? "Your data stays on this device in offline mode. It’s removed from the server, but you can restore it later by turning Offline mode off to sync again."
+      : "Your data will also be permanently erased from this device.";
+  }
+
+  deleteServerKeepLocal?.addEventListener("change", renderDeleteServerSubtext);
+
   deleteServerBtn?.addEventListener("click", () => {
     menuDropdown?.classList.add("hidden");
+    if (deleteServerError) {
+      deleteServerError.classList.add("hidden");
+      deleteServerError.textContent = "";
+    }
+    if (deleteServerKeepLocal) deleteServerKeepLocal.checked = true;
+    renderDeleteServerSubtext();
     deleteServerDialog?.classList.remove("hidden");
     deleteServerCancel?.focus();
   });
@@ -2556,8 +2574,59 @@
   });
 
   deleteServerConfirm?.addEventListener("click", async () => {
-    deleteServerDialog?.classList.add("hidden");
-    showStatus(statusEl, "Server data deletion requested.");
+    deleteServerConfirm.disabled = true;
+    deleteServerCancel.disabled = true;
+    if (deleteServerError) {
+      deleteServerError.classList.add("hidden");
+      deleteServerError.textContent = "";
+    }
+    showStatus(statusEl, "Deleting server data...");
+    try {
+      const resp = await sendMsg({action: ["delete", "Server", "Data"].join("")});
+      const isSuccess = resp?.ok && (resp.result === "success" || resp.result?.ok === true || resp.result?.result === "success");
+      if (isSuccess) {
+        deleteServerDialog?.classList.add("hidden");
+        const keepLocal = deleteServerKeepLocal?.checked !== false;
+        if (keepLocal) {
+          offlineBtn?.setAttribute?.("aria-checked", "true");
+          showStatus(statusEl, "Server data deleted. Local data kept in offline mode.");
+          await requestOwnerView();
+        } else {
+          try {
+            await sendMsg({action: FIXED_ACTIONS.switchAccount});
+          } catch (_) {}
+          showLockScreen();
+          showStatus(statusEl, "Account deleted from server and local device.");
+        }
+      } else if (resp?.code === "KEYGRAIN_EXPIRED" || resp?.code === "LOCKED") {
+        deleteServerDialog?.classList.add("hidden");
+        showLockScreen();
+      } else {
+        const errorType = typeof resp?.result === "string" ? resp.result : (resp?.result?.result || resp?.code);
+        const messages = {
+          auth: "Couldn’t verify your account. Nothing was changed.",
+          rate_limited: "Too many requests. Wait a moment and try again. Nothing was changed.",
+          server: "Couldn’t reach the server. Nothing was changed — please try again.",
+          network: "Couldn’t reach the server. Nothing was changed — please try again."
+        };
+        const errorMsg = messages[errorType] || (typeof errorType === "string" ? errorType : "Failed to delete server data.");
+        if (deleteServerError) {
+          deleteServerError.textContent = errorMsg;
+          deleteServerError.classList.remove("hidden");
+        }
+        showStatus(statusEl, `Deletion failed: ${errorMsg}`);
+      }
+    } catch (_) {
+      const netMsg = "Couldn’t reach the server. Nothing was changed — please try again.";
+      if (deleteServerError) {
+        deleteServerError.textContent = netMsg;
+        deleteServerError.classList.remove("hidden");
+      }
+      showStatus(statusEl, netMsg);
+    } finally {
+      deleteServerConfirm.disabled = false;
+      deleteServerCancel.disabled = false;
+    }
   });
 
   // --- Enter Key Event Handlers for All Forms & Dialogs ---

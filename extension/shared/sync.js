@@ -347,12 +347,14 @@ async function setKnownWalletKeys(keys) {
 }
 
 function walletKey(w) {
-  return w.wallet_name.toLowerCase() + ":" + w.chain.toLowerCase();
+  const primary = (w && (w.wallet_id || w.wallet_name || w.id || "")) + "";
+  const secondary = (w && (w.chain || "universal")) + "";
+  return primary.toLowerCase() + ":" + secondary.toLowerCase();
 }
 
 /**
  * Merge local and remote wallets.
- * Merge key: wallet_name + chain (lowercased).
+ * Merge key: wallet identifier + chain (lowercased).
  * Conflict: most recent updated_at wins (falls back to created_at if updated_at absent).
  * Absence = deletion (same as services).
  */
@@ -400,13 +402,13 @@ function mergeWallets(localWallets, remoteWallets, knownWalletKeys) {
 }
 
 /**
- * Merge audit logs by union. Deduplicate by timestamp+wallet_name+chain+action.
+ * Merge audit logs by union. Deduplicate by timestamp+wallet identifier+chain+action.
  */
 function mergeAuditLog(localLog, remoteLog) {
   const seen = new Set();
   const merged = [];
   for (const entry of [...localLog, ...remoteLog]) {
-    const key = entry.timestamp + ":" + entry.wallet_name + ":" + entry.chain + ":" + entry.action;
+    const key = entry.timestamp + ":" + (entry.wallet_name || entry.wallet_id || "") + ":" + (entry.chain || "universal") + ":" + entry.action;
     if (!seen.has(key)) {
       seen.add(key);
       merged.push(entry);
@@ -669,7 +671,13 @@ function canonicalBlobPayload(services, metadata, wallets, auditLog, syncConflic
     const ka = walletKey(a), kb = walletKey(b);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
-  const auditKey = e => [e.timestamp, e.wallet_name, e.chain, e.action].join("\u0000");
+  const auditKey = e => {
+    const ts = (e && e.timestamp) || "";
+    const name = (e && (e.wallet_name || e.wallet_id || "")) + "";
+    const chain = (e && (e.chain || "universal")) + "";
+    const action = (e && e.action) || "";
+    return [ts, name, chain, action].join("\u0000");
+  };
   const orderedAudit = [...auditLog].sort((a, b) => {
     const ka = auditKey(a), kb = auditKey(b);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
