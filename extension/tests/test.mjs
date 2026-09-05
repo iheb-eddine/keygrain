@@ -4055,7 +4055,7 @@ await test('popup Add/Edit and Settings controls fail closed before mutation or 
 await test('live web derivation rejects invalid symbols before strengthen and accepts ASCII edges', async () => {
   const webSource = readFileSync(resolve(root, 'web', 'index.html'), 'utf8');
   const webStart = webSource.indexOf('    const UPPER =');
-  const webEnd = webSource.indexOf('    let clearTimer = null;', webStart);
+  const webEnd = webSource.indexOf('    /* --- DOM Elements & Tab Switching --- */', webStart);
   assert.ok(webStart >= 0 && webEnd > webStart, 'live web derivation block must be present');
   let webStrengthenCalls = 0;
   const webCtx = createContext({
@@ -4066,6 +4066,7 @@ await test('live web derivation rejects invalid symbols before strengthen and ac
   runInContext(webSource.slice(webStart, webEnd), webCtx);
   webCtx._args = ['secret', 'a@b.com', 'example.com', 20, '!', 1];
   const lowerEdge = await runInContext('derivePassword(..._args)', webCtx);
+  runInContext('cachedStrengthened = null;', webCtx);
   webCtx._args = ['secret', 'a@b.com', 'example.com', 20, '~', 1];
   const upperEdge = await runInContext('derivePassword(..._args)', webCtx);
   assert.equal(lowerEdge.length, 20);
@@ -4073,6 +4074,7 @@ await test('live web derivation rejects invalid symbols before strengthen and ac
   assert.equal(webStrengthenCalls, 2);
 
   webStrengthenCalls = 0;
+  runInContext('cachedStrengthened = null;', webCtx);
   for (const symbols of [' ', '\x00', '\x1f', '\x7f', 'é', '😀']) {
     webCtx._args = ['secret', 'a@b.com', 'example.com', 20, symbols, 1];
     await assert.rejects(() => runInContext('derivePassword(..._args)', webCtx), /printable ASCII/);
