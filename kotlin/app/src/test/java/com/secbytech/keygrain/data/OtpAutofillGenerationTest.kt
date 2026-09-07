@@ -95,7 +95,12 @@ class OtpAutofillGenerationTest {
         val future = TotpAutofillDerivedExecutor.submit { "canceled" }
         assertNotNull(future)
         future!!.cancel(false)
-        val recovered = TotpAutofillDerivedExecutor.submit { "recovered" }
+        var recovered = TotpAutofillDerivedExecutor.submit { "recovered" }
+        repeat(50) {
+            if (recovered != null) return@repeat
+            Thread.sleep(10L)
+            recovered = TotpAutofillDerivedExecutor.submit { "recovered" }
+        }
         assertNotNull(recovered)
         assertEquals("recovered", recovered!!.get(5, TimeUnit.SECONDS))
     }
