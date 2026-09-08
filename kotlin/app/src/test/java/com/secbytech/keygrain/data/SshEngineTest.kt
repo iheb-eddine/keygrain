@@ -26,19 +26,18 @@ class SshEngineTest {
     @Test
     fun testDerivationVectors() {
         val json = loadVectors()
-        val vectors = json.getJSONObject("derivation_vectors").getJSONArray("vectors")
+        val vectors = json.getJSONArray("vectors")
 
         for (i in 0 until vectors.length()) {
             val v = vectors.getJSONObject(i)
-            val secret = hexToBytes(v.getString("secret_hex"))
-            val email = v.getString("email")
+            val secret = v.getString("secret").toByteArray(Charsets.UTF_8)
             val keyName = v.getString("key_name")
             val counter = v.getInt("counter")
             val expectedSeed = v.getString("seed_hex")
-            val expectedPubKey = v.getString("public_key_hex")
+            val expectedPubKey = v.getString("pubkey_hex")
 
             Keygrain.clearStrengthenCache()
-            val result = SshEngine.deriveSshKeypair(secret, email, keyName, counter)
+            val result = SshEngine.deriveSshKeypair(secret, keyName, counter)
 
             assertEquals(
                 "Seed mismatch: keyName=$keyName counter=$counter",
@@ -55,32 +54,32 @@ class SshEngineTest {
 
     @Test
     fun testCaseNormalization() {
-        val secret = hexToBytes("6d792d6d61737465722d736563726574")
+        val secret = "my-master-secret".toByteArray(Charsets.UTF_8)
         Keygrain.clearStrengthenCache()
-        val a = SshEngine.deriveSshKeypair(secret, "test@gmail.com", "github", 1)
+        val a = SshEngine.deriveSshKeypair(secret, "github", 1)
         Keygrain.clearStrengthenCache()
-        val b = SshEngine.deriveSshKeypair(secret, "TEST@Gmail.com", "GitHub", 1)
+        val b = SshEngine.deriveSshKeypair(secret, "GitHub", 1)
         assertArrayEquals("Seed case normalization", a.seed, b.seed)
         assertArrayEquals("Public key case normalization", a.publicKey, b.publicKey)
     }
 
     @Test
     fun testDifferentKeyNameProducesDifferentKey() {
-        val secret = hexToBytes("6d792d6d61737465722d736563726574")
+        val secret = "my-master-secret".toByteArray(Charsets.UTF_8)
         Keygrain.clearStrengthenCache()
-        val a = SshEngine.deriveSshKeypair(secret, "test@gmail.com", "github", 1)
+        val a = SshEngine.deriveSshKeypair(secret, "github", 1)
         Keygrain.clearStrengthenCache()
-        val b = SshEngine.deriveSshKeypair(secret, "test@gmail.com", "work-servers", 1)
+        val b = SshEngine.deriveSshKeypair(secret, "work-servers", 1)
         assertFalse("Different key_name must produce different seed", a.seed.contentEquals(b.seed))
     }
 
     @Test
     fun testCounterRotationProducesDifferentKey() {
-        val secret = hexToBytes("6d792d6d61737465722d736563726574")
+        val secret = "my-master-secret".toByteArray(Charsets.UTF_8)
         Keygrain.clearStrengthenCache()
-        val a = SshEngine.deriveSshKeypair(secret, "test@gmail.com", "github", 1)
+        val a = SshEngine.deriveSshKeypair(secret, "github", 1)
         Keygrain.clearStrengthenCache()
-        val b = SshEngine.deriveSshKeypair(secret, "test@gmail.com", "github", 2)
+        val b = SshEngine.deriveSshKeypair(secret, "github", 2)
         assertFalse("Counter rotation must produce different seed", a.seed.contentEquals(b.seed))
     }
 
@@ -89,12 +88,12 @@ class SshEngineTest {
     @Test
     fun testAuthorizedKeysFormat() {
         val json = loadVectors()
-        val vectors = json.getJSONObject("derivation_vectors").getJSONArray("vectors")
+        val vectors = json.getJSONArray("vectors")
 
         for (i in 0 until vectors.length()) {
             val v = vectors.getJSONObject(i)
             val expectedAuthKeys = v.getString("authorized_keys")
-            val publicKey = hexToBytes(v.getString("public_key_hex"))
+            val publicKey = hexToBytes(v.getString("pubkey_hex"))
 
             // Manually construct authorized_keys (since formatAuthorizedKeys uses android.util.Base64)
             val keyType = "ssh-ed25519".toByteArray(Charsets.UTF_8)
@@ -114,7 +113,7 @@ class SshEngineTest {
             publicKey.copyInto(blob, offset)
 
             val b64 = Base64.getEncoder().encodeToString(blob)
-            val comment = "${v.getString("email").lowercase()}:${v.getString("key_name").lowercase()}"
+            val comment = v.getString("key_name").lowercase()
             val actual = "ssh-ed25519 $b64 $comment"
 
             assertEquals(
@@ -128,17 +127,17 @@ class SshEngineTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun testRejectEmptyKeyName() {
-        SshEngine.deriveSshKeypair("secret".toByteArray(), "a@b.com", "", 1)
+        SshEngine.deriveSshKeypair("secret".toByteArray(), "", 1)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun testRejectWhitespaceInKeyName() {
-        SshEngine.deriveSshKeypair("secret".toByteArray(), "a@b.com", "my key", 1)
+        SshEngine.deriveSshKeypair("secret".toByteArray(), "my key", 1)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun testRejectCounterLessThanOne() {
-        SshEngine.deriveSshKeypair("secret".toByteArray(), "a@b.com", "github", 0)
+        SshEngine.deriveSshKeypair("secret".toByteArray(), "github", 0)
     }
 
     // --- Private Key PEM Format ---
@@ -146,12 +145,18 @@ class SshEngineTest {
     @Test
     fun testFormatOpensshPrivateKeyMatchesVector() {
         val json = loadVectors()
-        val vectors = json.getJSONObject("derivation_vectors").getJSONArray("vectors")
-        val v = vectors.getJSONObject(0) // Vector 1 has private_key_pem
+        val vectors = json.getJSONArray("vectors")
+        val v = vectors.getJSONObject(0)
         val seed = hexToBytes(v.getString("seed_hex"))
-        val publicKey = hexToBytes(v.getString("public_key_hex"))
-        val comment = "${v.getString("email").lowercase()}:${v.getString("key_name").lowercase()}"
-        val expectedPem = v.getString("private_key_pem")
+        val publicKey = hexToBytes(v.getString("pubkey_hex"))
+        val comment = v.getString("key_name").lowercase()
+        val expectedPem = "-----BEGIN OPENSSH PRIVATE KEY-----\n" +
+                "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n" +
+                "QyNTUxOQAAACDdAwOD7Y57NoB95ng0G9qwYG0XM2/2S/ZvRsESlkmwEQAAAJArpATwK6QE\n" +
+                "8AAAAAtzc2gtZWQyNTUxOQAAACDdAwOD7Y57NoB95ng0G9qwYG0XM2/2S/ZvRsESlkmwEQ\n" +
+                "AAAEBUtKbcXZ0RR/zVD3Jj/+7bULBbQN5VMQXVUoBaP9CYZN0DA4Ptjns2gH3meDQb2rBg\n" +
+                "bRczb/ZL9m9GwRKWSbARAAAABmdpdGh1YgECAwQFBgc=\n" +
+                "-----END OPENSSH PRIVATE KEY-----\n"
 
         // Cannot call SshEngine.formatOpensshPrivateKey directly (uses android.util.Base64)
         // Instead, replicate the algorithm with java.util.Base64 to verify correctness
@@ -219,20 +224,20 @@ class SshEngineTest {
 
     @Test
     fun testFormatOpensshPrivateKeyCheckInt() {
-        val seed = hexToBytes("15d7cd5c74358c1cd7f7f93ef45d074afcf6fd9e008a94de9e8608a330d96dc1")
+        val seed = hexToBytes("54b4a6dc5d9d1147fcd50f7263ffeedb50b05b40de553105d552805a3fd09864")
         val checkBytes = Keygrain.hmacSha256(seed, "openssh-check".toByteArray(Charsets.UTF_8))
         val checkInt = ((checkBytes[0].toInt() and 0xFF) shl 24) or
                 ((checkBytes[1].toInt() and 0xFF) shl 16) or
                 ((checkBytes[2].toInt() and 0xFF) shl 8) or
                 (checkBytes[3].toInt() and 0xFF)
-        assertEquals("check_int must match expected value", 0x4A134E13, checkInt)
+        assertEquals("check_int must match expected value", 0x2ba404f0, checkInt)
     }
 
     @Test
     fun testFormatOpensshPrivateKeyPemStructure() {
-        val seed = hexToBytes("15d7cd5c74358c1cd7f7f93ef45d074afcf6fd9e008a94de9e8608a330d96dc1")
-        val publicKey = hexToBytes("f2aadbd608703b65bb87d3d1c746c48dfed9095a2b7ae4c8ada057afa6bf9032")
-        val comment = "test@gmail.com:github"
+        val seed = hexToBytes("54b4a6dc5d9d1147fcd50f7263ffeedb50b05b40de553105d552805a3fd09864")
+        val publicKey = hexToBytes("dd030383ed8e7b36807de678341bdab0606d17336ff64bf66f46c1129649b011")
+        val comment = "github"
 
         // Build PEM using test helper (same algo as testFormatOpensshPrivateKeyMatchesVector)
         val checkBytes = Keygrain.hmacSha256(seed, "openssh-check".toByteArray(Charsets.UTF_8))

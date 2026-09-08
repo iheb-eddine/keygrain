@@ -6,14 +6,31 @@ import hmac
 import re
 import struct
 
+from argon2.low_level import hash_secret_raw, Type
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from .derive import strengthen_secret
+_ssh_strengthen_cache: dict[tuple[bytes, str], bytes] = {}
+
+
+def _strengthen_ssh(secret: bytes, key_name: str) -> bytes:
+    key_name_lower = key_name.lower()
+    cache_key = (secret, key_name_lower)
+    if cache_key not in _ssh_strengthen_cache:
+        salt = f"keygrain-ssh:{key_name_lower}".encode("utf-8")
+        _ssh_strengthen_cache[cache_key] = hash_secret_raw(
+            secret=secret,
+            salt=salt,
+            time_cost=3,
+            memory_cost=65536,
+            parallelism=1,
+            hash_len=32,
+            type=Type.ID,
+        )
+    return _ssh_strengthen_cache[cache_key]
 
 
 def derive_ssh_keypair(
     secret: bytes,
-    email: str,
     *,
     key_name: str,
     counter: int = 1,
@@ -23,21 +40,18 @@ def derive_ssh_keypair(
     Returns:
         Tuple of (seed: 32 bytes, public_key: 32 bytes).
     """
+    if not secret:
+        raise ValueError("secret must not be empty")
     if not key_name:
         raise ValueError("key_name must not be empty")
     if re.search(r"\s", key_name):
         raise ValueError("key_name must not contain whitespace")
     if counter < 1:
         raise ValueError("counter must be >= 1")
-    if not secret:
-        raise ValueError("secret must not be empty")
-    if not email or not email.strip():
-        raise ValueError("email must not be empty")
-    if re.search(r"[\x00-\x1f\x7f]", email):
-        raise ValueError("email must not contain control characters")
 
-    strengthened = strengthen_secret(secret, email)
-    message = f"{email.lower()}:{key_name.lower()}:{counter}:keygrain-ssh".encode("utf-8")
+    key_name_clean = key_name.lower()
+    strengthened = _strengthen_ssh(secret, key_name_clean)
+    message = f"{key_name_clean}:{counter}:keygrain-ssh".encode("utf-8")
     seed = hmac.new(strengthened, message, hashlib.sha256).digest()
 
     private_key = Ed25519PrivateKey.from_private_bytes(seed)

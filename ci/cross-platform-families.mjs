@@ -55,12 +55,12 @@ const result = await runInContext(`(async () => {
     out.totp_derived.push({index, seed_hex: hex(seed)});
   }
 
-  for (const [index, v] of f.ssh.derivation_vectors.vectors.entries()) {
+  for (const [index, v] of f.ssh.vectors.entries()) {
     clearStrengthenCache();
-    const pair = await deriveSshKeypair(v.secret_utf8, v.email, {
+    const pair = await deriveSshKeypair(v.secret, {
       keyName: v.key_name, counter: v.counter,
     });
-    const comment = v.email.toLowerCase() + ':' + v.key_name.toLowerCase();
+    const comment = v.key_name.toLowerCase();
     out.ssh.push({
       index,
       seed_hex: hex(pair.seed),
@@ -71,8 +71,8 @@ const result = await runInContext(`(async () => {
 
   for (const v of f.wallet.derivation_vectors) {
     clearStrengthenCache();
-    const entropy = await deriveWalletEntropy(v.secret, v.email, {
-      walletName: v.wallet_name, chain: v.chain, counter: v.counter,
+    const entropy = await deriveWalletEntropy(v.secret, {
+      walletId: v.wallet_id, words: v.words || 24, counter: v.counter,
     });
     out.wallet.push({
       id: v.id,
@@ -97,11 +97,11 @@ const result = await runInContext(`(async () => {
       item.totp_seed_hex = hex(await deriveTOTPSeed(f.sync.secret, s.email, s.site));
     } else if (s.ssh !== undefined) {
       clearStrengthenCache();
-      const pair = await deriveSshKeypair(f.sync.secret, s.email, {
+      const pair = await deriveSshKeypair(f.sync.secret, {
         keyName: s.ssh.key_name, counter: s.ssh.counter,
       });
       item.ssh_authorized_keys = formatAuthorizedKeys(
-        pair.publicKey, s.email.toLowerCase() + ':' + s.ssh.key_name.toLowerCase()
+        pair.publicKey, s.ssh.key_name.toLowerCase()
       );
     } else {
       throw new Error('Unsupported sync service shape at index ' + index);

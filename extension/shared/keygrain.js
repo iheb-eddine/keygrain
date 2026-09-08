@@ -20,9 +20,10 @@ let _strengthenCache = null;
 let _strengthenQueue = null;
 let _strengthenGeneration = 0;
 
-async function strengthenSecret(secret, email) {
-  const emailLower = (email || "").toLowerCase();
-  if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
+async function strengthenWithSalt(secret, saltString) {
+  if (!secret) throw new Error("secret must not be empty");
+  if (!saltString) throw new Error("saltString must not be empty");
+  if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.salt === saltString) {
     return new Uint8Array(_strengthenCache.result);
   }
   // Serialize concurrent calls: if a computation is in-flight, wait then re-check cache.
@@ -30,12 +31,12 @@ async function strengthenSecret(secret, email) {
   if (_strengthenQueue) {
     const pending = _strengthenQueue;
     await pending;
-    if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.email === emailLower) {
+    if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.salt === saltString) {
       return new Uint8Array(_strengthenCache.result);
     }
   }
   const enc = new TextEncoder();
-  const salt = enc.encode("keygrain-strengthen:" + emailLower);
+  const salt = enc.encode(saltString);
   const secretBytes = enc.encode(secret);
   const operationGeneration = _strengthenGeneration;
   let pending;
@@ -57,13 +58,18 @@ async function strengthenSecret(secret, email) {
       throw new Error("stale strengthen operation");
     }
     const output = new Uint8Array(result);
-    _strengthenCache = { secret, email: emailLower, result };
+    _strengthenCache = { secret, salt: saltString, email: saltString.startsWith("keygrain-strengthen:") ? saltString.slice("keygrain-strengthen:".length) : undefined, result };
     return output;
   } finally {
     secretBytes.fill(0);
     salt.fill(0);
     if (_strengthenQueue === pending) _strengthenQueue = null;
   }
+}
+
+async function strengthenSecret(secret, email) {
+  const emailLower = (email || "").toLowerCase();
+  return strengthenWithSalt(secret, "keygrain-strengthen:" + emailLower);
 }
 
 function clearStrengthenCache() {

@@ -167,7 +167,7 @@ const validServices = [
     assert(loader.indexOf('ssh.js') < loader.indexOf('browser-owner.js'));
   }
   assert.equal(firefoxManifest.manifest_version, 3);
-  assert.equal(createHash('sha256').update(readFileSync(resolve(shared, 'ssh.js'))).digest('hex'), 'b77487148efc24ca0a375d8d0191e376ae497bd7e8ce18edebf8ebf2308f2228');
+  assert.equal(createHash('sha256').update(readFileSync(resolve(shared, 'ssh.js'))).digest('hex'), 'b88b7f9026fe8329870040d50cba79fb70fcecc3565eee83bb7e6fa31a5bdf80');
   assert.equal(createHash('sha256').update(readFileSync(resolve(shared, 'lib/tweetnacl.js'))).digest('hex'), '3ec535c004aeeb225785d8e93fb33bf99f52e399bd7dfc01969b5629baea5131');
   console.log('  ✓ Chrome/Firefox MV3 loader order, no duplication, MV3 marker, and primitive hashes');
 }

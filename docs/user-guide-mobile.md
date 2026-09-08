@@ -132,26 +132,28 @@ You can attach a time-based one-time password (TOTP) to a service while adding o
 
 ### SSH keys
 
-To derive an SSH keypair for a service:
+Keygrain derives Ed25519 SSH keys directly and deterministically from your master secret (without coupling to an email address):
 
-1. Open the service editor and tap **⚙️ Options**.
-2. Under **SSH Key**, enter a value in **Key name (optional)**, such as `github` or `work-servers`.
-3. Save the service and open its detail view. Use **Copy SSH public key** to copy the `ssh-ed25519` authorized-keys line for installing on a server.
-4. To copy the private key, use the private-key action. In the **Copy Private Key** prompt, choose **Copy**, then use the private-key action again to perform the copy. Treat the resulting OpenSSH PEM as a secret: it is unencrypted private-key material. Android marks it sensitive where supported and clears it from the clipboard after 30 seconds if the clipboard has not changed.
+1. Tap the **SSH Keys** tab in the bottom navigation bar.
+2. Tap **＋** to add a key, entering a **Key name** (such as `github`, `server-prod`, or `id_ed25519`), an optional label, and counter.
+3. Open the key details:
+   - **Public Key:** Tap **Copy Public Key** to copy the OpenSSH `ssh-ed25519` authorized_keys line.
+   - **Private Key:** Tap **Copy Private Key** or view the key in OpenSSH PEM format. Unencrypted private keys are cleared from the Android clipboard after 30 seconds where supported.
 
 ### Wallet derivation
 
-The **Wallet** item in the **⋮** menu opens **Wallet Derivation**. This derives a 24-word mnemonic from your master secret; it does not create an on-chain wallet, import funds, or manage balances.
+Keygrain derives disaster-recovery BIP-39 recovery mnemonics (12 or 24 words) directly from your master secret:
 
-1. Enter the **Email** and a lowercase **Wallet name** (for example, `personal` or `savings`).
-2. Choose a **Chain**: `avalanche`, `bitcoin`, `bitcoin-testnet`, `cosmos`, `dogecoin`, `ethereum`, `litecoin`, `polkadot`, or `solana`.
-3. Enter a **Counter** of 1 or greater. A different wallet name, chain, or counter derives a different result.
-4. Check **I understand the risks**. The **Derive Mnemonic** button activates after a three-second delay.
-5. Tap **Derive Mnemonic** and record the 24 numbered words securely. Where the selected chain defines one, the screen also shows its **BIP-44 Path**; Polkadot shows `(substrate derivation)` instead.
+1. Tap the **Wallets** tab in the bottom navigation bar.
+2. Tap **＋** to add a universal wallet:
+   - **Wallet ID:** A slug used for deterministic derivation (e.g., `personal`, `savings`, or `vault`).
+   - **Word Count:** Choose 24 words (recommended) or 12 words.
+   - **Counter:** 1 or greater. Incrementing derives a completely independent root wallet.
+3. Tap **View** on any wallet card to derive and display the mnemonic seed. The screen shows the 12/24 numbered words, hex seed, and BIP-44 paths for major networks.
 
 This is a **disaster-recovery derivation** feature, not an everyday wallet. If you lose your master secret, every derived wallet is permanently lost and there is no recovery mechanism. Use a hardware wallet for daily operations and never share the mnemonic.
 
-The mnemonic is protected from screenshots while displayed and is removed automatically after 60 seconds. Tap **Clear** to remove it sooner. The app retains wallet metadata and an audit entry for previously derived wallets, and these are included in normal sync; the displayed mnemonic itself is not persisted by the wallet screen.
+The mnemonic is protected from screenshots while displayed and is removed automatically after 60 seconds. Tap **Clear** to remove it sooner. Wallets are synchronized across your devices via encrypted metadata sync; the derived seed itself is never transmitted or stored on the server.
 
 ---
 

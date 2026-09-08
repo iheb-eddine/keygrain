@@ -1,6 +1,6 @@
 # Keygrain Algorithm Specification
 
-**Version:** 4 (rejection sampling, 4-byte counter)
+**Version:** 5 (item-isolated salt, email decoupling for SSH and HD wallets)
 **Status:** Authoritative reference
 
 This document fully specifies the Keygrain deterministic password derivation algorithm. An implementor can produce byte-identical output on any platform using only this specification and the test vectors.
@@ -415,13 +415,20 @@ Seeds: SHA1=`3132333435363738393031323334353637383930` (20 bytes), SHA256=`31323
 
 ## 12. SSH Key Derivation
 
-Keygrain derives deterministic Ed25519 SSH key pairs. The 32-byte HMAC output serves directly as the Ed25519 seed.
+Keygrain derives deterministic Ed25519 SSH key pairs from the master secret without coupling to an account email. The 32-byte HMAC output serves directly as the Ed25519 seed.
 
 ### 12.1 Formula
 
 ```
-strengthened = strengthen(secret, email)                    // Per §3
-message = UTF8_ENCODE(LOWERCASE(email) + ":" + LOWERCASE(key_name) + ":" + DECIMAL(counter) + ":keygrain-ssh")
+strengthened = Argon2id(
+    password = secret,
+    salt     = UTF8_ENCODE("keygrain-ssh:" + LOWERCASE(key_name)),
+    m        = 65536,
+    t        = 3,
+    p        = 1,
+    len      = 32
+)
+message = UTF8_ENCODE(LOWERCASE(key_name) + ":" + DECIMAL(counter) + ":keygrain-ssh")
 seed = HMAC-SHA256(key = strengthened, message = message)  // 32 bytes = Ed25519 seed
 public_key = Ed25519_PublicKey_From_Seed(seed)             // 32 bytes
 ```
@@ -436,61 +443,73 @@ public_key = Ed25519_PublicKey_From_Seed(seed)             // 32 bytes
 ### 12.3 Authorized Keys Format
 
 ```
-ssh-ed25519 <base64(key_type_blob || public_key_blob)> <lowercase(email)>:<lowercase(key_name)>
+ssh-ed25519 <base64(key_type_blob || public_key_blob)> <lowercase(key_name)>
 ```
 
-Where the binary blob is: `uint32(11) || "ssh-ed25519" || uint32(32) || public_key_bytes`.
+Where the binary blob is: `uint32(11) || "ssh-ed25519" || uint32(32) || public_key_bytes`. The comment is the lowercase `key_name`.
 
 ### 12.4 Test Vectors
 
 Machine-readable vectors: `ssh-vectors.json` at repository root.
 
-| # | secret (UTF-8) | email | key_name | counter | seed (hex) | public_key (hex) |
-|---|---|---|---|---|---|---|
-| 1 | `my-master-secret` | `test@gmail.com` | `github` | 1 | `15d7cd5c74358c1cd7f7f93ef45d074afcf6fd9e008a94de9e8608a330d96dc1` | `f2aadbd608703b65bb87d3d1c746c48dfed9095a2b7ae4c8ada057afa6bf9032` |
-| 2 | `my-master-secret` | `test@gmail.com` | `work-servers` | 1 | `d415ea7afd4b8e113bee60f42ae84b387b564f38e8b95a0c3326b3720d5fb9f0` | `5050a666581b46ebd076f5f902eaaa14a2dc7b14bdeada5fae5c861e049530e0` |
-| 3 | `my-master-secret` | `test@gmail.com` | `github` | 2 | `657c26252e9b425f83f5fd763177b75ea7046b4f9167a2116f248c19455ab9e2` | `1d921af7c1c68c75100e741008e903a28b14fc42fce5c0e33803f1cb3bbed16a` |
-| 4 | `my-master-secret` | `TEST@Gmail.com` | `GitHub` | 1 | `15d7cd5c74358c1cd7f7f93ef45d074afcf6fd9e008a94de9e8608a330d96dc1` | `f2aadbd608703b65bb87d3d1c746c48dfed9095a2b7ae4c8ada057afa6bf9032` |
-| 5 | `different-secret` | `test@gmail.com` | `github` | 1 | `247c4840e93dd75558b52c3979ed67420de5093f22fb1cdd74e86202d1f17e99` | `60efc824475a7a03dfba1bfc6abc49c4d4156bd705872fcf5615b00d210999ba` |
+| # | secret (UTF-8) | key_name | counter | seed (hex) | public_key (hex) |
+|---|---|---|---|---|---|
+| 1 | `my-master-secret` | `github` | 1 | `54b4a6dc5d9d1147fcd50f7263ffeedb50b05b40de553105d552805a3fd09864` | `dd030383ed8e7b36807de678341bdab0606d17336ff64bf66f46c1129649b011` |
+| 2 | `my-master-secret` | `work-servers` | 1 | `a77682dd0cadb362f5a44386852ac656b393084b329c3bdfde26add8fc9f5bec` | `54013af1906b69aae548396f7fbb800192ed2a95004b18c4df633f534fae4e9b` |
+| 3 | `my-master-secret` | `github` | 2 | `ee2e85f222e76d15199135343db824f9dbe125c8c7fde1fda3cdaaf2a678397d` | `11fd80f28700727f93747de4e155cbff49da466787b3ac88c1efd17f39f7ad99` |
+| 4 | `my-master-secret` | `GitHub` | 1 | `54b4a6dc5d9d1147fcd50f7263ffeedb50b05b40de553105d552805a3fd09864` | `dd030383ed8e7b36807de678341bdab0606d17336ff64bf66f46c1129649b011` |
+| 5 | `different-secret` | `github` | 1 | `cb771f4b0f6cd599b29425e10ee41c43256b88d507d98a7d98242b4f6e4b5bca` | `f619687a9a572525ceb162d2d21f44609cc07eff4198b23edbe727eaac025c14` |
 
 Vectors 1 and 4 MUST produce identical output (case normalization).
 
-Authorized keys for vector 1: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPKq29YIcDtlu4fT0cdGxI3+2QlaK3rkyK2gV6+mv5Ay test@gmail.com:github`
+Authorized keys for vector 1: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN0DA4Ptjns2gH3meDQb2rBgbRczb/ZL9m9GwRKWSbAR github`
 
 ---
 
 ## 13. HD Wallet Derivation
 
-Keygrain derives deterministic BIP-39 mnemonics from the master secret. This is positioned as disaster recovery — not primary wallet management.
+Keygrain derives deterministic BIP-39 mnemonics directly from the master secret without coupling to an account email or specific blockchain chain identifier. This is positioned as disaster recovery — not primary wallet management.
 
 ### 13.1 Formula
 
 ```
-strengthened = strengthen(secret, email)                    // Per §3
-message = UTF8_ENCODE(
-    LOWERCASE(email) + ":" + LOWERCASE(wallet_name) + ":" + LOWERCASE(chain) + ":" + DECIMAL(counter) + ":keygrain-wallet"
+strengthened = Argon2id(
+    password = secret,
+    salt     = UTF8_ENCODE("keygrain-wallet:" + LOWERCASE(wallet_id)),
+    m        = 65536,
+    t        = 3,
+    p        = 1,
+    len      = 32
 )
-entropy = HMAC-SHA256(key = strengthened, message = message)  // 32 bytes = 256-bit BIP-39 entropy
-mnemonic = BIP39_ENTROPY_TO_MNEMONIC(entropy)                // 24 words
+message = UTF8_ENCODE(
+    LOWERCASE(wallet_id) + ":" + DECIMAL(words) + ":" + DECIMAL(counter) + ":keygrain-wallet"
+)
+raw_entropy = HMAC-SHA256(key = strengthened, message = message)  // 32 bytes
+
+if words == 12:
+    entropy = raw_entropy[0..15]     // 16 bytes = 128-bit BIP-39 entropy
+else if words == 24:
+    entropy = raw_entropy            // 32 bytes = 256-bit BIP-39 entropy
+
+mnemonic = BIP39_ENTROPY_TO_MNEMONIC(entropy)  // 12 or 24 words
 ```
 
 ### 13.2 Parameters
 
 | Parameter | Constraints |
 |-----------|-------------|
-| `wallet_name` | Non-empty, matches `[a-z0-9\-]+`, lowercased before use |
-| `chain` | Must be in SUPPORTED_CHAINS enum, lowercased before use |
+| `wallet_id` | Non-empty, matches `[a-z0-9\-]+`, lowercased before use |
+| `words` | Must be 12 or 24 (default: 24) |
 | `counter` | ≥ 1, decimal string with no leading zeros |
-
-**Supported chains:** `bitcoin`, `ethereum`, `solana`, `litecoin`, `dogecoin`, `bitcoin-testnet`, `polkadot`, `cosmos`, `avalanche`.
 
 ### 13.3 BIP-39 Mnemonic Generation
 
 ```
-1. checksum = SHA-256(entropy)[0]                    // first byte = 8 bits for 256-bit entropy
-2. combined = entropy || checksum                    // 264 bits
-3. Split into 24 groups of 11 bits → index into BIP-39 English wordlist (2048 words)
-4. mnemonic = 24 words separated by spaces
+1. checksum_bits = entropy_bits / 32                 // 4 bits for 128-bit entropy (12 words), 8 bits for 256-bit entropy (24 words)
+2. checksum = SHA-256(entropy)[0] >> (8 - checksum_bits)
+3. combined = entropy || checksum
+4. Split into groups of 11 bits → index into BIP-39 English wordlist (2048 words)
+5. mnemonic = words separated by spaces
 ```
 
 ### 13.4 BIP-39 Seed Derivation
@@ -505,14 +524,14 @@ Keygrain uses empty passphrase by default.
 
 Machine-readable vectors: `wallet-vectors.json` at repository root.
 
-| # | secret (UTF-8) | email | wallet_name | chain | counter | entropy (hex) | mnemonic (first 4 words) |
-|---|---|---|---|---|---|---|---|
-| 1 | `my-master-secret` | `test@gmail.com` | `personal` | `bitcoin` | 1 | `855df06ee1e2aeafe35a532abc2dad8843338335a04fec06ded23214cc4a4c5d` | `luxury usage brick sense ...` |
-| 2 | `my-master-secret` | `test@gmail.com` | `personal` | `ethereum` | 1 | `81af061b01988ff5c671cb710daaa7362fc41179ae5b623ee7ad162c530d8d5b` | `like join man add ...` |
-| 3 | `my-master-secret` | `test@gmail.com` | `personal` | `bitcoin` | 2 | `600ba4cdd3389276ebebe31a4c5c9f3958a98649a56872767a1ec8970193fd85` | `gas frog cricket please ...` |
-| 4 | `my-master-secret` | `test@gmail.com` | `savings` | `bitcoin` | 1 | `c099d1be9c505c3e35e520054317e3e881dd9f5e611f0b61eada5ae6dc0ecb2a` | `scene soldier hurry december ...` |
-| 5 | `my-master-secret` | `TEST@Gmail.com` | `Personal` | `Bitcoin` | 1 | `855df06ee1e2aeafe35a532abc2dad8843338335a04fec06ded23214cc4a4c5d` | `luxury usage brick sense ...` |
-| 6 | `different-secret` | `test@gmail.com` | `personal` | `bitcoin` | 1 | `793b9c75b251dd669e5022250485188015944885c33794b4406a5c426c6cf966` | `junior table buddy gorilla ...` |
+| # | secret (UTF-8) | wallet_id | words | counter | entropy (hex) | mnemonic (first 4 words) |
+|---|---|---|---|---|---|---|
+| 1 | `my-master-secret` | `personal` | 24 | 1 | `76ac28dac649cd29b1c77a6f50948f8d17db45b5e22182862c2bdae7f7eee2b8` | `issue genuine cute milk ...` |
+| 2 | `my-master-secret` | `personal` | 12 | 1 | `cf91c3be4c216f6f3005c6906d6124a5` | `sort mix usage obscure ...` |
+| 3 | `my-master-secret` | `personal` | 24 | 2 | `be489c6feb23dc22f841c12988069d967da16eca3c78e8c3f17965ce4fbd541a` | `salad eager brief stone ...` |
+| 4 | `my-master-secret` | `savings` | 24 | 1 | `3f587f4e4aeb6db9dba7de5d1b2d043c64d7cae85ce520f9d707684419bf8506` | `dismiss sentence squeeze noise ...` |
+| 5 | `my-master-secret` | `Personal` | 24 | 1 | `76ac28dac649cd29b1c77a6f50948f8d17db45b5e22182862c2bdae7f7eee2b8` | `issue genuine cute milk ...` |
+| 6 | `different-secret` | `personal` | 24 | 1 | `3054f00fd8ce8ad9742f1a4267bc5bda56601a36ade3fc3ca5d53732d311c563` | `core pole advance ranch ...` |
 
 Vectors 1 and 5 MUST produce identical output (case normalization).
 
@@ -524,20 +543,41 @@ Keygrain wallet derivation is NOT BIP-85. BIP-85 derives child mnemonics from a 
 
 ## 14. Domain Separation
 
-All derivations use the same strengthened key but produce independent outputs via distinct HMAC messages. No two derivation types can produce the same message for any input values.
+Derivations use isolated Argon2id salts and distinct HMAC messages. No two derivation types can produce the same message or share strengthened keys across domains.
 
-| Derivation | Message format | Unique suffix |
-|------------|---------------|---------------|
-| Password | `site:email:length:counter` | (ends with integer) |
-| Auth ID | `email:keygrain-id` | `:keygrain-id` |
-| Auth password | `email:32:keygrain-auth` | `:keygrain-auth` |
-| Encryption key | `email:keygrain-encryption` | `:keygrain-encryption` |
-| Fingerprint | `keygrain-fingerprint` | (standalone, key=raw secret) |
-| TOTP seed | `site:email:keygrain-totp` | `:keygrain-totp` |
-| SSH key | `email:key_name:counter:keygrain-ssh` | `:keygrain-ssh` |
-| Wallet | `email:wallet_name:chain:counter:keygrain-wallet` | `:keygrain-wallet` |
-| CLI local cache | `email:keygrain-cli-cache` | `:keygrain-cli-cache` |
+| Derivation | Salt format | Message format | Unique suffix |
+|------------|-------------|----------------|---------------|
+| Password | `keygrain-strengthen:<email>` | `site:email:length:counter` | (ends with integer) |
+| Auth ID | `keygrain-strengthen:<email>` | `email:keygrain-id` | `:keygrain-id` |
+| Auth password | `keygrain-strengthen:<email>` | `email:32:keygrain-auth` | `:keygrain-auth` |
+| Encryption key | `keygrain-strengthen:<email>` | `email:keygrain-encryption` | `:keygrain-encryption` |
+| Fingerprint | (N/A) | `keygrain-fingerprint` | (standalone, key=raw secret) |
+| TOTP seed | `keygrain-strengthen:<email>` | `site:email:keygrain-totp` | `:keygrain-totp` |
+| SSH key | `keygrain-ssh:<key_name>` | `key_name:counter:keygrain-ssh` | `:keygrain-ssh` |
+| Wallet | `keygrain-wallet:<wallet_id>` | `wallet_id:words:counter:keygrain-wallet` | `:keygrain-wallet` |
+| CLI local cache | `keygrain-strengthen:<email>` | `email:keygrain-cli-cache` | `:keygrain-cli-cache` |
 
 The `:keygrain-cli-cache` label keys the Python CLI's **local** encrypted cache (`~/.keygrain/accounts/<slug>.kg`). It produces no cross-platform output — it never leaves the machine and is not part of any client's synced data — so it has no test vector. It is registered here for collision-prevention and documentation completeness.
 
-**Collision-free guarantee:** Each derivation ends with a unique literal suffix that is not a valid value for any other derivation's terminal field. Password messages end with a decimal integer; all other messages end with a non-numeric string. The named suffixes are all distinct.
+**Collision-free guarantee:** Each derivation ends with a unique literal suffix that is not a valid value for any other derivation's terminal field. Password messages end with a decimal integer; all other messages end with a non-numeric string. The named suffixes are all distinct. Furthermore, SSH and HD wallet derivations use domain-separated Argon2id salts (`keygrain-ssh:<name>` and `keygrain-wallet:<id>`), ensuring independent strengthened keys.
+
+### 14.1 Cryptographic Independence & Non-Coupling Invariants
+
+All implementations across all platforms MUST adhere to these strict invariants:
+
+1. **Email-Coupled Derivations:**
+   Only Passwords, Sync Auth credentials, Sync Encryption, Local Storage, and TOTP seeds are bound to the account email. Their Argon2id salt is strictly `UTF-8("keygrain-strengthen:" + lowercase(email))`.
+2. **SSH Keypair Independence:**
+   SSH key derivation is strictly decoupled from the account email.
+   - Salt: `UTF-8("keygrain-ssh:" + lowercase(key_name))`
+   - Message: `UTF-8(lowercase(key_name) + ":" + decimal(counter) + ":keygrain-ssh")`
+   - Comment: Defaults to `lowercase(key_name)`
+   - Implementations MUST NOT include email in the salt, HMAC message, or cryptographic derivation.
+3. **HD Wallet Seed Independence:**
+   HD wallet derivation is strictly decoupled from both the account email and blockchain ecosystem.
+   - Salt: `UTF-8("keygrain-wallet:" + lowercase(wallet_id))`
+   - Message: `UTF-8(lowercase(wallet_id) + ":" + decimal(words) + ":" + decimal(counter) + ":keygrain-wallet")`
+   - Derivation produces a standard 12 or 24-word BIP-39 mnemonic seed phrase for disaster recovery. It does NOT generate BIP-32/BIP-44 multi-account wallet hierarchies, key trees, or addresses.
+   - Implementations MUST NOT include email or chain in the salt, HMAC message, or cryptographic derivation.
+4. **Independent Argon2id Strengthening:**
+   Implementations MUST NOT reuse an email-strengthened key for SSH or Wallet derivations. Each domain uses independent Argon2id strengthening with its own domain-isolated salt.

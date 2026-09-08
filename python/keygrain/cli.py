@@ -51,27 +51,16 @@ def _cmd_password(args):
 
 
 def _cmd_ssh(args):
-    email = args.email or os.environ.get("KEYGRAIN_EMAIL")
-    if not email:
-        try:
-            email = cache_mod.resolve_account()
-        except cache_mod.AmbiguousAccountError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
-    if not email:
-        print("Error: Email address required. Specify email or set KEYGRAIN_EMAIL.", file=sys.stderr)
-        sys.exit(1)
-
     secret = _get_secret(args.secret_env)
     try:
         seed, pubkey = derive_ssh_keypair(
-            secret, email, key_name=args.name, counter=args.counter
+            secret, key_name=args.name, counter=args.counter
         )
     except ValueError as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
 
-    comment = f"{email.lower()}:{args.name.lower()}"
+    comment = args.name.lower()
 
     if args.agent:
         sock = os.environ.get("SSH_AUTH_SOCK", "")
@@ -94,23 +83,12 @@ def _cmd_ssh(args):
 def _cmd_wallet(args):
     # --path doesn't need secret or confirmation
     if args.path:
-        chain = args.chain.lower()
+        chain = args.chain.lower() if args.chain else "bitcoin"
         if chain not in SUPPORTED_CHAINS:
             print(f"Error: Unsupported chain {chain!r}.", file=sys.stderr)
             sys.exit(1)
         print(BIP44_PATHS[chain])
         return
-
-    email = args.email or os.environ.get("KEYGRAIN_EMAIL")
-    if not email:
-        try:
-            email = cache_mod.resolve_account()
-        except cache_mod.AmbiguousAccountError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
-    if not email:
-        print("Error: Email address required. Specify email or set KEYGRAIN_EMAIL.", file=sys.stderr)
-        sys.exit(1)
 
     secret = _get_secret(args.secret_env)
 
@@ -138,13 +116,15 @@ def _cmd_wallet(args):
     else:
         chosen_format = "mnemonic"
 
+    words = getattr(args, "words", 24) or 24
+
     try:
         entropy = derive_wallet_entropy(
-            secret, email, wallet_name=args.name, chain=args.chain, counter=args.counter
+            secret, wallet_id=args.name, words=words, counter=args.counter
         )
         # Double-derivation check
         entropy2 = derive_wallet_entropy(
-            secret, email, wallet_name=args.name, chain=args.chain, counter=args.counter
+            secret, wallet_id=args.name, words=words, counter=args.counter
         )
         if entropy != entropy2:
             print("CRITICAL: Double-derivation mismatch.", file=sys.stderr)
@@ -155,14 +135,14 @@ def _cmd_wallet(args):
             return
 
         mnemonic = derive_wallet_mnemonic(
-            secret, email, wallet_name=args.name, chain=args.chain, counter=args.counter
+            secret, wallet_id=args.name, words=words, counter=args.counter
         )
         seed = mnemonic_to_seed(mnemonic)
 
         if chosen_format == "seed":
             print(seed.hex())
         elif chosen_format == "json":
-            chain_lower = args.chain.lower()
+            chain_lower = args.chain.lower() if args.chain else "bitcoin"
             payload = {
                 "version": "keygrain-bip39-v1",
                 "wallet_id": args.name.lower(),
@@ -177,10 +157,11 @@ def _cmd_wallet(args):
             }
             print(json.dumps(payload, indent=2))
         elif chosen_format in ("sparrow", "electrum"):
+            chain_lower = args.chain.lower() if args.chain else "bitcoin"
             out = f"""# Keygrain Universal Wallet Export
 # App Format: Sparrow / Electrum Keystore
 # Wallet ID: {args.name.lower()}
-# Chain: {args.chain.lower()}
+# Chain: {chain_lower}
 # Counter: {args.counter}
 
 keystore:
@@ -190,15 +171,16 @@ keystore:
 """
             print(out.strip())
         elif chosen_format == "metamask":
-            words = mnemonic.split()
+            words_list = mnemonic.split()
             out = f"""# Import as Secret Recovery Phrase (SRP)
-# Word Count: {len(words)}
+# Word Count: {len(words_list)}
 
 {mnemonic}
 """
             print(out.strip())
         else:
-            _display_mnemonic(mnemonic, args.chain.lower(), args.name.lower(), args.counter)
+            chain_lower = args.chain.lower() if args.chain else "bitcoin"
+            _display_mnemonic(mnemonic, chain_lower, args.name.lower(), args.counter)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -213,14 +195,15 @@ def _display_mnemonic(mnemonic: str, chain: str, wallet_name: str, counter: int)
     print(f"\nChain:        {chain}")
     print(f"Wallet:       {wallet_name}")
     print(f"Counter:      {counter}")
-    print(f"BIP-44 Path:  {BIP44_PATHS[chain]}")
-    print(f"\nMnemonic (24 words):")
+    print(f"BIP-44 Path:  {BIP44_PATHS.get(chain, '')}")
+    print(f"\nMnemonic ({len(words)} words):")
     print("\u250c" + "\u2500" * 55 + "\u2510")
-    for row in range(6):
+    num_rows = len(words) // 4
+    for row in range(num_rows):
         col1 = f"{row+1:2d}. {words[row]:<12}"
-        col2 = f"{row+7:2d}. {words[row+6]:<12}"
-        col3 = f"{row+13:2d}. {words[row+12]:<12}"
-        col4 = f"{row+19:2d}. {words[row+18]:<10}"
+        col2 = f"{row+num_rows+1:2d}. {words[row+num_rows]:<12}"
+        col3 = f"{row+num_rows*2+1:2d}. {words[row+num_rows*2]:<12}"
+        col4 = f"{row+num_rows*3+1:2d}. {words[row+num_rows*3]:<10}"
         print(f"\u2502 {col1}{col2}{col3}{col4} \u2502")
     print("\u2514" + "\u2500" * 55 + "\u2518")
     print("\nImport this mnemonic into your wallet software to verify addresses.")
@@ -602,11 +585,11 @@ def _get_ssh(service, secret, args):
     key_name = ssh["key_name"]
     counter = ssh.get("counter", 1) or 1
     try:
-        seed, pubkey = derive_ssh_keypair(secret, service["email"], key_name=key_name, counter=counter)
+        seed, pubkey = derive_ssh_keypair(secret, key_name=key_name, counter=counter)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
-    comment = f"{service['email'].lower()}:{key_name.lower()}"
+    comment = key_name.lower()
     if args.agent:
         sock = os.environ.get("SSH_AUTH_SOCK", "")
         if not sock or not os.path.exists(sock):
@@ -684,7 +667,6 @@ def main():
         _build_password_parser(pw_parser)
 
         ssh_parser = subparsers.add_parser("ssh", help="Derive an SSH key")
-        ssh_parser.add_argument("email", nargs="?", default=None, help="Email address (optional if KEYGRAIN_EMAIL or cache exists)")
         ssh_parser.add_argument("--name", required=True, help="Key name (e.g. github, work-servers)")
         ssh_parser.add_argument("--counter", type=int, default=1, help="Rotation counter (default: 1)")
         ssh_parser.add_argument("--private", action="store_true", help="Output private key (OpenSSH PEM)")
@@ -692,9 +674,9 @@ def main():
         ssh_parser.add_argument("--secret-env", default="KEYGRAIN_SECRET", help="Env var holding the master secret")
 
         wallet_parser = subparsers.add_parser("wallet", help="Derive a wallet mnemonic")
-        wallet_parser.add_argument("email", nargs="?", default=None, help="Email address (optional if KEYGRAIN_EMAIL or cache exists)")
         wallet_parser.add_argument("--name", required=True, help="Wallet name (e.g. personal, savings)")
-        wallet_parser.add_argument("--chain", required=True, help=f"Chain ({', '.join(sorted(SUPPORTED_CHAINS))})")
+        wallet_parser.add_argument("--chain", default="bitcoin", help=f"Chain ({', '.join(sorted(SUPPORTED_CHAINS))})")
+        wallet_parser.add_argument("--words", type=int, default=24, choices=[12, 24], help="Word count (12 or 24, default: 24)")
         wallet_parser.add_argument("--counter", type=int, default=1, help="Rotation counter (default: 1)")
         wallet_parser.add_argument("--format", "--export", dest="export_format", choices=["mnemonic", "seed", "entropy", "raw", "json", "sparrow", "electrum", "metamask"], default=None, help="Output format (mnemonic, seed, entropy, json, sparrow, electrum, metamask)")
         wallet_parser.add_argument("--raw", action="store_true", help="Output raw 32-byte entropy as hex (same as --format entropy)")

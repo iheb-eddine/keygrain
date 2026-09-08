@@ -29,8 +29,8 @@
         "updated_at": 1004
       }
     ],
-    "encrypted_blob": "S+tO2MnEmz6SbZ5Agxs3ijzb4JOj2ZDAuUIaCf/mJsOWl85lkOCKYem9mr0ida0AlpuiaNdJmq/uaWt+Yz06w4s4oiklrxOKqXk3jf9z1dp2fxhB1okgKkOAVSa0wOG6JhbpLOy+bWnFElemmTcNdJfbsn4t78Ut4PSsq0VZVpKjjz78Df+0lBAVmThdVNWAsy5RZJH21vA8qlevGWLZMGTlyLdZDuYgW0Aji2uG/GTjvSfNZRVXwcgrskOWaSGK2Ram78kQpL1JgXzF5/kKM2of16OJdd4dbFMqLkSle6HItCGFANESwNGEHBoO6b8rP0oJo1dp64VQPG89z2e+VDQPgJGCKm+qDk7n9NQrgZetrMUllAdIIYNEbJ4ZUvhdwCEpJe362R+o+Za+2JR6/pEqSVc7tG0RA/UY9H363w2VW9JpmUH2cBUXimLieoHTnjdB3T5iaUS9m5I5uy3v/dii4GAZzvf713QKZnLsZfyc6lnrWmkyIPYEpukGY6ukIXW/8NtGMRIvF+nFPGJhYpMj4KAR3gz2WaPGiVcuR0xOZW9Zm0jwcjYAF+Np8Wn/FNhwcpJmuyhsd7L1WG6EwYKBABZC2yXUPJAhDwAxvQ4pvWyHw5SZdffJ8c4bSFzHs82cLd4JimXTQDF5h0DxV6+jlSpgEhjbdtCihn1CbE+jOQ/c7GMGRxa10Ph1ILpk4FN0pEr4cc1CH7C0cd78ZMZUXUIqjCia0Ex+bZbThWVhmilqnzjqUakdThppLlMQNUvfWhpYPZJz7vUczPJ2Xp6hYHA0TA7Ayn8IbKvn/OyESLoygH+5nRPiNJhnqhyZ5Ho4xcripEK27qM+SPaJCf0+AMsYHQW3ocMQBpOeGKW4AE2anaJtQmhhcBHtqS6q35mlLY9GEOjm1pJWW0dko53KGeYkoD/b42/08xmdXplZetwJm0ut3WhtufQQ/Fx2FGxAELqXzuyRwLV9irgCOFYZSdI=",
-    "checksum": "8ca7cb321bdeb3bee84d6992d1a46db38b853ada2b9a54e45defbdb4fb9af40c"
+    "encrypted_blob": "tCMljBTZnkVSHMbvkovWizoY8Z9IrWDwQ0ELKjyiEoSdYMF1Sg1msUG0fJcDWm593sk404Fy+ejAbGaw/sqh6iUktSEMChd8hiSGAtrnewtUsamwheKsKInKbAbt2f6b+d7O9Z/s9i33lj3Od9eDy9LB08KSqxR4dfoM5skgUt+2RuscqlRBS5RgltnMmBBUg8HOc7IF5CZCYdVNTwSrKRPPbHEGvUQYJ1FUmoCEUY4gk3QUo/r2U3lFGb3fjgLpH8HJ6a0ENiBUT4s8FePF5v9ojHwDYtP0P3Ues+XAkppQgF9NgolJhENUnAMvyI2R4uqnNpGoq2rHqMGIf028qMwSx5gEKH4l72Bx9qVEMDED23zfkQa39wPQZ7tpS25nG0s+07ecwnur5u/+FvQHgFWgLCb5qJRWiV/m/P8jQDCXNTnXMT/WNabCeIpXvu8EK/CEuy+WW1CBu7tQs+VV5b7D7YEyy0TGktwlck/cXN3iAmlXzhVnn06AdBJC+sgGnTB6lpZbRfLqDLWZe/BA+Xg4kNK9kVOQ4dBNh85qD9oUWi0934P4EQlkJsPTCzTJFEFAo8a4VmCdKPkct5AURGifuYuqFtYxxCP7u+6nplQ1ZOSwK3AWFsqBtZdqVN70OP2p9K8uZG3hHhMjejrRdIxtB4B1tgIAmIQdrwt82vEQeWo4SgWoeGS1UJvtW8bC/6KEvyGXKdKeSr2AkQ9HbU2hkXAaY4vAWBRwPbbC5/pieWJInwoXWanKEnKkJHX507ZCNGS3hFxZCRqRdEqpKCUuGfR1ozCbFv4/IH4HA5ouf441BxEZPdA59+x8uKi+X1HSaoNitGNFCYvJq1lo7M2uMSFiDsys9K0SKj2IBQNLzxFEv1C469xSvOlDIpCMlwWuZN+662DlsAqbBrSl47IB12ZLBYVZdcR3TW02rM/Nw+Glpvo3lDnYVXm7DAEU1k/zxORjRdbMhc6V+V21WU7IhaU=",
+    "checksum": "8a5a957ca79db356d462e7a76ae2012fab5fc0ca47985aea50ec94ed4775b947"
   },
   "services": [
     {
@@ -99,7 +99,7 @@
         "counter": 1
       },
       "expected": {
-        "ssh_authorized_keys": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDrqt6ZRgU8PMEi5isIrrVlfirpXZoZTj4jcFac+7aR/ test-cli@keygrain.example:github"
+        "ssh_authorized_keys": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN0DA4Ptjns2gH3meDQb2rBgbRczb/ZL9m9GwRKWSbAR github"
       }
     }
   ]

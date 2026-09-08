@@ -13,8 +13,8 @@ pip install keygrain
 ```bash
 export KEYGRAIN_SECRET="your-master-secret"
 keygrain me@example.com --site github.com
-keygrain ssh me@example.com --name github
-keygrain wallet me@example.com --name savings --chain bitcoin
+keygrain ssh --name github
+keygrain wallet --name savings --chain bitcoin
 ```
 
 ## Sync + Local Cache (read-only)

@@ -96,9 +96,9 @@ const script = `(async () => {
       expected.totp_seed_hex = hex(seed);
     } else if (d.kind === 'ssh') {
       svc.ssh = d.ssh;
-      const { publicKey } = await deriveSshKeypair(secret, d.email,
+      const { publicKey } = await deriveSshKeypair(secret,
         { keyName: d.ssh.key_name, counter: d.ssh.counter });
-      const comment = d.email.toLowerCase() + ':' + d.ssh.key_name.toLowerCase();
+      const comment = d.ssh.key_name.toLowerCase();
       expected.ssh_authorized_keys = formatAuthorizedKeys(publicKey, comment);
     }
     svc.expected = expected;

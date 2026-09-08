@@ -404,8 +404,8 @@ private fun SshItemCard(
                         scope.launch {
                             try {
                                 val line = withContext(Dispatchers.Default) {
-                                    val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), item.email, item.keyName, item.counter)
-                                    val comment = "${item.email.lowercase()}:${item.keyName.lowercase()}"
+                                    val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), item.keyName, item.counter)
+                                    val comment = item.keyName.lowercase()
                                     SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
                                 }
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -453,8 +453,8 @@ private fun SshViewerDialog(
     LaunchedEffect(item) {
         withContext(Dispatchers.Default) {
             val start = System.currentTimeMillis()
-            val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), item.email, item.keyName, item.counter)
-            val comment = "${item.email.lowercase()}:${item.keyName.lowercase()}"
+            val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), item.keyName, item.counter)
+            val comment = item.keyName.lowercase()
             val line = SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
 
             // SHA256 Fingerprint
@@ -683,9 +683,9 @@ private fun SshViewerDialog(
             text = { Text("Your OpenSSH private key allows direct authentication. Make sure no one is watching your screen. Key will be cleared automatically.") },
             confirmButton = {
                 val onRevealKey: () -> Unit = {
-                    val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), item.email, item.keyName, item.counter)
+                    val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), item.keyName, item.counter)
                     try {
-                        val comment = "${item.email.lowercase()}:${item.keyName.lowercase()}"
+                        val comment = item.keyName.lowercase()
                         pemPrivateKey = SshEngine.formatOpensshPrivateKey(kp.seed, kp.publicKey, comment)
                     } finally {
                         kp.seed.fill(0)

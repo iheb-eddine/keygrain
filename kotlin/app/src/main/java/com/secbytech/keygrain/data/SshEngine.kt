@@ -11,17 +11,16 @@ data class SshKeypair(
 object SshEngine {
     fun deriveSshKeypair(
         secret: ByteArray,
-        email: String,
         keyName: String,
         counter: Int = 1
     ): SshKeypair {
         require(keyName.isNotEmpty()) { "keyName must not be empty" }
         require(!keyName.contains(Regex("\\s"))) { "keyName must not contain whitespace" }
         require(counter >= 1) { "counter must be >= 1" }
-        require(!email.contains(Regex("[\\x00-\\x1f\\x7f]"))) { "email must not contain control characters" }
 
-        val strengthened = Keygrain.strengthenSecret(secret, email)
-        val message = "${email.lowercase()}:${keyName.lowercase()}:$counter:keygrain-ssh".toByteArray(Charsets.UTF_8)
+        val cleanName = keyName.lowercase()
+        val strengthened = Keygrain.strengthenWithSalt(secret, "keygrain-ssh:$cleanName")
+        val message = "$cleanName:$counter:keygrain-ssh".toByteArray(Charsets.UTF_8)
         val seed = Keygrain.hmacSha256(strengthened, message)
 
         val privateKey = Ed25519PrivateKeyParameters(seed, 0)

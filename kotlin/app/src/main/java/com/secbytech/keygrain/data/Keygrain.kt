@@ -46,14 +46,14 @@ object Keygrain {
             }
         }
 
-    fun strengthenSecret(secret: ByteArray, email: String): ByteArray = synchronized(cacheLock) {
-        val emailLower = email.lowercase()
-        strengthenCache[emailLower]?.let { cached ->
+    fun strengthenWithSalt(secret: ByteArray, saltString: String): ByteArray = synchronized(cacheLock) {
+        val cacheKey = saltString
+        strengthenCache[cacheKey]?.let { cached ->
             if (cached.secret.contentEquals(secret)) {
                 return cached.result.copyOf()
             }
         }
-        val salt = "keygrain-strengthen:$emailLower".toByteArray(Charsets.UTF_8)
+        val salt = saltString.toByteArray(Charsets.UTF_8)
         val params = Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
             .withSalt(salt)
             .withIterations(3)
@@ -64,13 +64,18 @@ object Keygrain {
         generator.init(params)
         val result = ByteArray(32)
         generator.generateBytes(secret, result)
-        // Insert; zero any previous entry stored under this email (e.g. secret changed).
-        val previous = strengthenCache.put(emailLower, StrengthenEntry(secret.copyOf(), result))
+        // Insert; zero any previous entry stored under this key (e.g. secret changed).
+        val previous = strengthenCache.put(cacheKey, StrengthenEntry(secret.copyOf(), result))
         if (previous != null) {
             previous.secret.fill(0)
             previous.result.fill(0)
         }
         return result.copyOf()
+    }
+
+    fun strengthenSecret(secret: ByteArray, email: String): ByteArray {
+        val emailLower = email.lowercase()
+        return strengthenWithSalt(secret, "keygrain-strengthen:$emailLower")
     }
 
     fun clearStrengthenCache() = synchronized(cacheLock) {
@@ -82,7 +87,7 @@ object Keygrain {
     }
 
     fun hasStrengthenedKey(secret: ByteArray, email: String): Boolean = synchronized(cacheLock) {
-        val cached = strengthenCache[email.lowercase()] ?: return false
+        val cached = strengthenCache["keygrain-strengthen:${email.lowercase()}"] ?: return false
         return cached.secret.contentEquals(secret)
     }
 

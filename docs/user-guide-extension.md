@@ -55,14 +55,27 @@ To exit demo mode, click the 🔒 lock button.
 
 ---
 
-## Adding a Service
+## Main Interface & Tabs
 
-1. Click the **＋** button at the bottom
-2. Fill in:
+Once unlocked, the main screen is organized into three tabs:
+
+- **Logins:** Your saved website logins and passwords. Use this tab for web browsing, credential autofill, and password generation.
+- **SSH Keys:** Standalone Ed25519 SSH keypairs derived deterministically from your master secret (no email coupling). View authorized_keys public keys or copy private keys.
+- **Wallets:** Deterministic BIP-39 cryptocurrency recovery mnemonics (12 or 24 words).
+
+Use the search bar at the top to filter items across the active tab.
+
+---
+
+## Adding a Service (Logins Tab)
+
+1. Ensure the **Logins** tab is selected
+2. Click the **＋** button at the bottom
+3. Fill in:
    - **Service name** — e.g., "GitHub" or "netflix.com"
    - **Site** — the website domain (e.g., "github.com")
    - **Email** — the email you use to log in to that site
-3. Click **Add**
+4. Click **Add**
 
 ### Auto-Detection
 
@@ -82,6 +95,35 @@ Each service in your list shows a colored bar indicating password strength:
 - **Green** = Strong (20+ characters)
 - **Yellow** = Good (13–19 characters)
 - **Orange** = Fair (8–12 characters)
+
+---
+
+## SSH Keys & Wallets
+
+### SSH Keys Tab
+
+Keygrain derives Ed25519 SSH keys directly from your master secret without coupling to an account email:
+1. Switch to the **SSH Keys** tab.
+2. View or add named SSH keys (e.g., `github`, `work-servers`).
+3. Click to view the keypair:
+   - **Public Key:** Copy the `ssh-ed25519` string or download the `.pub` file for `authorized_keys`.
+   - **Private Key:** Click **Show on screen** or **Copy Private Key** / **Download Key** in OpenSSH PEM format.
+
+### Wallets Tab
+
+Keygrain derives disaster-recovery BIP-39 seed mnemonics (12 or 24 words) directly from your master secret:
+1. Switch to the **Wallets** tab.
+2. Select your wallet and view its recovery phrase.
+3. Keep this strictly for emergency disaster recovery.
+
+---
+
+## Offline Mode & Local Persistence
+
+You can toggle **Offline mode** from the **☰** menu:
+- When offline mode is active, Keygrain never contacts the remote sync server.
+- All service, SSH, and wallet metadata remain encrypted and safely stored in local browser storage (`chrome.storage.local`).
+- You can freely use all derivation features and generate passwords completely off-grid.
 
 ---
 
@@ -215,8 +257,9 @@ Sync will retry automatically when the issue resolves.
 
 ## Migrating from Another Password Manager
 
-If you're switching from another password manager:
+> **Notice:** Migration from other password managers is temporarily disabled while a revamped, secure import engine is prepared for an upcoming release.
 
+When enabled:
 1. Click the **☰** menu button
 2. Select **Migrate from another manager**
 3. Follow the guided process to import your existing passwords

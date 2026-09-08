@@ -47,44 +47,11 @@ object WalletEngine {
         require(words == 12 || words == 24) { "words must be 12 or 24, got $words" }
         require(counter >= 1) { "counter must be >= 1" }
 
-        val salt = "keygrain-wallet:$wid".toByteArray(Charsets.UTF_8)
-        val params = org.bouncycastle.crypto.params.Argon2Parameters.Builder(org.bouncycastle.crypto.params.Argon2Parameters.ARGON2_id)
-            .withSalt(salt)
-            .withIterations(3)
-            .withMemoryAsKB(65536)
-            .withParallelism(1)
-            .build()
-        val generator = org.bouncycastle.crypto.generators.Argon2BytesGenerator()
-        generator.init(params)
-        val strengthened = ByteArray(32)
-        generator.generateBytes(secret, strengthened)
-
+        val strengthened = Keygrain.strengthenWithSalt(secret, "keygrain-wallet:$wid")
         val message = "$wid:$words:$counter:keygrain-wallet".toByteArray(Charsets.UTF_8)
         val full = Keygrain.hmacSha256(strengthened, message)
         val entropyBytes = if (words == 12) 16 else 32
         return full.copyOfRange(0, entropyBytes)
-    }
-
-    fun deriveWalletEntropy(
-        secret: ByteArray,
-        email: String,
-        walletName: String,
-        chain: String,
-        counter: Int = 1
-    ): ByteArray {
-        require(secret.isNotEmpty()) { "secret must not be empty" }
-        require(email.isNotEmpty()) { "email must not be empty" }
-        val wn = walletName.lowercase()
-        require(wn.isNotEmpty() && WALLET_NAME_RE.matches(wn)) {
-            "walletName must match [a-z0-9\\-]+, got: \"$wn\""
-        }
-        val ch = chain.lowercase()
-        require(ch in SUPPORTED_CHAINS) { "Unsupported chain: $ch" }
-        require(counter >= 1) { "counter must be >= 1" }
-
-        val strengthened = Keygrain.strengthenSecret(secret, email)
-        val message = "${email.lowercase()}:$wn:$ch:$counter:keygrain-wallet".toByteArray(Charsets.UTF_8)
-        return Keygrain.hmacSha256(strengthened, message)
     }
 
     fun entropyToMnemonic(entropy: ByteArray): String {
@@ -137,21 +104,6 @@ object WalletEngine {
     ): String {
         val entropy1 = deriveWalletEntropy(secret, walletId, words, counter)
         val entropy2 = deriveWalletEntropy(secret, walletId, words, counter)
-        check(entropy1.contentEquals(entropy2)) {
-            "CRITICAL: Double-derivation mismatch in the wallet expansion step."
-        }
-        return entropyToMnemonic(entropy1)
-    }
-
-    fun deriveWalletMnemonic(
-        secret: ByteArray,
-        email: String,
-        walletName: String,
-        chain: String,
-        counter: Int = 1
-    ): String {
-        val entropy1 = deriveWalletEntropy(secret, email, walletName, chain, counter)
-        val entropy2 = deriveWalletEntropy(secret, email, walletName, chain, counter)
         check(entropy1.contentEquals(entropy2)) {
             "CRITICAL: Double-derivation mismatch in the wallet expansion step."
         }

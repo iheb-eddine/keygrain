@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import re
 
-from .derive import strengthen_secret
+from argon2.low_level import hash_secret_raw, Type
 from ._wordlist import WORDLIST, WORDLIST_SHA256
 
 SUPPORTED_CHAINS: set[str] = {
@@ -24,7 +24,7 @@ BIP44_PATHS: dict[str, str] = {
     "avalanche": "m/44'/60'/0'/0/0",
 }
 
-_WALLET_NAME_RE = re.compile(r"^[a-z0-9\-]+$")
+_WALLET_ID_RE = re.compile(r"^[a-z0-9\-]+$")
 
 
 def _verify_wordlist() -> None:
@@ -36,43 +36,58 @@ def _verify_wordlist() -> None:
 
 _verify_wordlist()
 
+_wallet_strengthen_cache: dict[tuple[bytes, str], bytes] = {}
+
+
+def _strengthen_wallet(secret: bytes, wallet_id: str) -> bytes:
+    wallet_id_clean = wallet_id.lower()
+    cache_key = (secret, wallet_id_clean)
+    if cache_key not in _wallet_strengthen_cache:
+        salt = f"keygrain-wallet:{wallet_id_clean}".encode("utf-8")
+        _wallet_strengthen_cache[cache_key] = hash_secret_raw(
+            secret=secret,
+            salt=salt,
+            time_cost=3,
+            memory_cost=65536,
+            parallelism=1,
+            hash_len=32,
+            type=Type.ID,
+        )
+    return _wallet_strengthen_cache[cache_key]
+
 
 def derive_wallet_entropy(
     secret: bytes,
-    email: str,
     *,
-    wallet_name: str,
-    chain: str,
+    wallet_id: str,
+    words: int = 24,
     counter: int = 1,
 ) -> bytes:
-    """Derive 32 bytes of wallet entropy deterministically."""
+    """Derive 16 or 32 bytes of wallet entropy deterministically."""
     if not secret:
         raise ValueError("secret must not be empty")
-    if not email:
-        raise ValueError("email must not be empty")
-    wallet_name = wallet_name.lower()
-    if not wallet_name or not _WALLET_NAME_RE.match(wallet_name):
+    if not wallet_id:
+        raise ValueError("wallet_id must not be empty")
+    clean_id = wallet_id.lower()
+    if not _WALLET_ID_RE.match(clean_id):
         raise ValueError(
-            f"wallet_name must match [a-z0-9\\-]+, got: {wallet_name!r}"
+            f"wallet_id must match [a-z0-9\\-]+, got: {wallet_id!r}"
         )
-    chain = chain.lower()
-    if chain not in SUPPORTED_CHAINS:
-        raise ValueError(
-            f"Unsupported chain {chain!r}. Supported: {sorted(SUPPORTED_CHAINS)}"
-        )
+    if words not in (12, 24):
+        raise ValueError(f"words must be 12 or 24, got {words}")
     if counter < 1:
         raise ValueError("counter must be >= 1")
 
-    email = email.lower()
-    strengthened = strengthen_secret(secret, email)
-    message = f"{email}:{wallet_name}:{chain}:{counter}:keygrain-wallet".encode("utf-8")
-    return hmac.new(strengthened, message, hashlib.sha256).digest()
+    strengthened = _strengthen_wallet(secret, clean_id)
+    message = f"{clean_id}:{words}:{counter}:keygrain-wallet".encode("utf-8")
+    raw = hmac.new(strengthened, message, hashlib.sha256).digest()
+    return raw[:16] if words == 12 else raw
 
 
 def entropy_to_mnemonic(entropy: bytes) -> str:
-    """Convert 32 bytes of entropy to a 24-word BIP-39 mnemonic."""
-    if len(entropy) != 32:
-        raise ValueError(f"entropy must be 32 bytes, got {len(entropy)}")
+    """Convert 16 or 32 bytes of entropy to a 12 or 24-word BIP-39 mnemonic."""
+    if len(entropy) not in (16, 32):
+        raise ValueError(f"entropy must be 16 or 32 bytes, got {len(entropy)}")
     return _entropy_to_mnemonic_general(entropy)
 
 
@@ -141,18 +156,17 @@ def mnemonic_to_seed(mnemonic: str, passphrase: str = "") -> bytes:
 
 def derive_wallet_mnemonic(
     secret: bytes,
-    email: str,
     *,
-    wallet_name: str,
-    chain: str,
+    wallet_id: str,
+    words: int = 24,
     counter: int = 1,
 ) -> str:
-    """High-level: derive a 24-word BIP-39 mnemonic with double-derivation check."""
+    """High-level: derive a 12 or 24-word BIP-39 mnemonic with double-derivation check."""
     entropy1 = derive_wallet_entropy(
-        secret, email, wallet_name=wallet_name, chain=chain, counter=counter
+        secret, wallet_id=wallet_id, words=words, counter=counter
     )
     entropy2 = derive_wallet_entropy(
-        secret, email, wallet_name=wallet_name, chain=chain, counter=counter
+        secret, wallet_id=wallet_id, words=words, counter=counter
     )
     if entropy1 != entropy2:
         raise RuntimeError(

@@ -128,16 +128,34 @@ password = buildPassword(stream, length, symbols)
 
 The `symbols` charset affects output mapping but is NOT part of the HMAC input.
 
-### 3.2 Key Derivation Tree
+### 3.2 Key Derivation Trees (Spec v5 Domain Separation)
 
-All keys derive from the same Argon2id-strengthened secret, differentiated by purpose suffix:
+Per [SPEC.md §14](../SPEC.md#14-domain-separation), Keygrain enforces three completely isolated cryptographic derivation domains. No keys or strengthened outputs are shared across these domains:
 
-| Key | Derivation | Purpose |
-|-----|-----------|---------|
-| Lookup ID | `hex(HMAC-SHA256(strengthened, email + ":keygrain-id"))` | Server identity (64-char hex) |
-| Auth Password | `derivePassword(strengthened, email + ":32:keygrain-auth")` | HTTP Basic auth (32-char password) |
-| Sync Encryption Key | `HMAC-SHA256(strengthened, email + ":keygrain-encryption")` | AES-256-GCM key for sync blob |
-| Local Storage Key | `HMAC-SHA256(strengthened, email + ":keygrain-local-storage")` | AES-256-GCM key for local encrypted storage (extension) |
+#### Domain 1: Passwords & Sync Infrastructure (Email-Coupled)
+- **Salt:** `UTF-8("keygrain-strengthen:" + lowercase(email))`
+- **Strengthened Key:** `Argon2id(secret, salt)`
+
+| Key / Purpose | HMAC Message | Target / Suffix |
+|---|---|---|
+| Per-Password | `site:email:length:counter` | Terminal decimal integer |
+| Sync Auth ID | `email:keygrain-id` | `:keygrain-id` (64-char hex) |
+| Sync Auth Password | `email:32:keygrain-auth` | `:keygrain-auth` (32-char password) |
+| Sync Encryption Key | `email:keygrain-encryption` | `:keygrain-encryption` (AES-256-GCM) |
+| Local Storage Key | `email:keygrain-local-storage` | `:keygrain-local-storage` (AES-256-GCM, extension) |
+| TOTP Seed | `site:email:keygrain-totp` | `:keygrain-totp` (RFC 6238 seed) |
+
+#### Domain 2: SSH Keypair Derivation (Email-Decoupled)
+- **Salt:** `UTF-8("keygrain-ssh:" + lowercase(key_name))`
+- **Strengthened Key:** `Argon2id(secret, salt)`
+- **HMAC Message:** `lowercase(key_name) + ":" + counter + ":keygrain-ssh"`
+- **Output:** 32-byte Ed25519 seed → public key & private key PEM. Comment defaults to `lowercase(key_name)`. Completely decoupled from account email.
+
+#### Domain 3: HD Wallet Seed Derivation (Email- & Chain-Decoupled)
+- **Salt:** `UTF-8("keygrain-wallet:" + lowercase(wallet_id))`
+- **Strengthened Key:** `Argon2id(secret, salt)`
+- **HMAC Message:** `lowercase(wallet_id) + ":" + words + ":" + counter + ":keygrain-wallet"`
+- **Output:** 12 or 24-word BIP-39 mnemonic phrase for disaster recovery. Does NOT generate BIP-32/BIP-44 multi-account wallet hierarchies, key derivation trees, or addresses. Completely decoupled from account email and blockchain chain identifiers.
 
 ### 3.3 Sync Flow
 

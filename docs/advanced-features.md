@@ -2,7 +2,7 @@
 
 ## SSH Key Derivation
 
-Keygrain derives deterministic Ed25519 SSH keypairs from your master secret. Same inputs always produce the same key — no key files to manage or back up.
+Keygrain derives deterministic Ed25519 SSH keypairs from your master secret without coupling to an account email. Same inputs always produce the same key — no key files to manage or back up.
 
 **Algorithm:** See [SPEC.md §12](../SPEC.md#12-ssh-key-derivation).
 
@@ -10,24 +10,27 @@ Keygrain derives deterministic Ed25519 SSH keypairs from your master secret. Sam
 
 | Parameter | Constraints | Role in derivation |
 |-----------|-------------|-------------------|
-| `email` | Non-empty, lowercased | Part of HMAC message |
 | `key_name` | Non-empty, no whitespace, lowercased | Scopes keys per service (e.g. `github`, `work-servers`) |
 | `counter` | ≥ 1 (default: 1) | Enables key rotation |
 
-Formula: `HMAC-SHA256(strengthened_key, email:key_name:counter:keygrain-ssh)` → 32-byte Ed25519 seed.
+Formula:
+- Salt: `UTF-8("keygrain-ssh:" + lowercase(key_name))`
+- Strengthening: `Argon2id(secret, salt, m=65536, t=3, p=1, len=32)`
+- Message: `UTF-8(lowercase(key_name) + ":" + counter + ":keygrain-ssh")`
+- Seed: `HMAC-SHA256(strengthened, message)` → 32-byte Ed25519 seed.
 
 ### Authorized Keys Format
 
 ```
-ssh-ed25519 <base64-blob> <email>:<key_name>
+ssh-ed25519 <base64-blob> <key_name>
 ```
 
 Example:
 
 ```bash
 export KEYGRAIN_SECRET="my-master-secret"
-keygrain ssh me@example.com --name github
-# ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... me@example.com:github
+keygrain ssh --name github
+# ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... github
 ```
 
 Paste the output directly into `~/.ssh/authorized_keys` or your Git hosting provider.
@@ -38,7 +41,7 @@ Increment `--counter` to derive a completely uncorrelated new key:
 
 ```bash
 export KEYGRAIN_SECRET="my-master-secret"
-keygrain ssh me@example.com --name github --counter 2
+keygrain ssh --name github --counter 2
 ```
 
 Use cases: key compromise response, periodic rotation policy, separate keys per machine.
@@ -47,7 +50,7 @@ Use cases: key compromise response, periodic rotation policy, separate keys per 
 
 - **Git hosting:** Derive a key per provider (`--name github`, `--name gitlab`)
 - **Server access:** Derive per-host keys (`--name prod-db`, `--name web-01`)
-- **ssh-agent workflow:** `keygrain ssh me@example.com --name github --agent` — no key files on disk
+- **ssh-agent workflow:** `keygrain ssh --name github --agent` — no key files on disk
 
 ---
 
@@ -55,7 +58,7 @@ Use cases: key compromise response, periodic rotation policy, separate keys per 
 
 > **WARNING:** This feature is for DISASTER RECOVERY ONLY. Keygrain-derived wallets are NOT a substitute for proper wallet backups. If you lose your master secret, derived funds are PERMANENTLY LOST with no recovery path.
 
-Keygrain derives deterministic BIP-39 mnemonics (24 words) from your master secret. The intended use case: recover wallet access if your primary backup (hardware wallet seed, paper backup) is destroyed.
+Keygrain derives deterministic BIP-39 mnemonics directly from your master secret without coupling to an account email or specific blockchain. The intended use case: recover wallet access if your primary backup (hardware wallet seed, paper backup) is destroyed.
 
 **Algorithm:** See [SPEC.md §13](../SPEC.md#13-hd-wallet-derivation).
 
@@ -63,10 +66,15 @@ Keygrain derives deterministic BIP-39 mnemonics (24 words) from your master secr
 
 | Parameter | Constraints | Role in derivation |
 |-----------|-------------|-------------------|
-| `email` | Non-empty, lowercased | Part of HMAC message |
-| `wallet_name` | Matches `[a-z0-9\-]+` | Scopes wallets (e.g. `personal`, `savings`) |
-| `chain` | Must be in supported set | Part of HMAC message |
+| `wallet_name` | Matches `[a-z0-9\-]+`, lowercased | Scopes wallets (e.g. `personal`, `savings`) |
+| `words` | 12 or 24 (default: 24) | Word count |
 | `counter` | ≥ 1 (default: 1) | Enables rotation |
+
+Formula:
+- Salt: `UTF-8("keygrain-wallet:" + lowercase(wallet_name))`
+- Strengthening: `Argon2id(secret, salt, m=65536, t=3, p=1, len=32)`
+- Message: `UTF-8(lowercase(wallet_name) + ":" + words + ":" + counter + ":keygrain-wallet")`
+- Raw Entropy: `HMAC-SHA256(strengthened, message)` (first 16 bytes if 12 words, 32 bytes if 24 words).
 
 ### Supported Chains & BIP-44 Paths
 
@@ -87,7 +95,7 @@ Keygrain derives deterministic BIP-39 mnemonics (24 words) from your master secr
 Query paths without deriving (no master secret needed):
 
 ```bash
-keygrain wallet me@example.com --name personal --chain bitcoin --path
+keygrain wallet --name personal --chain bitcoin --path
 # m/84'/0'/0'/0/0
 ```
 
@@ -95,7 +103,7 @@ keygrain wallet me@example.com --name personal --chain bitcoin --path
 
 ```bash
 export KEYGRAIN_SECRET="my-master-secret"
-keygrain wallet me@example.com --name personal --chain bitcoin --yes-i-understand-the-risks
+keygrain wallet --name personal --chain bitcoin --yes-i-understand-the-risks
 ```
 
 Output: 24-word BIP-39 mnemonic. Import into any compatible wallet software to verify addresses match.
@@ -119,53 +127,25 @@ This is standard BIP-85 — NOT Keygrain-specific derivation. The parent mnemoni
 
 Model B: Keygrain derives a deterministic TOTP seed from your master secret. Use this for self-hosted services where you control the TOTP setup flow.
 
-**Algorithm:** See [SPEC.md §11](../SPEC.md#11-totp-seed-derivation-model-b).
+### Parameters
 
-### How It Works
+| Parameter | Constraints | Role in derivation |
+|-----------|-------------|-------------------|
+| `email` | Non-empty, lowercased | Part of HMAC message |
+| `site` | Normalized domain | Part of HMAC message |
 
 Formula: `HMAC-SHA256(strengthened_key, site:email:keygrain-totp)` → 32-byte seed.
 
-The derived seed is a standard TOTP secret. Register it with your service's 2FA setup, then Keygrain can reproduce the same TOTP codes on any device with your master secret.
-
-### Deriving a TOTP Seed
+Use with standard RFC 6238 TOTP (SHA1, 30s period, 6 digits).
 
 ```bash
 export KEYGRAIN_SECRET="my-master-secret"
 keygrain totp --derive --email me@example.com --site myservice.com
-# Outputs: current 6-digit TOTP code
 ```
 
-To register with a service:
-1. Derive the seed in your code: `derive_totp_seed(secret, email, site)` → 32 bytes
-2. Encode as base32 for the service's TOTP setup
-3. The service stores it; Keygrain re-derives it on demand
+### Model A: Imported Seeds
 
-```python
-import os, base64
-from keygrain.totp import derive_totp_seed
-
-secret = os.environ["KEYGRAIN_SECRET"].encode()
-seed = derive_totp_seed(secret, "me@example.com", "myservice.com")
-base32_seed = base64.b32encode(seed).decode().rstrip("=")
-# Register base32_seed with your service's 2FA setup
-```
-
-### Using Existing TOTP Seeds
-
-For services where you already have a TOTP secret (not derived), use `parse_totp_input`:
-
-```bash
-# Base32 secret
-keygrain totp --seed JBSWY3DPEHPK3PXP
-
-# Hex secret
-keygrain totp --seed 48656c6c6f21deadbeef
-
-# otpauth:// URI (from QR code)
-keygrain totp --seed "otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP&digits=6&period=30"
-```
-
-Supported input formats for `--seed`:
+Model A uses third-party TOTP seeds (from QR codes, manual entry, etc.). Supported formats:
 
 | Format | Detection |
 |--------|-----------|
@@ -181,13 +161,13 @@ Parameters from otpauth:// URIs (digits, period, algorithm) are parsed automatic
 
 ## Domain Separation
 
-All derivation types use unique HMAC message formats ([SPEC.md §14](../SPEC.md#14-domain-separation)):
+All derivation types use unique Argon2id salts and HMAC message formats ([SPEC.md §14](../SPEC.md#14-domain-separation)):
 
-| Derivation | Message format | Unique suffix |
-|------------|---------------|---------------|
-| Password | `site:email:length:counter` | *(ends with decimal integer)* |
-| SSH | `email:key_name:counter:keygrain-ssh` | `:keygrain-ssh` |
-| Wallet | `email:wallet_name:chain:counter:keygrain-wallet` | `:keygrain-wallet` |
-| TOTP | `site:email:keygrain-totp` | `:keygrain-totp` |
+| Derivation | Salt format | Message format | Unique suffix |
+|------------|-------------|----------------|---------------|
+| Password | `keygrain-strengthen:<email>` | `site:email:length:counter` | *(ends with decimal integer)* |
+| SSH | `keygrain-ssh:<key_name>` | `key_name:counter:keygrain-ssh` | `:keygrain-ssh` |
+| Wallet | `keygrain-wallet:<wallet_id>` | `wallet_id:words:counter:keygrain-wallet` | `:keygrain-wallet` |
+| TOTP | `keygrain-strengthen:<email>` | `site:email:keygrain-totp` | `:keygrain-totp` |
 
-Password messages end with a decimal integer; all others end with a non-numeric suffix. This guarantees no two derivation types can collide, even for identical email/site inputs.
+Password messages end with a decimal integer; all others end with a non-numeric suffix. Furthermore, SSH keys and HD wallets use isolated Argon2id salts, ensuring complete cryptographic independence from email-based derivations.

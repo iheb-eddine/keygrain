@@ -86,29 +86,32 @@ graph TD
     SECRET --> ARGON
     SALT --> ARGON
     ARGON --> STRENGTHENED
-
     STRENGTHENED -->|"HMAC-SHA256(Key, site + email + counter)"| PASS["Password Derivation (Rejection Sampling + Shuffle)"]
     STRENGTHENED -->|"HMAC-SHA256(Key, site + email + ':keygrain-totp')"| TOTP["TOTP Seed (RFC 6238 HMAC-SHA1)"]
-    STRENGTHENED -->|"HMAC-SHA256(Key, site + email + ':keygrain-ssh')"| SSH["Ed25519 SSH Keypair"]
-    STRENGTHENED -->|"HMAC-SHA256(Key, site + email + ':keygrain-wallet')"| WALLET["BIP-39 HD Wallet Mnemonic"]
     STRENGTHENED -->|"HMAC-SHA256(Key, email + ':keygrain-local-storage')"| LOCAL_ENC["Local Storage AES-256-GCM Key"]
     STRENGTHENED -->|"HMAC-SHA256(Key, email + ':keygrain-encryption')"| SYNC_ENC["Sync Server AES-256-GCM Key"]
     STRENGTHENED -->|"HMAC-SHA256(Key, email + ':keygrain-id')"| LOOKUP_ID["Sync Lookup ID (SHA-256)"]
     STRENGTHENED -->|"HMAC-SHA256(Key, email + ':keygrain-auth')"| AUTH_PW["Sync Auth Password (bcrypt)"]
+
+    SECRET -->|"Argon2id(secret, 'keygrain-ssh:' + key_name)"| SSH_KEY["SSH Strengthened Key"]
+    SSH_KEY -->|"HMAC-SHA256(SSHKey, key_name + ':' + counter + ':keygrain-ssh')"| SSH["Ed25519 SSH Keypair"]
+
+    SECRET -->|"Argon2id(secret, 'keygrain-wallet:' + wallet_id)"| WALLET_KEY["Wallet Strengthened Key"]
+    WALLET_KEY -->|"HMAC-SHA256(WalletKey, wallet_id + ':' + words + ':' + counter + ':keygrain-wallet')"| WALLET["BIP-39 HD Wallet Mnemonic"]
 ```
 
 ### Domain Separation Table
 
-| Purpose | HMAC-SHA256 Message / Suffix | Algorithm & Output Format |
-| :--- | :--- | :--- |
-| **Password Derivation** | `normalize_site(site) + "\0" + email + "\0" + counter` | Unbiased Rejection Sampling + Fisher-Yates shuffle into selected character set |
-| **TOTP Seed** | `normalize_site(site) + "\0" + email + "\0:keygrain-totp"` | 20-byte seed → Base32 TOTP secret (RFC 6238) |
-| **SSH Keypair** | `normalize_site(site) + "\0" + email + "\0:keygrain-ssh"` | 32-byte seed → RFC 8032 Ed25519 private & OpenSSH public key |
-| **HD Wallet** | `normalize_site(site) + "\0" + email + "\0:keygrain-wallet"` | BIP-39 English 12/24-word mnemonic seed |
-| **Local Storage Encryption** | `email + ":keygrain-local-storage"` | 32-byte key for AES-256-GCM local storage encryption |
-| **Sync Server Encryption** | `email + ":keygrain-encryption"` | 32-byte key for AES-256-GCM payload encryption |
-| **Sync Lookup ID** | `email + ":keygrain-id"` | Hex-encoded identifier for account lookup on sync server |
-| **Sync Authentication** | `email + ":keygrain-auth"` | Password for HTTP Basic Auth with sync server |
+| Purpose | Argon2id Salt / Key | HMAC-SHA256 Message / Suffix | Algorithm & Output Format |
+| :--- | :--- | :--- | :--- |
+| **Password Derivation** | `keygrain-strengthen:<email>` | `site + ":" + email + ":" + length + ":" + counter` | Unbiased Rejection Sampling + Fisher-Yates shuffle into selected character set |
+| **TOTP Seed** | `keygrain-strengthen:<email>` | `site + ":" + email + ":keygrain-totp"` | 20-byte seed → Base32 TOTP secret (RFC 6238) |
+| **SSH Keypair** | `keygrain-ssh:<key_name>` | `key_name + ":" + counter + ":keygrain-ssh"` | 32-byte seed → RFC 8032 Ed25519 private & OpenSSH public key |
+| **HD Wallet** | `keygrain-wallet:<wallet_id>` | `wallet_id + ":" + words + ":" + counter + ":keygrain-wallet"` | BIP-39 English 12/24-word mnemonic seed |
+| **Local Storage Encryption** | `keygrain-strengthen:<email>` | `email + ":keygrain-local-storage"` | 32-byte key for AES-256-GCM local storage encryption |
+| **Sync Server Encryption** | `keygrain-strengthen:<email>` | `email + ":keygrain-encryption"` | 32-byte key for AES-256-GCM payload encryption |
+| **Sync Lookup ID** | `keygrain-strengthen:<email>` | `email + ":keygrain-id"` | Hex-encoded identifier for account lookup on sync server |
+| **Sync Authentication** | `keygrain-strengthen:<email>` | `email + ":keygrain-auth"` | Password for HTTP Basic Auth with sync server |
 
 ---
 

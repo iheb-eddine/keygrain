@@ -73,13 +73,13 @@ keygrain password me@example.com --site github.com --length 24 --counter 2
 export KEYGRAIN_SECRET="my-master-secret"
 
 # Public key (authorized_keys format)
-keygrain ssh me@example.com --name github
+keygrain ssh --name github
 
 # Private key (OpenSSH PEM)
-keygrain ssh me@example.com --name github --private
+keygrain ssh --name github --private
 
 # Add to ssh-agent
-keygrain ssh me@example.com --name work-servers --agent
+keygrain ssh --name work-servers --agent
 ```
 
 | Flag | Default | Description |
@@ -96,22 +96,23 @@ keygrain ssh me@example.com --name work-servers --agent
 export KEYGRAIN_SECRET="my-master-secret"
 
 # 24-word mnemonic (interactive confirmation required)
-keygrain wallet me@example.com --name personal --chain bitcoin
+keygrain wallet --name personal --chain bitcoin
 
 # Skip confirmation (scripts/CI)
-keygrain wallet me@example.com --name personal --chain bitcoin --yes-i-understand-the-risks
+keygrain wallet --name personal --chain bitcoin --yes-i-understand-the-risks
 
 # Raw 32-byte entropy (hex)
-keygrain wallet me@example.com --name personal --chain ethereum --raw --yes-i-understand-the-risks
+keygrain wallet --name personal --chain ethereum --raw --yes-i-understand-the-risks
 
 # BIP-44 path for a chain (no secret needed)
-keygrain wallet me@example.com --name personal --chain solana --path
+keygrain wallet --name personal --chain solana --path
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--name` | *(required)* | Wallet name (lowercase alphanumeric + hyphens) |
-| `--chain` | *(required)* | Chain: bitcoin, ethereum, solana, litecoin, dogecoin, bitcoin-testnet, polkadot, cosmos, avalanche |
+| `--chain` | `bitcoin` | Chain: bitcoin, ethereum, solana, litecoin, dogecoin, bitcoin-testnet, polkadot, cosmos, avalanche |
+| `--words` | 24 | Word count (12 or 24) |
 | `--counter` | 1 | Rotation counter |
 | `--raw` | false | Output raw entropy as hex |
 | `--seed` | false | Output 64-byte BIP-32 seed as hex |
@@ -201,8 +202,8 @@ import os
 from keygrain.ssh import derive_ssh_keypair, format_authorized_keys
 
 secret = os.environ["KEYGRAIN_SECRET"].encode()
-seed, pubkey = derive_ssh_keypair(secret, "me@example.com", key_name="github", counter=1)
-print(format_authorized_keys(pubkey, "me@example.com:github"))
+seed, pubkey = derive_ssh_keypair(secret, key_name="github", counter=1)
+print(format_authorized_keys(pubkey, "github"))
 ```
 
 ### Derive a Wallet Mnemonic
@@ -213,8 +214,8 @@ from keygrain.wallet import derive_wallet_mnemonic
 
 secret = os.environ["KEYGRAIN_SECRET"].encode()
 mnemonic = derive_wallet_mnemonic(
-    secret, "me@example.com",
-    wallet_name="personal", chain="bitcoin", counter=1,
+    secret,
+    wallet_id="personal", chain="bitcoin", counter=1,
 )
 ```
 
@@ -238,7 +239,7 @@ code = generate_totp(seed, int(time.time()), digits=6, period=30)
 ```bash
 export KEYGRAIN_SECRET="my-master-secret"
 for site in github.com gitlab.com aws.amazon.com; do
-  echo "$site: $(keygrain me@example.com --site "$site")"
+  echo "$site: $(keygrain password me@example.com --site "$site")"
 done
 ```
 
@@ -261,10 +262,9 @@ secrets = {
 
 ```bash
 export KEYGRAIN_SECRET="my-master-secret"
-EMAIL="ops@mycompany.com"
 
 for server in web-01 web-02 db-01; do
-  keygrain ssh "$EMAIL" --name "$server" >> ~/.ssh/authorized_keys_fleet
+  keygrain ssh --name "$server" >> ~/.ssh/authorized_keys_fleet
 done
 ```
 

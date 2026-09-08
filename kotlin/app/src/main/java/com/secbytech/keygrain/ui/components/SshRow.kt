@@ -74,8 +74,8 @@ internal fun SshRow(
                 try {
                     val sshCounter = ssh.optInt("counter", 1)
                     val line = withContext(Dispatchers.Default) {
-                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
-                        val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
+                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), sshKeyName, sshCounter)
+                        val comment = sshKeyName.lowercase()
                         SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
                     }
                     copyAndClear(context, clipboardScope, "ssh-pubkey", line)
@@ -99,9 +99,9 @@ internal fun SshRow(
                 try {
                     val sshCounter = ssh.optInt("counter", 1)
                     val pem = withContext(Dispatchers.Default) {
-                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), service.email, sshKeyName, sshCounter)
+                        val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), sshKeyName, sshCounter)
                         try {
-                            val comment = "${service.email.lowercase()}:${sshKeyName.lowercase()}"
+                            val comment = sshKeyName.lowercase()
                             SshEngine.formatOpensshPrivateKey(kp.seed, kp.publicKey, comment)
                         } finally {
                             kp.seed.fill(0)

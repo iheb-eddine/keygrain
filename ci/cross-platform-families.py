@@ -48,14 +48,13 @@ def main():
         )
         out["totp_derived"].append({"index": index, "seed_hex": seed.hex()})
 
-    for index, vector in enumerate(ssh["derivation_vectors"]["vectors"]):
+    for index, vector in enumerate(ssh["vectors"]):
         seed, public_key = derive_ssh_keypair(
-            vector["secret_utf8"].encode(),
-            vector["email"],
+            vector["secret"].encode(),
             key_name=vector["key_name"],
             counter=vector["counter"],
         )
-        comment = f'{vector["email"].lower()}:{vector["key_name"].lower()}'
+        comment = vector["key_name"].lower()
         out["ssh"].append({
             "index": index,
             "seed_hex": seed.hex(),
@@ -66,9 +65,8 @@ def main():
     for vector in wallet["derivation_vectors"]:
         entropy = derive_wallet_entropy(
             vector["secret"].encode(),
-            vector["email"],
-            wallet_name=vector["wallet_name"],
-            chain=vector["chain"],
+            wallet_id=vector["wallet_id"],
+            words=vector.get("words", 24),
             counter=vector["counter"],
         )
         out["wallet"].append({
@@ -102,11 +100,10 @@ def main():
         elif "ssh" in service:
             _, public_key = derive_ssh_keypair(
                 sync["secret"].encode(),
-                service["email"],
                 key_name=service["ssh"]["key_name"],
                 counter=service["ssh"]["counter"],
             )
-            comment = f'{service["email"].lower()}:{service["ssh"]["key_name"].lower()}'
+            comment = service["ssh"]["key_name"].lower()
             item["ssh_authorized_keys"] = format_authorized_keys(public_key, comment)
         else:
             raise ValueError(f"Unsupported sync service shape at index {index}")

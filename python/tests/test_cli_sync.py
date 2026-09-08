@@ -115,8 +115,8 @@ def test_get_ssh_authorized_keys(home, monkeypatch, capsys):
     code, out, _ = run(monkeypatch, capsys,
                        ["get", "--site", "ssh.example", "--ssh", "--secret-env", "KG_SECRET"])
     assert code == 0
-    _seed, pub = derive_ssh_keypair(SECRET.encode(), EMAIL, key_name="github", counter=1)
-    expected = format_authorized_keys(pub, f"{EMAIL}:github")
+    _seed, pub = derive_ssh_keypair(SECRET.encode(), key_name="github", counter=1)
+    expected = format_authorized_keys(pub, "github")
     assert out.strip() == expected
 
 
@@ -434,24 +434,22 @@ def test_subcommand_help_still_works(monkeypatch, capsys):
     assert "--type" in out and "--service-email" in out
 
 
-def test_ssh_resolves_email_from_env(monkeypatch, capsys):
+def test_ssh_without_email(monkeypatch, capsys):
     monkeypatch.setenv("KEYGRAIN_SECRET", SECRET)
-    monkeypatch.setenv("KEYGRAIN_EMAIL", EMAIL)
+    monkeypatch.delenv("KEYGRAIN_EMAIL", raising=False)
     code, out, err = run(monkeypatch, capsys, ["ssh", "--name", "github"])
     assert code == 0, f"out={out!r}, err={err!r}"
-    _, pubkey = derive_ssh_keypair(SECRET.encode(), EMAIL, key_name="github")
-    expected = format_authorized_keys(pubkey, f"{EMAIL}:github")
+    _, pubkey = derive_ssh_keypair(SECRET.encode(), key_name="github")
+    expected = format_authorized_keys(pubkey, "github")
     assert out.strip() == expected.strip()
 
 
-def test_ssh_resolves_email_from_single_cache(home, monkeypatch, capsys):
-    _do_sync(monkeypatch, capsys)
+def test_ssh_with_counter(home, monkeypatch, capsys):
     monkeypatch.setenv("KEYGRAIN_SECRET", SECRET)
-    monkeypatch.delenv("KEYGRAIN_EMAIL", raising=False)
-    code, out, _ = run(monkeypatch, capsys, ["ssh", "--name", "github"])
+    code, out, _ = run(monkeypatch, capsys, ["ssh", "--name", "github", "--counter", "2"])
     assert code == 0
-    _, pubkey = derive_ssh_keypair(SECRET.encode(), EMAIL, key_name="github")
-    expected = format_authorized_keys(pubkey, f"{EMAIL}:github")
+    _, pubkey = derive_ssh_keypair(SECRET.encode(), key_name="github", counter=2)
+    expected = format_authorized_keys(pubkey, "github")
     assert out.strip() == expected.strip()
 
 
@@ -459,18 +457,17 @@ def test_wallet_multi_format_export(monkeypatch, capsys):
     import json
     from keygrain.wallet import derive_wallet_entropy, derive_wallet_mnemonic, mnemonic_to_seed
     monkeypatch.setenv("KEYGRAIN_SECRET", SECRET)
-    monkeypatch.setenv("KEYGRAIN_EMAIL", EMAIL)
 
     # 1) Entropy format
     code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--chain", "bitcoin", "--format", "entropy", "--yes-i-understand-the-risks"])
     assert code == 0
-    entropy = derive_wallet_entropy(SECRET.encode(), EMAIL, wallet_name="test", chain="bitcoin", counter=1)
+    entropy = derive_wallet_entropy(SECRET.encode(), wallet_id="test", words=24, counter=1)
     assert out.strip() == entropy.hex()
 
     # 2) Seed format
     code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--chain", "bitcoin", "--format", "seed", "--yes-i-understand-the-risks"])
     assert code == 0
-    mnemonic = derive_wallet_mnemonic(SECRET.encode(), EMAIL, wallet_name="test", chain="bitcoin", counter=1)
+    mnemonic = derive_wallet_mnemonic(SECRET.encode(), wallet_id="test", words=24, counter=1)
     seed = mnemonic_to_seed(mnemonic)
     assert out.strip() == seed.hex()
 

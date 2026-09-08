@@ -56,10 +56,17 @@ class TestEntropyToMnemonic:
         assert words[3] == "year"
 
     def test_wrong_length_rejected(self):
-        with pytest.raises(ValueError, match="must be 32 bytes"):
-            entropy_to_mnemonic(bytes(16))
-        with pytest.raises(ValueError, match="must be 32 bytes"):
+        with pytest.raises(ValueError, match="must be 16 or 32 bytes"):
+            entropy_to_mnemonic(bytes(15))
+        with pytest.raises(ValueError, match="must be 16 or 32 bytes"):
             entropy_to_mnemonic(bytes(33))
+
+    def test_16_bytes_entropy_12_words(self):
+        entropy = bytes(16)
+        mnemonic = entropy_to_mnemonic(entropy)
+        words = mnemonic.split()
+        assert len(words) == 12
+        _validate_mnemonic(mnemonic)
 
     def test_checksum_valid(self, vectors):
         """All BIP-39 vectors produce valid checksums."""
@@ -105,9 +112,8 @@ class TestDeriveWalletEntropy:
         for v in vectors["derivation_vectors"]:
             entropy = derive_wallet_entropy(
                 v["secret"].encode(),
-                v["email"],
-                wallet_name=v["wallet_name"],
-                chain=v["chain"],
+                wallet_id=v["wallet_id"],
+                words=v.get("words", 24),
                 counter=v["counter"],
             )
             assert entropy.hex() == v["entropy_hex"], f"Vector {v['id']} mismatch"
@@ -117,20 +123,14 @@ class TestDeriveWalletEntropy:
         v1 = vectors["derivation_vectors"][0]
         v5 = vectors["derivation_vectors"][4]
         e1 = derive_wallet_entropy(
-            v1["secret"].encode(), v1["email"],
-            wallet_name=v1["wallet_name"], chain=v1["chain"], counter=v1["counter"],
+            v1["secret"].encode(),
+            wallet_id=v1["wallet_id"], words=v1["words"], counter=v1["counter"],
         )
         e5 = derive_wallet_entropy(
-            v5["secret"].encode(), v5["email"],
-            wallet_name=v5["wallet_name"], chain=v5["chain"], counter=v5["counter"],
+            v5["secret"].encode(),
+            wallet_id=v5["wallet_id"], words=v5["words"], counter=v5["counter"],
         )
         assert e1 == e5
-
-    def test_chain_isolation(self, vectors):
-        """Different chains produce different entropy."""
-        v1 = vectors["derivation_vectors"][0]  # bitcoin
-        v2 = vectors["derivation_vectors"][1]  # ethereum
-        assert v1["entropy_hex"] != v2["entropy_hex"]
 
     def test_counter_rotation(self, vectors):
         """Different counters produce different entropy."""
@@ -138,8 +138,8 @@ class TestDeriveWalletEntropy:
         v3 = vectors["derivation_vectors"][2]  # counter=2
         assert v1["entropy_hex"] != v3["entropy_hex"]
 
-    def test_wallet_name_change(self, vectors):
-        """Different wallet names produce different entropy."""
+    def test_wallet_id_change(self, vectors):
+        """Different wallet ids produce different entropy."""
         v1 = vectors["derivation_vectors"][0]  # personal
         v4 = vectors["derivation_vectors"][3]  # savings
         assert v1["entropy_hex"] != v4["entropy_hex"]
@@ -152,8 +152,8 @@ class TestDeriveWalletEntropy:
 
     def test_deterministic(self):
         """Same inputs always produce same output."""
-        e1 = derive_wallet_entropy(b"s", "e@x.com", wallet_name="w", chain="bitcoin", counter=1)
-        e2 = derive_wallet_entropy(b"s", "e@x.com", wallet_name="w", chain="bitcoin", counter=1)
+        e1 = derive_wallet_entropy(b"s", wallet_id="w", words=24, counter=1)
+        e2 = derive_wallet_entropy(b"s", wallet_id="w", words=24, counter=1)
         assert e1 == e2
 
 
@@ -161,51 +161,47 @@ class TestDeriveWalletEntropy:
 
 
 class TestInputValidation:
-    def test_empty_wallet_name(self):
-        with pytest.raises(ValueError, match="wallet_name"):
-            derive_wallet_entropy(b"s", "e@x.com", wallet_name="", chain="bitcoin", counter=1)
+    def test_empty_wallet_id(self):
+        with pytest.raises(ValueError, match="wallet_id"):
+            derive_wallet_entropy(b"s", wallet_id="", words=24, counter=1)
 
-    def test_wallet_name_with_spaces(self):
-        with pytest.raises(ValueError, match="wallet_name"):
-            derive_wallet_entropy(b"s", "e@x.com", wallet_name="bad name", chain="bitcoin", counter=1)
+    def test_wallet_id_with_spaces(self):
+        with pytest.raises(ValueError, match="wallet_id"):
+            derive_wallet_entropy(b"s", wallet_id="bad name", words=24, counter=1)
 
-    def test_wallet_name_with_colons(self):
-        with pytest.raises(ValueError, match="wallet_name"):
-            derive_wallet_entropy(b"s", "e@x.com", wallet_name="my:wallet", chain="bitcoin", counter=1)
+    def test_wallet_id_with_colons(self):
+        with pytest.raises(ValueError, match="wallet_id"):
+            derive_wallet_entropy(b"s", wallet_id="my:wallet", words=24, counter=1)
 
-    def test_wallet_name_with_underscores(self):
-        with pytest.raises(ValueError, match="wallet_name"):
-            derive_wallet_entropy(b"s", "e@x.com", wallet_name="my_wallet", chain="bitcoin", counter=1)
+    def test_wallet_id_with_underscores(self):
+        with pytest.raises(ValueError, match="wallet_id"):
+            derive_wallet_entropy(b"s", wallet_id="my_wallet", words=24, counter=1)
 
-    def test_wallet_name_uppercase_accepted(self):
+    def test_wallet_id_uppercase_accepted(self):
         """Uppercase input is lowercased then validated — should work."""
-        e = derive_wallet_entropy(b"s", "e@x.com", wallet_name="MyWallet", chain="bitcoin", counter=1)
+        e = derive_wallet_entropy(b"s", wallet_id="MyWallet", words=24, counter=1)
         assert len(e) == 32
 
-    def test_invalid_chain(self):
-        with pytest.raises(ValueError, match="Unsupported chain"):
-            derive_wallet_entropy(b"s", "e@x.com", wallet_name="w", chain="bitconi", counter=1)
+    def test_invalid_words(self):
+        with pytest.raises(ValueError, match="words"):
+            derive_wallet_entropy(b"s", wallet_id="w", words=18, counter=1)
 
     def test_counter_zero(self):
         with pytest.raises(ValueError, match="counter"):
-            derive_wallet_entropy(b"s", "e@x.com", wallet_name="w", chain="bitcoin", counter=0)
+            derive_wallet_entropy(b"s", wallet_id="w", words=24, counter=0)
 
     def test_counter_negative(self):
         with pytest.raises(ValueError, match="counter"):
-            derive_wallet_entropy(b"s", "e@x.com", wallet_name="w", chain="bitcoin", counter=-1)
+            derive_wallet_entropy(b"s", wallet_id="w", words=24, counter=-1)
 
     def test_empty_secret(self):
         with pytest.raises(ValueError, match="secret"):
-            derive_wallet_entropy(b"", "e@x.com", wallet_name="w", chain="bitcoin", counter=1)
+            derive_wallet_entropy(b"", wallet_id="w", words=24, counter=1)
 
-    def test_empty_email(self):
-        with pytest.raises(ValueError, match="email"):
-            derive_wallet_entropy(b"s", "", wallet_name="w", chain="bitcoin", counter=1)
-
-    def test_valid_wallet_names(self):
+    def test_valid_wallet_ids(self):
         """Hyphens and digits are allowed."""
         for name in ["cold-storage", "wallet-1", "a", "123", "a-b-c"]:
-            e = derive_wallet_entropy(b"s", "e@x.com", wallet_name=name, chain="bitcoin", counter=1)
+            e = derive_wallet_entropy(b"s", wallet_id=name, words=24, counter=1)
             assert len(e) == 32
 
 
@@ -216,8 +212,8 @@ class TestDoubleDerivation:
     def test_derive_wallet_mnemonic_passes(self):
         """derive_wallet_mnemonic performs double-derivation internally."""
         mnemonic = derive_wallet_mnemonic(
-            b"test-secret", "user@example.com",
-            wallet_name="main", chain="ethereum", counter=1,
+            b"test-secret",
+            wallet_id="main", words=24, counter=1,
         )
         words = mnemonic.split()
         assert len(words) == 24
@@ -227,8 +223,8 @@ class TestDoubleDerivation:
         """derive_wallet_mnemonic produces same mnemonic as vectors."""
         v = vectors["derivation_vectors"][0]
         mnemonic = derive_wallet_mnemonic(
-            v["secret"].encode(), v["email"],
-            wallet_name=v["wallet_name"], chain=v["chain"], counter=v["counter"],
+            v["secret"].encode(),
+            wallet_id=v["wallet_id"], words=v["words"], counter=v["counter"],
         )
         assert mnemonic == v["mnemonic"]
 

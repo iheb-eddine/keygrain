@@ -116,26 +116,30 @@ graph TD
 
     STRENGTHENED -->|"HMAC-SHA256(Key, site + email + counter)"| PASS["Password Derivation (Rejection Sampling + Shuffle)"]
     STRENGTHENED -->|"HMAC-SHA256(Key, site + email + ':keygrain-totp')"| TOTP["TOTP Seed (RFC 6238 HMAC-SHA1)"]
-    STRENGTHENED -->|"HMAC-SHA256(Key, site + email + ':keygrain-ssh')"| SSH["Ed25519 SSH Keypair"]
-    STRENGTHENED -->|"HMAC-SHA256(Key, site + email + ':keygrain-wallet')"| WALLET["BIP-39 HD Wallet Mnemonic"]
     STRENGTHENED -->|"HMAC-SHA256(Key, email + ':keygrain-local-storage')"| LOCAL_ENC["Local Storage AES-256-GCM Key"]
     STRENGTHENED -->|"HMAC-SHA256(Key, email + ':keygrain-encryption')"| SYNC_ENC["Sync Server AES-256-GCM Key"]
     STRENGTHENED -->|"HMAC-SHA256(Key, email + ':keygrain-id')"| LOOKUP_ID["Sync Lookup ID (SHA-256)"]
     STRENGTHENED -->|"HMAC-SHA256(Key, email + ':keygrain-auth')"| AUTH_PW["Sync Auth Password (bcrypt)"]
+
+    SECRET -->|"Argon2id(secret, 'keygrain-ssh:' + key_name)"| SSH_KEY["SSH Strengthened Key"]
+    SSH_KEY -->|"HMAC-SHA256(SSHKey, key_name + ':' + counter + ':keygrain-ssh')"| SSH["Ed25519 SSH Keypair"]
+
+    SECRET -->|"Argon2id(secret, 'keygrain-wallet:' + wallet_id)"| WALLET_KEY["Wallet Strengthened Key"]
+    WALLET_KEY -->|"HMAC-SHA256(WalletKey, wallet_id + ':' + words + ':' + counter + ':keygrain-wallet')"| WALLET["BIP-39 HD Wallet Mnemonic"]
 ```
 
 ### 3.1 Domain Separation Registry
 
-| Purpose | HMAC-SHA256 Derivation Input | Output / Encoding | Description |
-| :--- | :--- | :--- | :--- |
-| **Password Derivation** | `site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + counter` | Charset mapped & Fisher-Yates shuffled | Dynamic site passwords |
-| **TOTP Seed** | `site.toLowerCase() + ":" + email.toLowerCase() + ":keygrain-totp"` | 20 bytes Base32 RFC 6238 | Two-factor authentication seeds |
-| **SSH Keypair** | `site.toLowerCase() + ":" + email.toLowerCase() + ":keygrain-ssh"` | 32 bytes RFC 8032 Ed25519 / OpenSSH | Deterministic SSH keys |
-| **HD Wallet** | `site.toLowerCase() + ":" + email.toLowerCase() + ":keygrain-wallet"` | BIP-39 English 12/24 words | Cryptocurrency seed mnemonics |
-| **Local Storage Key** | `email.toLowerCase() + ":keygrain-local-storage"` | 32 bytes AES-256-GCM key | Encrypts `chrome.storage.local` data |
-| **Sync Encryption Key** | `email.toLowerCase() + ":keygrain-encryption"` | 32 bytes AES-256-GCM key | Encrypts sync blobs for server |
-| **Lookup ID** | `email.toLowerCase() + ":keygrain-id"` | 64-char Hex (HMAC-SHA256) | Pseudonymous server account ID |
-| **Auth Password** | `derivePassword(strengthened, email + ":32:keygrain-auth")` | 32-char string | HTTP Basic Auth password for server |
+| Purpose | Argon2id Salt / Key | HMAC-SHA256 Derivation Input | Output / Encoding | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Password Derivation** | `keygrain-strengthen:<email>` | `site.toLowerCase() + ":" + email.toLowerCase() + ":" + length + ":" + counter` | Charset mapped & Fisher-Yates shuffled | Dynamic site passwords |
+| **TOTP Seed** | `keygrain-strengthen:<email>` | `site.toLowerCase() + ":" + email.toLowerCase() + ":keygrain-totp"` | 20 bytes Base32 RFC 6238 | Two-factor authentication seeds |
+| **SSH Keypair** | `keygrain-ssh:<key_name>` | `key_name.toLowerCase() + ":" + counter + ":keygrain-ssh"` | 32 bytes RFC 8032 Ed25519 / OpenSSH | Deterministic SSH keys (email-independent) |
+| **HD Wallet** | `keygrain-wallet:<wallet_id>` | `wallet_id.toLowerCase() + ":" + words + ":" + counter + ":keygrain-wallet"` | BIP-39 English 12/24 words | Cryptocurrency seed mnemonics (email-independent) |
+| **Local Storage Key** | `keygrain-strengthen:<email>` | `email.toLowerCase() + ":keygrain-local-storage"` | 32 bytes AES-256-GCM key | Encrypts `chrome.storage.local` data |
+| **Sync Encryption Key** | `keygrain-strengthen:<email>` | `email.toLowerCase() + ":keygrain-encryption"` | 32 bytes AES-256-GCM key | Encrypts sync blobs for server |
+| **Lookup ID** | `keygrain-strengthen:<email>` | `email.toLowerCase() + ":keygrain-id"` | 64-char Hex (HMAC-SHA256) | Pseudonymous server account ID |
+| **Auth Password** | `keygrain-strengthen:<email>` | `derivePassword(strengthened, email + ":32:keygrain-auth")` | 32-char string | HTTP Basic Auth password for server |
 
 ### 3.2 Worker Ingress Isolation
 

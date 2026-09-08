@@ -41,16 +41,15 @@ class WalletEngineTest {
         for (i in 0 until vectors.length()) {
             val v = vectors.getJSONObject(i)
             val secret = v.getString("secret").toByteArray(Charsets.UTF_8)
-            val email = v.getString("email")
-            val walletName = v.getString("wallet_name")
-            val chain = v.getString("chain")
+            val walletId = v.getString("wallet_id")
+            val words = v.getInt("words")
             val counter = v.getInt("counter")
             val expectedEntropy = v.getString("entropy_hex")
 
             Keygrain.clearStrengthenCache()
-            val result = WalletEngine.deriveWalletEntropy(secret, email, walletName, chain, counter)
+            val result = WalletEngine.deriveWalletEntropy(secret, walletId, words, counter)
             assertEquals(
-                "Entropy mismatch: vector ${v.getInt("id")}",
+                "Entropy mismatch: vector ${v.getString("id")}",
                 expectedEntropy, bytesToHex(result)
             )
         }
@@ -60,22 +59,22 @@ class WalletEngineTest {
 
     @Test
     fun testCaseNormalization() {
-        val secret = "my-master-secret".toByteArray()
+        val secret = "my-master-secret".toByteArray(Charsets.UTF_8)
         Keygrain.clearStrengthenCache()
-        val a = WalletEngine.deriveWalletEntropy(secret, "test@gmail.com", "personal", "bitcoin", 1)
+        val a = WalletEngine.deriveWalletEntropy(secret, "personal", 24, 1)
         Keygrain.clearStrengthenCache()
-        val b = WalletEngine.deriveWalletEntropy(secret, "TEST@Gmail.com", "Personal", "Bitcoin", 1)
+        val b = WalletEngine.deriveWalletEntropy(secret, "Personal", 24, 1)
         assertArrayEquals("Case normalization must produce identical entropy", a, b)
     }
 
     @Test
-    fun testDifferentChainProducesDifferentEntropy() {
-        val secret = "my-master-secret".toByteArray()
+    fun testDifferentWalletIdProducesDifferentEntropy() {
+        val secret = "my-master-secret".toByteArray(Charsets.UTF_8)
         Keygrain.clearStrengthenCache()
-        val a = WalletEngine.deriveWalletEntropy(secret, "test@gmail.com", "personal", "bitcoin", 1)
+        val a = WalletEngine.deriveWalletEntropy(secret, "personal", 24, 1)
         Keygrain.clearStrengthenCache()
-        val b = WalletEngine.deriveWalletEntropy(secret, "test@gmail.com", "personal", "ethereum", 1)
-        assertFalse("Different chain must produce different entropy", a.contentEquals(b))
+        val b = WalletEngine.deriveWalletEntropy(secret, "savings", 24, 1)
+        assertFalse("Different wallet_id must produce different entropy", a.contentEquals(b))
     }
 
     // --- BIP-39 Mnemonic Vectors ---
@@ -110,7 +109,7 @@ class WalletEngineTest {
 
             val result = WalletEngine.entropyToMnemonic(entropy)
             assertEquals(
-                "Mnemonic mismatch: vector ${v.getInt("id")}",
+                "Mnemonic mismatch: vector ${v.getString("id")}",
                 expectedMnemonic, result
             )
         }
@@ -139,32 +138,27 @@ class WalletEngineTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun testRejectEmptyWalletName() {
-        WalletEngine.deriveWalletEntropy("secret".toByteArray(), "a@b.com", "", "bitcoin", 1)
+        WalletEngine.deriveWalletEntropy("secret".toByteArray(), "", 24, 1)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun testRejectInvalidWalletNameChars() {
-        WalletEngine.deriveWalletEntropy("secret".toByteArray(), "a@b.com", "my wallet", "bitcoin", 1)
+        WalletEngine.deriveWalletEntropy("secret".toByteArray(), "my wallet", 24, 1)
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun testRejectUnsupportedChain() {
-        WalletEngine.deriveWalletEntropy("secret".toByteArray(), "a@b.com", "personal", "cardano", 1)
+    fun testRejectInvalidWords() {
+        WalletEngine.deriveWalletEntropy("secret".toByteArray(), "personal", 18, 1)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun testRejectCounterLessThanOne() {
-        WalletEngine.deriveWalletEntropy("secret".toByteArray(), "a@b.com", "personal", "bitcoin", 0)
+        WalletEngine.deriveWalletEntropy("secret".toByteArray(), "personal", 24, 0)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun testRejectEmptySecret() {
-        WalletEngine.deriveWalletEntropy(ByteArray(0), "a@b.com", "personal", "bitcoin", 1)
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun testRejectEmptyEmail() {
-        WalletEngine.deriveWalletEntropy("secret".toByteArray(), "", "personal", "bitcoin", 1)
+        WalletEngine.deriveWalletEntropy(ByteArray(0), "personal", 24, 1)
     }
 
     @Test(expected = IllegalArgumentException::class)
