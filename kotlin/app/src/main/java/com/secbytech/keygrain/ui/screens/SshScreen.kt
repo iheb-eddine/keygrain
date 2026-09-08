@@ -69,7 +69,8 @@ fun SshScreen(
     onDataChanged: (() -> Unit)? = null,
     onSshKeysChanged: ((List<SshKeyEntry>) -> Unit)? = null,
     showAddSshDialog: Boolean = false,
-    onDismissAddDialog: (() -> Unit)? = null
+    onDismissAddDialog: (() -> Unit)? = null,
+    syncEpoch: Long = 0L
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -89,6 +90,12 @@ fun SshScreen(
     LaunchedEffect(Unit) {
         SyncStore.migrateLegacySshKeys(context, serviceManager)
         refreshList()
+    }
+
+    LaunchedEffect(syncEpoch) {
+        if (syncEpoch > 0L) {
+            refreshList()
+        }
     }
 
     val filteredItems = remember(sshKeys, searchQuery) {
@@ -185,18 +192,18 @@ fun SshScreen(
                 onDismissAddDialog?.invoke()
             },
             onSave = { keyName, email, counter ->
+                val cleanKeyName = keyName.trim()
+                val commentVal = if (email.isNotBlank()) email.trim() else cleanKeyName
                 val newKey = SshKeyEntry(
                     id = UUID.randomUUID().toString(),
-                    keyName = keyName.trim(),
+                    keyName = cleanKeyName,
                     counter = counter,
                     email = email.trim(),
-                    comment = keyName.trim(),
+                    comment = commentVal,
                     createdAt = System.currentTimeMillis(),
                     updatedAt = System.currentTimeMillis()
                 )
-                val currentKeys = SyncStore.getSshKeys(context).toMutableList()
-                currentKeys.add(newKey)
-                SyncStore.saveSshKeys(context, currentKeys)
+                SyncStore.putSshKey(context, newKey)
                 refreshList()
                 onDataChanged?.invoke()
                 showAddDialog = false
@@ -212,17 +219,16 @@ fun SshScreen(
             onDismiss = { editingItem = null },
             onSave = { keyName, email, counter ->
                 val current = editingItem!!
+                val cleanKeyName = keyName.trim()
+                val commentVal = if (email.isNotBlank()) email.trim() else cleanKeyName
                 val updatedKey = current.copy(
-                    keyName = keyName.trim(),
+                    keyName = cleanKeyName,
                     counter = counter,
                     email = email.trim(),
-                    comment = keyName.trim(),
+                    comment = commentVal,
                     updatedAt = System.currentTimeMillis()
                 )
-                val currentKeys = SyncStore.getSshKeys(context).map {
-                    if (it.id == current.id) updatedKey else it
-                }
-                SyncStore.saveSshKeys(context, currentKeys)
+                SyncStore.putSshKey(context, updatedKey)
                 refreshList()
                 onDataChanged?.invoke()
                 editingItem = null
@@ -247,9 +253,7 @@ fun SshScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val current = deletingItem!!
-                        val currentKeys = SyncStore.getSshKeys(context).filter { it.id != current.id }
-                        SyncStore.saveSshKeys(context, currentKeys)
+                        SyncStore.removeSshKey(context, deletingItem!!)
                         refreshList()
                         onDataChanged?.invoke()
                         deletingItem = null
@@ -762,7 +766,7 @@ private fun SshEditorDialog(
     onSave: (keyName: String, email: String, counter: Int) -> Unit
 ) {
     var keyName by remember { mutableStateOf(initialItem?.keyName ?: "") }
-    var email by remember { mutableStateOf(initialItem?.email ?: defaultEmail) }
+    var email by remember { mutableStateOf(initialItem?.email ?: initialItem?.comment ?: "") }
     var counter by remember { mutableIntStateOf(initialItem?.counter ?: 1) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
@@ -785,7 +789,7 @@ private fun SshEditorDialog(
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it; errorMsg = null },
-                    label = { Text("Email / Account") },
+                    label = { Text("Comment (optional, e.g. email or machine)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -817,10 +821,6 @@ private fun SshEditorDialog(
                 onClick = {
                     if (keyName.isBlank()) {
                         errorMsg = "Key name cannot be empty"
-                        return@Button
-                    }
-                    if (email.isBlank()) {
-                        errorMsg = "Email cannot be empty"
                         return@Button
                     }
                     onSave(keyName.trim(), email.trim(), counter)

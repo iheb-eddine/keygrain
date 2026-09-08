@@ -115,7 +115,7 @@
     return /^[\d.]+$/.test(host) || host.includes(":");
   }
 
-  // Compute the pre-KG-03 candidate without consulting the PSL. Keeping this
+  // Compute the legacy site candidate without consulting the PSL. Keeping this
   // calculation separate makes the migration change auditable: the PSL may
   // veto a legacy strip, but it can never introduce a new eTLD+1 heuristic.
   function legacyCandidate(host) {

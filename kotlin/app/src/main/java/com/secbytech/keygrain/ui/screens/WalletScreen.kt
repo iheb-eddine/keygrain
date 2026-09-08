@@ -57,7 +57,8 @@ fun WalletScreen(
     onDataChanged: (() -> Unit)? = null,
     onWalletsChanged: ((List<WalletEntry>) -> Unit)? = null,
     showAddWalletDialog: Boolean = false,
-    onDismissAddDialog: (() -> Unit)? = null
+    onDismissAddDialog: (() -> Unit)? = null,
+    syncEpoch: Long = 0L
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -80,6 +81,12 @@ fun WalletScreen(
     LaunchedEffect(Unit) {
         WalletEngine.loadWordlist(context)
         refreshWallets()
+    }
+
+    LaunchedEffect(syncEpoch) {
+        if (syncEpoch > 0L) {
+            refreshWallets()
+        }
     }
 
     val filteredWallets = remember(wallets, searchQuery) {
@@ -194,14 +201,7 @@ fun WalletScreen(
                 onDismissAddDialog?.invoke()
             },
             onSave = { updated ->
-                val current = syncMgr.getWallets(context).toMutableList()
-                val idx = current.indexOfFirst { it.id == updated.id || WalletEntry.mergeKey(it) == WalletEntry.mergeKey(updated) }
-                if (idx >= 0) {
-                    current[idx] = updated
-                } else {
-                    current.add(updated)
-                }
-                syncMgr.saveWallets(context, current)
+                syncMgr.putWallet(context, updated)
                 refreshWallets()
                 onDataChanged?.invoke()
                 showAddDialog = false
@@ -238,9 +238,7 @@ fun WalletScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val current = syncMgr.getWallets(context).toMutableList()
-                        current.removeAll { it.id == wallet.id || WalletEntry.mergeKey(it) == WalletEntry.mergeKey(wallet) }
-                        syncMgr.saveWallets(context, current)
+                        syncMgr.removeWallet(context, wallet)
                         refreshWallets()
                         onDataChanged?.invoke()
                         deletingWallet = null

@@ -120,8 +120,7 @@ await test('generate consumes one token and calls unchanged deriveWalletMnemonic
   assert.deepEqual(Object.keys(result.result), ['mnemonic']);
   assert.equal(result.result.mnemonic.split(' ').length, 24);
   assert.equal(deriveCalls.length, 1);
-  assert.equal(deriveCalls[0][1], 'user@example.com');
-  assert.deepEqual(JSON.parse(JSON.stringify(deriveCalls[0][2])), {walletName: 'vault', chain: 'solana', counter: 7});
+  assert.deepEqual(JSON.parse(JSON.stringify(deriveCalls[0][1])), {walletId: 'vault', counter: 7});
   const replay = await invoke(trusted, {action: 'keygrain.wallet.generate', selectionToken: token});
   assert.equal(replay.code, 'KEYGRAIN_STALE_OPERATION');
 });
@@ -296,5 +295,35 @@ await test('malformed mnemonic shapes never reach the popup result', async () =>
     assert.equal(result.code, 'KEYGRAIN_WALLET_ERROR');
     assert.equal(JSON.stringify(result).includes(output), false);
   }
+});
+
+await test('standalone wallet options projection preserves id, label, notes, chain, and allows metadata fields', async () => {
+  validDerive();
+  context.now = 80000;
+  const standalone = {
+    id: 'wallet-uuid-1',
+    wallet_id: 'vault-cold',
+    label: 'Cold Vault',
+    words: 24,
+    counter: 3,
+    notes: 'stored securely',
+    chain: 'universal',
+    created_at: '2026-09-01T00:00:00.000Z',
+    updated_at: '2026-09-02T00:00:00.000Z',
+  };
+  unlock([standalone]);
+  const options = await invoke(trusted, {action: 'keygrain.wallet.options'});
+  assert.equal(options.ok, true);
+  assert.equal(options.result.items.length, 1);
+  const item = options.result.items[0];
+  assert.equal(item.walletId, 'vault-cold');
+  assert.equal(item.label, 'Cold Vault');
+  assert.equal(item.words, 24);
+  assert.equal(item.counter, 3);
+  assert.equal(item.id, 'wallet-uuid-1');
+  assert.equal(item.notes, 'stored securely');
+  assert.equal(item.chain, 'universal');
+  const generated = await invoke(trusted, {action: 'keygrain.wallet.generate', selectionToken: item.selectionToken});
+  assert.equal(generated.ok, true);
 });
 

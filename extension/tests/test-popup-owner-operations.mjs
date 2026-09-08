@@ -266,7 +266,7 @@ function sshPopupHarness(options = {}) {
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(child => child !== this); }
     focus() {}
   }
-  const ids = ['loading-screen', 'lock-screen', 'update-required-screen', 'main-screen', 'pin-screen', 'email', 'secret', 'fingerprint', 'auth-mode-unlock', 'auth-mode-create', 'create-confirm-group', 'confirm-secret', 'confirm-fingerprint', 'confirm-secret-match', 'unlock-btn', 'create-btn', 'status', 'service-list', 'search', 'sync-error', 'autolock-warning', 'autolock-extend', 'version-display', 'try-demo'];
+  const ids = ['loading-screen', 'lock-screen', 'update-required-screen', 'main-screen', 'pin-screen', 'email', 'secret', 'fingerprint', 'auth-mode-unlock', 'auth-mode-create', 'create-confirm-group', 'confirm-secret', 'confirm-fingerprint', 'confirm-secret-match', 'unlock-btn', 'create-btn', 'status', 'service-list', 'search', 'sync-error', 'autolock-warning', 'autolock-extend', 'version-display', 'try-demo', 'tab-nav', 'tab-logins', 'tab-ssh', 'tab-wallets', 'add-btn', 'ssh-edit-dialog', 'ssh-edit-dialog-title', 'ssh-edit-keyname', 'ssh-edit-counter', 'ssh-edit-comment', 'ssh-edit-delete', 'ssh-edit-cancel', 'ssh-edit-confirm', 'wallet-edit-dialog', 'wallet-edit-dialog-title', 'wallet-edit-id', 'wallet-edit-label', 'wallet-edit-words', 'wallet-edit-counter', 'wallet-edit-notes', 'wallet-edit-delete', 'wallet-edit-cancel', 'wallet-edit-confirm'];
   const elements = new Map(ids.map(id => [id, new Element(id)]));
   const messages = [];
   const runtime = {
@@ -287,6 +287,10 @@ function sshPopupHarness(options = {}) {
       if (message.action === 'keygrain.ssh.generate') return {ok: true, result: {authorizedKeys: 'ssh-ed25519 AAAA user@example.com:github', privateKeyPem: '-----BEGIN OPENSSH PRIVATE KEY-----\nYWJj\n-----END OPENSSH PRIVATE KEY-----\n'}};
       if (message.action === 'keygrain.wallet.options') return {ok: true, result: {items: [{selectionToken: 'wallet-token', walletName: 'personal', chain: 'bitcoin', email: 'user@example.com'}]}};
       if (message.action === 'keygrain.wallet.generate') return {ok: true, result: {mnemonic: Array.from({length: 24}, () => 'word').join(' ')}};
+      if (message.action === 'saveSshKey') return {ok: true, ssh_keys: []};
+      if (message.action === 'deleteSshKey') return {ok: true, ssh_keys: []};
+      if (message.action === 'saveWallet') return {ok: true, wallets: []};
+      if (message.action === 'deleteWallet') return {ok: true, wallets: []};
       return {ok: false, code: 'KEYGRAIN_AUTH_PROTOCOL_ERROR', message: 'Invalid authentication request.'};
     },
   };
@@ -302,6 +306,7 @@ function sshPopupHarness(options = {}) {
     Object, Array, Map, Set, Promise, Number, String, Error, JSON, Math, RegExp, Uint8Array, Date, setTimeout, clearTimeout, setInterval, clearInterval,
   });
   ctx.globalThis = ctx;
+  runInContext(readFileSync(resolve(shared, 'popup-search.js'), 'utf8'), ctx);
   runInContext(popupSource, ctx);
   return {elements, messages, unload: () => unload?.(), pagehide: () => pagehide?.()};
 }
@@ -386,13 +391,80 @@ function sshPopupHarness(options = {}) {
   await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
   const row = popup.elements.get('service-list').children[0];
   const sshRow = row.children.find(child => child.className === 'ssh-row');
-  assert(sshRow, 'service item includes inline SSH row');
-  const copyPubBtn = sshRow.children.find(child => child.className === 'ssh-copy-btn');
-  assert(copyPubBtn, 'SSH row includes copy pubkey button');
+  assert(!sshRow, 'service item has no duplicate inline SSH row in Logins tab');
+
+  // Verify SSH card in SSH tab
+  const tabSsh = popup.elements.get('tab-ssh');
+  await tabSsh.handlers.click();
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
+  const sshCard = popup.elements.get('service-list').children[0];
+  assert(sshCard, 'SSH card rendered in SSH tab');
+  const actions = sshCard.children[1];
+  const copyPubBtn = actions?.children?.find(child => child.className?.includes('ssh-copy-btn'));
+  assert(copyPubBtn, 'SSH card includes copy pubkey button');
   await copyPubBtn.handlers.click();
   await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
   assert.deepEqual(JSON.parse(JSON.stringify(popup.messages.find(message => message.action === 'keygrain.ssh.generate'))), {action: 'keygrain.ssh.generate', selectionToken: 'ssh-token'});
-  console.log('  ✓ popup SSH row is compact, explicit, token-only, transient, and cleared on unload');
+  console.log('  ✓ popup SSH row decoupled from logins, rendered in SSH tab, token-only, and transient');
+}
+
+{
+  const popup = sshPopupHarness();
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
+
+  const tabLogins = popup.elements.get('tab-logins');
+  const tabSsh = popup.elements.get('tab-ssh');
+  const tabWallets = popup.elements.get('tab-wallets');
+  const searchInput = popup.elements.get('search');
+  const serviceList = popup.elements.get('service-list');
+
+  // Verify initial logins tab view
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].className, 'service-item');
+
+  // Switch to SSH tab
+  await tabSsh.handlers.click();
+  assert.equal(tabSsh.attributes['aria-selected'], 'true');
+  assert.equal(tabLogins.attributes['aria-selected'], 'false');
+  assert.equal(searchInput.placeholder, 'Search SSH keys...');
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].id, 'ssh-item-0');
+  const sshTitle = serviceList.children[0].children[0].children[0].children[0];
+  assert.equal(sshTitle.textContent, 'github');
+
+  // Switch to Wallets tab (triggers JIT walletOptions fetch)
+  await tabWallets.handlers.click();
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
+  assert.equal(tabWallets.attributes['aria-selected'], 'true');
+  assert.equal(tabSsh.attributes['aria-selected'], 'false');
+  assert.equal(searchInput.placeholder, 'Search wallets...');
+  assert(popup.messages.some(m => m.action === 'keygrain.wallet.options'), 'walletOptions fetched on wallet tab click');
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].id, 'wallet-item-0');
+  const walletTitle = serviceList.children[0].children[0].children[0];
+  assert.equal(walletTitle.textContent, 'personal');
+  assert.equal(walletTitle.children[0].textContent, 'bitcoin');
+
+  // Test search scoping in wallets tab
+  searchInput.value = 'nonexistent';
+  searchInput.handlers.input();
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].className, 'empty-state');
+  assert.equal(serviceList.children[0].textContent, 'No wallets found.');
+
+  searchInput.value = 'personal';
+  searchInput.handlers.input();
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].id, 'wallet-item-0');
+
+  // Switch back to logins tab
+  await tabLogins.handlers.click();
+  assert.equal(tabLogins.attributes['aria-selected'], 'true');
+  assert.equal(searchInput.placeholder, 'Search services...');
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].id, 'service-item-0');
+
+  console.log('  ✓ multi-asset tab navigation, wallet JIT fetching, and search scoping verified');
 }
 
 

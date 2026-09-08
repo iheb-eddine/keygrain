@@ -59,7 +59,7 @@ fun MainScreen() {
     var lastSyncTime by remember { mutableLongStateOf(0L) }
     var offlineMode by remember { mutableStateOf(settingsPrefs.getBoolean("offline_mode", false)) }
     var syncGeneration by remember { mutableIntStateOf(0) }
-    var skipNextDebounce by remember { mutableStateOf(false) }
+    var syncEpoch by remember { mutableLongStateOf(0L) }
     var subtitleTick by remember { mutableIntStateOf(0) }
 
     // Child counts for top bar subtitle
@@ -101,12 +101,15 @@ fun MainScreen() {
             try {
                 val secretBytes = masterSecret.toByteArray()
                 try {
-                    when (syncManager.sync(secretBytes, email, serviceManager, context)) {
+                    when (val res = syncManager.sync(secretBytes, email, serviceManager, context)) {
                         is SyncResult.Success -> {
                             if (syncGeneration != gen) return@launch
                             syncManager.setSyncEmail(context, email)
-                            skipNextDebounce = true
-                            lastSyncTime = System.currentTimeMillis()
+                            val now = System.currentTimeMillis()
+                            lastSyncTime = now
+                            syncEpoch = now
+                            sshKeyCount = res.sshKeys.size
+                            walletCount = res.wallets.size
                             syncFailed = false
                             syncGeneration++
                         }
@@ -128,14 +131,10 @@ fun MainScreen() {
 
     fun triggerDebouncedSync() {
         if (offlineMode) return
-        if (skipNextDebounce) {
-            skipNextDebounce = false
-            return
-        }
         syncGeneration++
         val gen = syncGeneration
         scope.launch {
-            delay(5000)
+            delay(1200)
             if (syncGeneration == gen) performAutoSync()
         }
     }
@@ -220,7 +219,9 @@ fun MainScreen() {
             HelpScreen(onBack = { showHelpScreen = false })
         }
         else -> {
-            var selectedTab by remember { mutableIntStateOf(0) }
+            var selectedTab by remember {
+                mutableIntStateOf(settingsPrefs.getInt("last_active_tab", 0).coerceIn(0, 2))
+            }
             val onLockAction: () -> Unit = {
                 unlocked = false
                 masterSecret = ""
@@ -293,8 +294,11 @@ fun MainScreen() {
                                                 when (val r = syncManager.sync(secretBytes, email, serviceManager, context)) {
                                                     is SyncResult.Success -> {
                                                         syncManager.setSyncEmail(context, email)
-                                                        skipNextDebounce = true
-                                                        lastSyncTime = System.currentTimeMillis()
+                                                        val now = System.currentTimeMillis()
+                                                        lastSyncTime = now
+                                                        syncEpoch = now
+                                                        sshKeyCount = r.sshKeys.size
+                                                        walletCount = r.wallets.size
                                                         syncFailed = false
                                                         syncGeneration++
                                                         UserMessages.syncSuccess(r.services.size)
@@ -379,21 +383,30 @@ fun MainScreen() {
                     ) {
                         NavigationBarItem(
                             selected = selectedTab == 0,
-                            onClick = { selectedTab = 0 },
+                            onClick = {
+                                selectedTab = 0
+                                settingsPrefs.edit().putInt("last_active_tab", 0).apply()
+                            },
                             icon = { Icon(Icons.Default.Password, contentDescription = "Logins") },
                             label = { Text("Logins") },
                             alwaysShowLabel = true
                         )
                         NavigationBarItem(
                             selected = selectedTab == 1,
-                            onClick = { selectedTab = 1 },
+                            onClick = {
+                                selectedTab = 1
+                                settingsPrefs.edit().putInt("last_active_tab", 1).apply()
+                            },
                             icon = { Icon(Icons.Default.VpnKey, contentDescription = "SSH Keys") },
                             label = { Text("SSH Keys") },
                             alwaysShowLabel = true
                         )
                         NavigationBarItem(
                             selected = selectedTab == 2,
-                            onClick = { selectedTab = 2 },
+                            onClick = {
+                                selectedTab = 2
+                                settingsPrefs.edit().putInt("last_active_tab", 2).apply()
+                            },
                             icon = { Icon(Icons.Default.AccountBalanceWallet, contentDescription = "Wallets") },
                             label = { Text("Wallets") },
                             alwaysShowLabel = true
@@ -433,7 +446,8 @@ fun MainScreen() {
                                 onDataChanged = ::triggerDebouncedSync,
                                 onSshKeysChanged = { list -> sshKeyCount = list.size },
                                 showAddSshDialog = showAddSshDialog,
-                                onDismissAddDialog = { showAddSshDialog = false }
+                                onDismissAddDialog = { showAddSshDialog = false },
+                                syncEpoch = syncEpoch
                             )
                         }
                         2 -> {
@@ -447,7 +461,8 @@ fun MainScreen() {
                                 onDataChanged = ::triggerDebouncedSync,
                                 onWalletsChanged = { list -> walletCount = list.size },
                                 showAddWalletDialog = showAddWalletDialog,
-                                onDismissAddDialog = { showAddWalletDialog = false }
+                                onDismissAddDialog = { showAddWalletDialog = false },
+                                syncEpoch = syncEpoch
                             )
                         }
                     }

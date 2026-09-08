@@ -36,11 +36,23 @@ class SyncManager(
     fun saveWallets(context: Context, wallets: List<WalletEntry>) =
         SyncStore.saveWallets(context, wallets)
 
+    fun putWallet(context: Context, wallet: WalletEntry) =
+        SyncStore.putWallet(context, wallet)
+
+    fun removeWallet(context: Context, wallet: WalletEntry) =
+        SyncStore.removeWallet(context, wallet)
+
     fun saveSshKeys(context: Context, keys: List<SshKeyEntry>) =
         SyncStore.saveSshKeys(context, keys)
 
     fun getSshKeys(context: Context): List<SshKeyEntry> =
         SyncStore.getSshKeys(context)
+
+    fun putSshKey(context: Context, key: SshKeyEntry) =
+        SyncStore.putSshKey(context, key)
+
+    fun removeSshKey(context: Context, key: SshKeyEntry) =
+        SyncStore.removeSshKey(context, key)
 
     fun getAuditLog(context: Context): List<WalletAuditEntry> = SyncStore.getAuditLog(context)
 
@@ -350,8 +362,8 @@ class SyncManager(
      * per-lookup rate-limit bucket.
      *
      * Returns the success result when the push was skipped, or null to continue to PUT.
-     * Deliberately narrower than [persistPushed]: nothing was pushed, so the metadata
-     * cache, the wallet/audit blobs and the conflicts-dismissed flag are left alone.
+     * When push is skipped, local state is reconciled and persisted to match the verified
+     * remote state (services, wallets, ssh keys, audit log, metadata cache, and known keys).
      */
     private fun trySkipPush(
         remote: RemoteState,
@@ -377,8 +389,12 @@ class SyncManager(
         if (m.rec.review.isNotEmpty()) {
             serviceManager.setDeletionReview(serviceManager.getDeletionReview() + m.rec.review)
         }
+        SyncStore.setMetadataCache(context, remote.metadata)
         SyncStore.setKnownSshKeys(context, m.newSshKeys)
+        SyncStore.saveSshKeys(context, m.sshKeys)
         SyncStore.setKnownWalletKeys(context, m.newWalletKeys)
+        SyncStore.saveWallets(context, m.wallets)
+        SyncStore.saveAuditLog(context, m.auditLog)
         SyncStore.setLastSuccessfulSyncAt(context, System.currentTimeMillis())
         return SyncResult.Success(m.services, m.sshKeys, m.wallets, m.auditLog, syncConflicts, "unchanged")
     }

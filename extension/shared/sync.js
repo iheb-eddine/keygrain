@@ -346,6 +346,67 @@ async function setKnownWalletKeys(keys) {
   await chrome.storage.local.set({syncKnownWalletKeys: [...keys]});
 }
 
+async function getKnownSshKeys() {
+  const data = await chrome.storage.local.get("syncKnownSshKeys");
+  return new Set(data.syncKnownSshKeys || []);
+}
+
+async function setKnownSshKeys(keys) {
+  await chrome.storage.local.set({syncKnownSshKeys: [...keys]});
+}
+
+function sshKeyId(k) {
+  const primary = (k && (k.key_name || k.id || "")) + "";
+  return primary.toLowerCase().trim();
+}
+
+function normalizeTimestampMs(ts) {
+  if (!ts) return 0;
+  if (typeof ts === "number") return ts;
+  const num = Number(ts);
+  if (!Number.isNaN(num) && num > 100000000000) return num;
+  const parsed = Date.parse(ts);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function mergeSshKeys(localSshKeys, remoteSshKeys, knownSshKeys) {
+  const remoteByKey = new Map();
+  for (const k of (remoteSshKeys || [])) remoteByKey.set(sshKeyId(k), k);
+
+  const localByKey = new Map();
+  for (const k of (localSshKeys || [])) localByKey.set(sshKeyId(k), k);
+
+  const merged = [];
+
+  for (const [key, remote] of remoteByKey) {
+    const local = localByKey.get(key);
+    if (local) {
+      const localTs = normalizeTimestampMs(local.updated_at || local.created_at);
+      const remoteTs = normalizeTimestampMs(remote.updated_at || remote.created_at);
+      merged.push(localTs > remoteTs ? local : remote);
+      localByKey.delete(key);
+    } else {
+      if (knownSshKeys && knownSshKeys.has(key)) {
+        // Was known -> deleted locally
+      } else {
+        merged.push(remote);
+      }
+    }
+  }
+
+  for (const [key, local] of localByKey) {
+    if (remoteByKey.has(key)) continue;
+    if (knownSshKeys && knownSshKeys.has(key)) {
+      // Was known -> deleted remotely
+    } else {
+      merged.push(local);
+    }
+  }
+
+  const newKnownKeys = new Set(merged.map(k => sshKeyId(k)));
+  return {merged, knownSshKeys: newKnownKeys};
+}
+
 function walletKey(w) {
   const primary = (w && (w.wallet_id || w.wallet_name || w.id || "")) + "";
   const secondary = (w && (w.chain || "universal")) + "";
@@ -372,8 +433,8 @@ function mergeWallets(localWallets, remoteWallets, knownWalletKeys) {
     const local = localByKey.get(key);
     if (local) {
       // Both have it — most recent updated_at wins
-      const localTs = local.updated_at || local.created_at || "";
-      const remoteTs = remote.updated_at || remote.created_at || "";
+      const localTs = normalizeTimestampMs(local.updated_at || local.created_at);
+      const remoteTs = normalizeTimestampMs(remote.updated_at || remote.created_at);
       merged.push(localTs > remoteTs ? local : remote);
       localByKey.delete(key);
     } else {
@@ -422,13 +483,14 @@ function mergeAuditLog(localLog, remoteLog) {
  */
 function parseBlobContent(parsed) {
   if (Array.isArray(parsed)) {
-    return {services: parsed, wallets: [], wallet_audit_log: [], sync_conflicts: []};
+    return {services: parsed, wallets: [], wallet_audit_log: [], sync_conflicts: [], ssh_keys: []};
   }
   return {
     services: parsed.services || [],
     wallets: parsed.wallets || [],
     wallet_audit_log: parsed.wallet_audit_log || [],
-    sync_conflicts: parsed.sync_conflicts || []
+    sync_conflicts: parsed.sync_conflicts || [],
+    ssh_keys: parsed.ssh_keys || []
   };
 }
 
@@ -645,7 +707,7 @@ function canonicalSyncJSON(value) {
   throw new Error('unsupported canonical sync JSON value');
 }
 
-function canonicalBlobPayload(services, metadata, wallets, auditLog, syncConflicts) {
+function canonicalBlobPayload(services, metadata, wallets, auditLog, syncConflicts, sshKeys) {
   const svcByID = new Map();
   for (let i = 0; i < metadata.length; i++) {
     if (!metadata[i] || !metadata[i].id) continue;
@@ -700,12 +762,21 @@ function canonicalBlobPayload(services, metadata, wallets, auditLog, syncConflic
     ',"totp":' + canonicalSyncJSON(s.totp) +
     ',"ssh":' + canonicalSyncJSON(s.ssh) + '}'
   );
+  let sshPart = '';
+  if (sshKeys !== undefined) {
+    const orderedSshKeys = [...(sshKeys || [])].sort((a, b) => {
+      const ka = sshKeyId(a), kb = sshKeyId(b);
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+    sshPart = ',"ssh_keys":' + canonicalSyncJSON(orderedSshKeys);
+  }
   // Top-level and service field order are part of the existing comparison contract. Every
   // nested/variable object below is recursively canonicalized by canonicalSyncJSON.
   return '{"services":[' + orderedServicePayloads.join(',') + ']' +
     ',"wallets":' + canonicalSyncJSON(orderedWallets) +
     ',"wallet_audit_log":' + canonicalSyncJSON(orderedAudit) +
-    ',"sync_conflicts":' + canonicalSyncJSON(orderedConflicts) + '}';
+    ',"sync_conflicts":' + canonicalSyncJSON(orderedConflicts) +
+    sshPart + '}';
 }
 
 /**
@@ -745,7 +816,7 @@ function migrateLocalPayload(payload, knownUUIDs, now) {
  * Returns: {services, wallets, wallet_audit_log, status, etag, knownUUIDs}
  * Throws on auth/network/server errors.
  */
-async function syncWithServer(secret, email, localServices, localWallets = [], localAuditLog = [], localTombstones = [], retryCount = 0, isCreate = false) {
+async function syncWithServer(secret, email, localServices, localWallets = [], localAuditLog = [], localTombstones = [], retryCount = 0, isCreate = false, localSshKeys = []) {
   const storageArea = (typeof chrome !== "undefined" && chrome.storage?.local) ? chrome.storage.local : (typeof browser !== "undefined" && browser.storage?.local ? browser.storage.local : null);
   if (storageArea) {
     const { offline_mode } = await storageArea.get("offline_mode");
@@ -775,9 +846,11 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     let remoteAuditLog = [];
     let remoteConflicts = [];
     let remoteMetadata = [];
+    let remoteSshKeys = [];
     let etag = null;
     let remoteExists = false;
     let knownWKeys = await getKnownWalletKeys();
+    let knownSsh = await getKnownSshKeys();
     const lastSyncAt = await getLastSuccessfulSyncAt();
 
     if (getResp.status === 200) {
@@ -813,6 +886,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       remoteWallets = blobContent.wallets;
       remoteAuditLog = blobContent.wallet_audit_log;
       remoteConflicts = blobContent.sync_conflicts;
+      remoteSshKeys = blobContent.ssh_keys || [];
 
       // Validate length match (services metadata vs services content)
       if (remoteMetadata.length !== remoteServices.length) throw new Error("metadata_length_mismatch");
@@ -835,6 +909,8 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       remoteExists = false;
       knownWKeys = new Set();
       await setKnownWalletKeys(knownWKeys);
+      knownSsh = new Set();
+      await setKnownSshKeys(knownSsh);
     } else if (getResp.status === 401) {
       throw Object.assign(new Error("auth_failed"), {code: "AUTH_FAILED"});
     } else if (getResp.status === 429) {
@@ -849,6 +925,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     const rec = reconcileServices(localServices, localTombstones, remoteServices, remoteMetadata, lastSyncAt, remoteExists);
     const merged = rec.merged;
     const {merged: mergedWallets, knownWalletKeys: newWKeys} = mergeWallets(localWallets, remoteWallets, knownWKeys);
+    const {merged: mergedSshKeys, knownSshKeys: newSshKeys} = mergeSshKeys(localSshKeys, remoteSshKeys, knownSsh);
     const mergedAuditLog = mergeAuditLog(localAuditLog, remoteAuditLog);
 
     // Empty-push protection: an empty push is legitimate only when every remote id it
@@ -880,13 +957,15 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     // Step 3b: no-op skip (Frozen Req 9). An idle sync costs one GET and no PUT, which
     // also stops the random-IV/new-ETag churn that manufactured cross-device 409s.
     if (remoteExists && rec.deletedIds.length === 0) {
-      const localCanon = canonicalBlobPayload(contentArray, metadataArray, mergedWallets, mergedAuditLog, sync_conflicts);
-      const remoteCanon = canonicalBlobPayload(remoteServices, remoteMetadata, remoteWallets, remoteAuditLog, remoteConflicts);
+      const localCanon = canonicalBlobPayload(contentArray, metadataArray, mergedWallets, mergedAuditLog, sync_conflicts, mergedSshKeys);
+      const remoteCanon = canonicalBlobPayload(remoteServices, remoteMetadata, remoteWallets, remoteAuditLog, remoteConflicts, remoteSshKeys);
       if (localCanon === remoteCanon) {
         await setKnownWalletKeys(newWKeys);
+        await setKnownSshKeys(newSshKeys);
         await setLastSuccessfulSyncAt(Date.now());
         return {
           services: merged, wallets: mergedWallets, wallet_audit_log: mergedAuditLog,
+          ssh_keys: mergedSshKeys,
           sync_conflicts, status: "unchanged", etag,
           tombstones: rec.tombstones, review: rec.review, resurrected: rec.resurrected,
           skippedPut: true
@@ -894,7 +973,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       }
     }
 
-    const blobPayload = {services: contentArray, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, sync_conflicts};
+    const blobPayload = {services: contentArray, wallets: mergedWallets, wallet_audit_log: mergedAuditLog, sync_conflicts, ssh_keys: mergedSshKeys};
     const plaintext = new TextEncoder().encode(JSON.stringify(blobPayload));
     const aadEnc = new TextEncoder().encode(lookupId);
     const encrypted = await encryptBlob(encKey, plaintext, aadEnc);
@@ -929,7 +1008,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       // milliseconds against a per-lookup bucket of 20, self-inflicting a 429.
       if (retryCount < 3) {
         await sleepWithJitter(CONFLICT_BACKOFF_MS[retryCount]);
-        return syncWithServer(secret, email, localServices, localWallets, localAuditLog, localTombstones, retryCount + 1);
+        return syncWithServer(secret, email, localServices, localWallets, localAuditLog, localTombstones, retryCount + 1, isCreate, localSshKeys);
       }
       throw new Error("conflict");
     }
@@ -947,6 +1026,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     // tombstones the server no longer holds, and advance the sync barrier (§3 step 5-6).
     await setMetadataCache(putResult.services);
     await setKnownWalletKeys(newWKeys);
+    await setKnownSshKeys(newSshKeys);
     const pushedIds = new Set(metadataArray.map(m => m.id));
     const confirmedServices = merged.map(s => pushedIds.has(s.id) ? {...s, synced: true} : s);
     const remainingTombstones = rec.tombstones.filter(t => pushedIds.has(t.id));
@@ -956,6 +1036,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     await chrome.storage.local.set({syncConflicts: sync_conflicts, conflictsDismissed: false});
     return {
       services: confirmedServices, wallets: mergedWallets, wallet_audit_log: mergedAuditLog,
+      ssh_keys: mergedSshKeys,
       sync_conflicts, status, etag: putResult.etag,
       tombstones: remainingTombstones, review: rec.review, resurrected: rec.resurrected,
       skippedPut: false

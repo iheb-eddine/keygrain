@@ -83,8 +83,7 @@ const validServices = [
   const generated = await f.invoke({action: 'keygrain.ssh.generate', selectionToken: options.result.items[0].selectionToken});
   assert.deepEqual(Object.keys(generated.result), ['authorizedKeys', 'privateKeyPem']);
   assert.equal(f.calls.derive.length, 1);
-  assert.equal(f.calls.derive[0][1], 'one@example.com');
-  assert.deepEqual(JSON.parse(JSON.stringify(f.calls.derive[0][2])), {keyName: 'github', counter: 2});
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls.derive[0][1])), {keyName: 'github', counter: 2});
   assert.equal(JSON.stringify(generated).includes('hidden-secret'), false);
   assert.equal(JSON.stringify(generated).includes('seed'), false);
   assert.equal((await f.invoke({action: 'keygrain.ssh.generate', selectionToken: options.result.items[0].selectionToken})).code, 'KEYGRAIN_STALE_OPERATION');
@@ -123,7 +122,7 @@ const validServices = [
   const options = await f.invoke({action: 'keygrain.ssh.options'});
   assert.equal((await f.invoke({action: 'keygrain.ssh.generate', selectionToken: options.result.items[0].selectionToken})).code, 'KEYGRAIN_SSH_ERROR');
   assert.equal(f.calls.derive.length, 1);
-  const wrongComment = fixture({authorized: (publicKey, comment) => validAuthorized(publicKey, 'other@example.com:key')});
+  const wrongComment = fixture({authorized: (publicKey, comment) => validAuthorized(publicKey, 'other-key')});
   wrongComment.unlock({secret: 'secret', services: [{id: 'svc', site: 'svc.example', email: 's@example.com', ssh: {key_name: 'key'}}]});
   const wrongCommentOptions = await wrongComment.invoke({action: 'keygrain.ssh.options'});
   assert.equal((await wrongComment.invoke({action: 'keygrain.ssh.generate', selectionToken: wrongCommentOptions.result.items[0].selectionToken})).code, 'KEYGRAIN_SSH_ERROR');
@@ -167,7 +166,7 @@ const validServices = [
     assert(loader.indexOf('ssh.js') < loader.indexOf('browser-owner.js'));
   }
   assert.equal(firefoxManifest.manifest_version, 3);
-  assert.equal(createHash('sha256').update(readFileSync(resolve(shared, 'ssh.js'))).digest('hex'), 'b88b7f9026fe8329870040d50cba79fb70fcecc3565eee83bb7e6fa31a5bdf80');
+  assert.equal(createHash('sha256').update(readFileSync(resolve(shared, 'ssh.js'))).digest('hex'), 'fd73b2bcc67a7b53e47ec93b5fdaa6c700ab65e91453b147551b60acdfedbcb7');
   assert.equal(createHash('sha256').update(readFileSync(resolve(shared, 'lib/tweetnacl.js'))).digest('hex'), '3ec535c004aeeb225785d8e93fb33bf99f52e399bd7dfc01969b5629baea5131');
   console.log('  ✓ Chrome/Firefox MV3 loader order, no duplication, MV3 marker, and primitive hashes');
 }

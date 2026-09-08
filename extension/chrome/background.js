@@ -79,6 +79,272 @@ async function chromeUnregister(check) {
   }
 }
 
+function generateUuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = Math.random() * 16 | 0, v = c === "x" ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+async function reconcileSyncResult(syncRes, secret, email) {
+  if (!syncRes || typeof syncRes !== "object") return;
+  const snap = typeof chromeOwner.snapshot === "function" ? chromeOwner.snapshot() : null;
+  if (!snap || snap.state === "locked") return;
+  let opHandle;
+  try {
+    opHandle = chromeOwner.manager.beginSensitiveOperation({
+      capture: fullData => {
+        if (!fullData) return null;
+        return {
+          secret: fullData.secret,
+          email: fullData.email,
+          services: Array.isArray(fullData.services) ? fullData.services.map(s => ({...s})) : [],
+          ssh_keys: Array.isArray(fullData.ssh_keys) ? fullData.ssh_keys.map(k => ({...k})) : [],
+          wallets: Array.isArray(fullData.wallets) ? fullData.wallets.map(w => ({...w})) : [],
+          walletAuditLog: Array.isArray(fullData.walletAuditLog) ? [...fullData.walletAuditLog] : [],
+          tombstones: Array.isArray(fullData.tombstones) ? [...fullData.tombstones] : [],
+          deletionReview: Array.isArray(fullData.deletionReview) ? [...fullData.deletionReview] : [],
+        };
+      }
+    });
+  } catch (_) { return; }
+  const captured = chromeOwner.manager.getSensitiveOperationInput(opHandle);
+  if (!captured || captured.secret !== secret || captured.email !== email) {
+    try { chromeOwner.manager.cancelSensitiveOperation(opHandle, "sync_reconcile_cancelled"); } catch (_) {}
+    return;
+  }
+  try {
+    const accepted = syncLocalV2(syncRes);
+    const nextFullData = {
+      secret: captured.secret,
+      email: captured.email,
+      services: accepted.services,
+      wallets: accepted.wallets,
+      ssh_keys: accepted.sshKeys || captured.ssh_keys,
+      walletAuditLog: accepted.walletAuditLog || [],
+      tombstones: accepted.tombstones || [],
+      deletionReview: accepted.deletionReview || [],
+    };
+    chromeOwner.manager.installFullPayloadReplacement({
+      operationHandle: opHandle,
+      fullData: nextFullData,
+      records: nextFullData.services,
+    });
+    await persistV2(nextFullData.email, nextFullData.secret, nextFullData);
+    await updateSession(async (session) => {
+      if (!session) return session;
+      return { ...session, metadata: extractMetadata() };
+    });
+  } catch (err) {
+    try { chromeOwner.manager.cancelSensitiveOperation(opHandle, "sync_reconcile_failed"); } catch (_) {}
+  }
+}
+
+async function executeCollectionMutation({ collectionKey, mutationType, message, owner }) {
+  const snap = typeof owner.snapshot === "function" ? owner.snapshot() : null;
+  if (!snap || snap.state === "locked") {
+    return { ok: false, error: KeygrainBrowserOwner.safeFailure("LOCKED") };
+  }
+
+  let opHandle;
+  try {
+    opHandle = owner.manager.beginSensitiveOperation({
+      capture: fullData => {
+        if (!fullData) return null;
+        return {
+          secret: fullData.secret,
+          email: fullData.email,
+          services: Array.isArray(fullData.services) ? fullData.services.map(s => ({...s})) : [],
+          ssh_keys: Array.isArray(fullData.ssh_keys) ? fullData.ssh_keys.map(k => ({...k})) : [],
+          wallets: Array.isArray(fullData.wallets) ? fullData.wallets.map(w => ({...w})) : [],
+          walletAuditLog: Array.isArray(fullData.walletAuditLog) ? [...fullData.walletAuditLog] : [],
+          tombstones: Array.isArray(fullData.tombstones) ? [...fullData.tombstones] : [],
+          deletionReview: Array.isArray(fullData.deletionReview) ? [...fullData.deletionReview] : [],
+        };
+      }
+    });
+  } catch (_) {
+    return { ok: false, error: KeygrainBrowserOwner.safeFailure("OPERATION_ERROR") };
+  }
+
+  const captured = owner.manager.getSensitiveOperationInput(opHandle);
+  if (!captured || !captured.secret || !captured.email) {
+    try { owner.manager.cancelSensitiveOperation(opHandle, "mutation_cancelled"); } catch (_) {}
+    return { ok: false, error: KeygrainBrowserOwner.safeFailure("OPERATION_ERROR") };
+  }
+
+  const nowIso = new Date().toISOString();
+  let updatedCollection;
+
+  if (collectionKey === "wallets") {
+    const current = captured.wallets;
+    if (mutationType === "put") {
+      const { wallet_name, walletName, wallet_id, walletId, chain, counter: rawCounter } = message;
+      if (!walletName && !walletId && !wallet_id) {
+        try { owner.manager.cancelSensitiveOperation(opHandle, "save_wallet_invalid"); } catch (_) {}
+        return { ok: false, error: KeygrainBrowserOwner.safeFailure("INVALID_PARAMS") };
+      }
+      const counter = Number(rawCounter) || 1;
+      if (chain) {
+        const normName = String(walletName || walletId || wallet_id).trim();
+        const normChain = String(chain).toLowerCase().trim();
+        const normEmail = (message.email || captured.email || "").trim().toLowerCase();
+        const existingIdx = current.findIndex(w => (message.id && w.id === message.id) || ((w.wallet_name || "").toLowerCase() === normName && (w.chain || "").toLowerCase() === normChain) || (w.wallet_id && w.wallet_id.toLowerCase() === normName.toLowerCase()));
+        if (existingIdx >= 0) {
+          current[existingIdx] = {
+            ...current[existingIdx],
+            wallet_id: normName.replace(/\s+/g, "-").toLowerCase(),
+            label: current[existingIdx].label || normName,
+            counter,
+            email: normEmail,
+            updated_at: nowIso,
+            notes: message.notes !== undefined ? message.notes : (current[existingIdx].notes || ""),
+          };
+        } else {
+          current.push({
+            id: message.id || generateUuid(),
+            wallet_id: normName.replace(/\s+/g, "-").toLowerCase(),
+            label: normName,
+            wallet_name: normName,
+            chain: normChain,
+            counter,
+            email: normEmail,
+            mode: "keygrain",
+            created_at: nowIso,
+            updated_at: nowIso,
+            notes: message.notes || "",
+          });
+        }
+      } else {
+        const normId = String(walletId || wallet_id || walletName || wallet_name).trim().replace(/\s+/g, "-").toLowerCase();
+        const id = message.id || generateUuid();
+        const words = message.words === 12 ? 12 : 24;
+        const label = message.label !== undefined ? String(message.label) : normId;
+        const notes = message.notes !== undefined ? String(message.notes) : "";
+        const existingIdx = current.findIndex(w => (message.id && w.id === message.id) || (w.wallet_id && w.wallet_id.toLowerCase() === normId) || (w.wallet_name && w.wallet_name.toLowerCase() === normId));
+        if (existingIdx >= 0) {
+          current[existingIdx] = {
+            ...current[existingIdx],
+            wallet_id: normId,
+            label,
+            words,
+            counter,
+            notes,
+            updated_at: nowIso,
+          };
+        } else {
+          current.push({
+            id,
+            wallet_id: normId,
+            label,
+            words,
+            counter,
+            notes,
+            created_at: nowIso,
+            updated_at: nowIso,
+          });
+        }
+      }
+      updatedCollection = current;
+    } else if (mutationType === "delete") {
+      const targetId = message.id;
+      const targetWalletId = (message.wallet_id || message.walletId || message.walletName || message.wallet_name || "").toLowerCase().trim();
+      const targetChain = (message.chain || "").toLowerCase().trim();
+      updatedCollection = current.filter(w => {
+        if (targetId && w.id === targetId) return false;
+        if (targetChain && (w.chain || "").toLowerCase() === targetChain && ((w.wallet_name || "").toLowerCase() === targetWalletId || (w.wallet_id || "").toLowerCase() === targetWalletId)) return false;
+        if (!targetChain && !targetId && ((w.wallet_id || "").toLowerCase() === targetWalletId || (w.wallet_name || "").toLowerCase() === targetWalletId)) return false;
+        return true;
+      });
+    }
+  } else if (collectionKey === "ssh_keys") {
+    const current = captured.ssh_keys;
+    if (mutationType === "put") {
+      const keyName = message.key_name || message.keyName;
+      if (!keyName) {
+        try { owner.manager.cancelSensitiveOperation(opHandle, "save_ssh_key_invalid"); } catch (_) {}
+        return { ok: false, error: KeygrainBrowserOwner.safeFailure("INVALID_PARAMS") };
+      }
+      const cleanKeyName = String(keyName).trim().replace(/\s+/g, "-").toLowerCase();
+      const counter = Number(message.counter) || 1;
+      const comment = (message.comment !== undefined && message.comment !== "") ? String(message.comment).trim() : cleanKeyName;
+      const existingIdx = current.findIndex(k => (message.id && k.id === message.id) || (k.key_name && k.key_name.toLowerCase() === cleanKeyName));
+      const id = message.id || generateUuid();
+      if (existingIdx >= 0) {
+        current[existingIdx] = {
+          ...current[existingIdx],
+          key_name: cleanKeyName,
+          counter,
+          comment,
+          updated_at: nowIso,
+        };
+      } else {
+        current.push({
+          id,
+          key_name: cleanKeyName,
+          counter,
+          comment,
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
+      }
+      updatedCollection = current;
+    } else if (mutationType === "delete") {
+      const targetId = message.id;
+      const targetKeyName = (message.key_name || message.keyName || "").toLowerCase().trim().replace(/\s+/g, "-");
+      updatedCollection = current.filter(k => {
+        if (targetId && k.id === targetId) return false;
+        if (!targetId && targetKeyName && (k.key_name || "").toLowerCase() === targetKeyName) return false;
+        return true;
+      });
+    }
+  }
+
+  const nextFullData = {
+    secret: captured.secret,
+    email: captured.email,
+    services: captured.services,
+    ssh_keys: collectionKey === "ssh_keys" ? updatedCollection : captured.ssh_keys,
+    wallets: collectionKey === "wallets" ? updatedCollection : captured.wallets,
+    walletAuditLog: captured.walletAuditLog,
+    tombstones: captured.tombstones,
+    deletionReview: captured.deletionReview,
+  };
+
+  try {
+    owner.manager.installFullPayloadReplacement({
+      operationHandle: opHandle,
+      fullData: nextFullData,
+      records: nextFullData.services,
+    });
+  } catch (err) {
+    try { owner.manager.cancelSensitiveOperation(opHandle, "mutation_install_failed"); } catch (_) {}
+    return { ok: false, error: KeygrainBrowserOwner.safeFailure("OPERATION_ERROR") };
+  }
+
+  try {
+    await persistV2(nextFullData.email, nextFullData.secret, nextFullData);
+    await updateSession(async (session) => {
+      if (!session) return session;
+      return { ...session, metadata: extractMetadata() };
+    });
+    const storageArea = (typeof chrome !== "undefined" && chrome.storage?.local) ? chrome.storage.local : (typeof browser !== "undefined" && browser.storage?.local ? browser.storage.local : null);
+    if (storageArea) {
+      const { offline_mode } = await storageArea.get("offline_mode");
+      if (!offline_mode) {
+        syncWithServer(nextFullData.secret, nextFullData.email, nextFullData.services, nextFullData.wallets, nextFullData.walletAuditLog, nextFullData.tombstones, 0, false, nextFullData.ssh_keys)
+          .then(res => reconcileSyncResult(res, nextFullData.secret, nextFullData.email))
+          .catch(() => {});
+      }
+    }
+  } catch (_) {}
+
+  return { ok: true, data: updatedCollection };
+}
+
 async function chromeCommitPopupEdit(payload) {
   if (!payload || !payload.email || !payload.secret || !payload.fullData) {
     throw KeygrainBrowserOwner.safeFailure("KEYGRAIN_STALE_OPERATION");
@@ -86,7 +352,7 @@ async function chromeCommitPopupEdit(payload) {
   await persistV2(payload.email, payload.secret, payload.fullData);
   const { offline_mode } = await chrome.storage.local.get("offline_mode");
   if (!offline_mode) {
-    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || []).catch(() => {});
+    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || [], 0, false, payload.fullData.ssh_keys || []).then(res => reconcileSyncResult(res, payload.secret, payload.email)).catch(() => {});
   }
   return {ok: true};
 }
@@ -98,7 +364,7 @@ async function chromeCommitPopupAdd(payload) {
   await persistV2(payload.email, payload.secret, payload.fullData);
   const { offline_mode } = await chrome.storage.local.get("offline_mode");
   if (!offline_mode) {
-    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || []).catch(() => {});
+    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || [], 0, false, payload.fullData.ssh_keys || []).then(res => reconcileSyncResult(res, payload.secret, payload.email)).catch(() => {});
   }
   return {ok: true};
 }
@@ -110,7 +376,7 @@ async function chromeCommitPopupDelete(payload) {
   await persistV2(payload.email, payload.secret, payload.fullData);
   const { offline_mode } = await chrome.storage.local.get("offline_mode");
   if (!offline_mode) {
-    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || []).catch(() => {});
+    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || [], 0, false, payload.fullData.ssh_keys || []).then(res => reconcileSyncResult(res, payload.secret, payload.email)).catch(() => {});
   }
   return {ok: true};
 }
@@ -681,11 +947,13 @@ function preparedPayload(payload) {
     || !Array.isArray(payload.walletAuditLog) || !Array.isArray(payload.tombstones)
     || !Array.isArray(payload.deletionReview)) throw new Error("invalid_payload");
   for (const record of payload.services) if (!plainRecord(record)) throw new Error("invalid_payload");
+  const sshKeys = Array.isArray(payload.sshKeys) ? payload.sshKeys : (Array.isArray(payload.ssh_keys) ? payload.ssh_keys : []);
   return {
     fullData: {
       secret: payload.secret,
       email: payload.email,
       services: payload.services,
+      ssh_keys: sshKeys,
       wallets: payload.wallets,
       walletAuditLog: payload.walletAuditLog,
       tombstones: payload.tombstones,
@@ -698,8 +966,23 @@ function preparedPayload(payload) {
 async function persistV2(email, secret, payload) {
   const key = await deriveStorageKey(secret, email);
   try {
-    const encrypted = await encryptServices(key, email, payload.services, payload.wallets,
-      payload.walletAuditLog, payload.tombstones, payload.deletionReview);
+    let encrypted;
+    const v3Container = {
+      version: 3,
+      services: payload.services || [],
+      ssh_keys: payload.ssh_keys || payload.sshKeys || [],
+      wallets: payload.wallets || [],
+      wallet_audit_log: payload.wallet_audit_log || payload.walletAuditLog || [],
+      tombstones: payload.tombstones || [],
+      deletion_review: payload.deletion_review || payload.deletionReview || [],
+      pending_sync: null
+    };
+    if (typeof encryptServicesV3 === "function" && typeof crypto !== "undefined") {
+      encrypted = await encryptServicesV3(key, email, v3Container);
+    } else {
+      encrypted = await encryptServices(key, email, payload.services, payload.wallets,
+        payload.walletAuditLog || payload.wallet_audit_log || [], payload.tombstones || [], payload.deletionReview || payload.deletion_review || []);
+    }
     await chrome.storage.local.set({
       services: encrypted,
       account_email: (email || "").toLowerCase()
@@ -707,6 +990,10 @@ async function persistV2(email, secret, payload) {
   } finally {
     if (key && typeof key.fill === "function") key.fill(0);
   }
+}
+
+async function persistV3(email, secret, payload) {
+  return persistV2(email, secret, payload);
 }
 
 function requiredArray(value, key) {
@@ -725,6 +1012,7 @@ function preparedFromAccepted(accepted, email, secret) {
     secret,
     email,
     services: accepted.services,
+    sshKeys: accepted.sshKeys || accepted.ssh_keys || [],
     wallets: accepted.wallets,
     walletAuditLog: accepted.walletAuditLog,
     tombstones: accepted.tombstones,
@@ -741,7 +1029,11 @@ function syncLocalV2(result) {
     tombstones: requiredArray(result, "tombstones"),
     deletion_review: requiredArray(result, "review"),
   };
-  return acceptedV2(local);
+  const validated = acceptedV2(local);
+  if (Array.isArray(result.ssh_keys)) {
+    validated.sshKeys = result.ssh_keys;
+  }
+  return validated;
 }
 
 function knownUUIDs(data) {
@@ -823,6 +1115,27 @@ async function readAndPrepare({email, secret, isCreate}) {
           deletion_review: decoded.deletionReview,
         });
         prepared = preparedFromAccepted(accepted, email, secret);
+      } else if (decoded.payloadVersion === 3) {
+        accepted = {
+          services: decoded.services,
+          sshKeys: decoded.sshKeys || [],
+          wallets: decoded.wallets,
+          walletAuditLog: decoded.walletAuditLog,
+          tombstones: decoded.tombstones,
+          deletionReview: decoded.deletionReview,
+          pendingSync: decoded.pendingSync || null,
+          payloadVersion: 3,
+        };
+        prepared = preparedPayload({
+          secret,
+          email,
+          services: accepted.services,
+          sshKeys: accepted.sshKeys,
+          wallets: accepted.wallets,
+          walletAuditLog: accepted.walletAuditLog,
+          tombstones: accepted.tombstones,
+          deletionReview: accepted.deletionReview,
+        });
       } else {
         throw new Error("invalid_payload");
       }
@@ -831,6 +1144,43 @@ async function readAndPrepare({email, secret, isCreate}) {
     }
   } else {
     throw new Error("invalid_payload");
+  }
+
+  if (Array.isArray(accepted?.services)) {
+    if (!Array.isArray(accepted.sshKeys)) accepted.sshKeys = [];
+    let hadLegacySsh = false;
+    for (const s of accepted.services) {
+      if (s && s.ssh && typeof s.ssh === "object") {
+        const rawKeyName = s.ssh.key_name || s.site || "id_ed25519";
+        const cleanKeyName = String(rawKeyName).trim().replace(/\s+/g, "-").toLowerCase();
+        const existingKey = accepted.sshKeys.find(k => (k.key_name && k.key_name.toLowerCase() === cleanKeyName));
+        if (!existingKey) {
+          accepted.sshKeys.push({
+            id: generateUuid(),
+            key_name: cleanKeyName,
+            counter: Number(s.ssh.counter) || 1,
+            comment: s.email || s.site || cleanKeyName,
+            created_at: s.created_at || new Date().toISOString(),
+            updated_at: s.updated_at || new Date().toISOString(),
+          });
+        }
+        delete s.ssh;
+        hadLegacySsh = true;
+      }
+    }
+    if (hadLegacySsh) {
+      migrateMarkers = true;
+      prepared = preparedPayload({
+        secret,
+        email,
+        services: accepted.services,
+        sshKeys: accepted.sshKeys,
+        wallets: accepted.wallets,
+        walletAuditLog: accepted.walletAuditLog,
+        tombstones: accepted.tombstones,
+        deletionReview: accepted.deletionReview,
+      });
+    }
   }
 
   if (migrateMarkers) {
@@ -1612,7 +1962,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }).catch(err => sendResponse(safeMessageError(err)));
     return true;
   }
-  if (action === "getSavedWallets") {
+  if (action === "getSavedWallets" || action === "getWallets") {
     startupPromise.then(async () => {
       const snap = chromeOwner.snapshot();
       if (snap.state === "locked") return sendResponse(KeygrainBrowserOwner.safeFailure("LOCKED"));
@@ -1628,65 +1978,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }).catch(err => sendResponse(safeMessageError(err)));
     return true;
   }
-  if (action === "saveWallet") {
+  if (action === "saveWallet" || action === "deleteWallet") {
+    startupPromise.then(async () => {
+      const res = await executeCollectionMutation({
+        collectionKey: "wallets",
+        mutationType: action === "saveWallet" ? "put" : "delete",
+        message,
+        owner: chromeOwner
+      });
+      if (!res.ok) return sendResponse(res.error);
+      sendResponse(KeygrainBrowserOwner.success({ wallets: res.data }));
+    }).catch(err => sendResponse(safeMessageError(err)));
+    return true;
+  }
+  if (action === "getSshKeys" || action === "getSavedSshKeys") {
     startupPromise.then(async () => {
       const snap = chromeOwner.snapshot();
       if (snap.state === "locked") return sendResponse(KeygrainBrowserOwner.safeFailure("LOCKED"));
-      const { walletName, chain, counter, email } = message;
-      if (!walletName || !chain || !counter) return sendResponse(KeygrainBrowserOwner.safeFailure("INVALID_PARAMS"));
-      let updatedWallets = [];
-      let fullDataToPersist = null;
-      let accountEmail = "";
-      const opHandle = chromeOwner.manager.beginSensitiveOperation({
-        capture: fullData => {
-          if (!fullData) return null;
-          const current = Array.isArray(fullData.wallets) ? [...fullData.wallets] : [];
-          const nowIso = new Date().toISOString();
-          const normName = String(walletName).trim().toLowerCase();
-          const normChain = String(chain).trim().toLowerCase();
-          const normEmail = (email || fullData.email || "").trim().toLowerCase();
-          const existingIdx = current.findIndex(w => (w.wallet_name || "").toLowerCase() === normName && (w.chain || "").toLowerCase() === normChain);
-          if (existingIdx >= 0) {
-            current[existingIdx] = {
-              ...current[existingIdx],
-              counter: Number(counter),
-              email: normEmail,
-              updated_at: nowIso,
-            };
-          } else {
-            current.push({
-              wallet_name: normName,
-              chain: normChain,
-              counter: Number(counter),
-              email: normEmail,
-              mode: "keygrain",
-              created_at: nowIso,
-              updated_at: nowIso,
-              notes: "",
-            });
-          }
-          fullData.wallets = current;
-          updatedWallets = current;
-          fullDataToPersist = fullData;
-          accountEmail = fullData.email || email;
-          return { wallets: current };
-        }
-      });
+      let sshKeys = [];
+      const opHandle = chromeOwner.manager.beginSensitiveOperation({capture: fullData => ({sshKeys: fullData?.ssh_keys || fullData?.sshKeys || []})});
       try {
-        chromeOwner.manager.getSensitiveOperationInput(opHandle);
+        const input = chromeOwner.manager.getSensitiveOperationInput(opHandle);
+        sshKeys = input?.sshKeys || [];
       } finally {
-        try { chromeOwner.manager.completeSensitiveOperation(opHandle, "save_wallet"); } catch (_) {}
+        try { chromeOwner.manager.completeSensitiveOperation(opHandle, "get_saved_ssh_keys"); } catch (_) {}
       }
-      if (fullDataToPersist) {
-        try {
-          const sessionData = await chrome.storage?.session?.get("keygrainSession");
-          const activeSecret = sessionData?.keygrainSession?.secret;
-          if (activeSecret && accountEmail) {
-            await persistV2(accountEmail, activeSecret, fullDataToPersist);
-          }
-        } catch (_) {}
-      }
-      sendResponse(KeygrainBrowserOwner.success({ wallets: updatedWallets }));
+      sendResponse(KeygrainBrowserOwner.success({ssh_keys: sshKeys, sshKeys}));
+    }).catch(err => sendResponse(safeMessageError(err)));
+    return true;
+  }
+  if (action === "saveSshKey" || action === "deleteSshKey") {
+    startupPromise.then(async () => {
+      const res = await executeCollectionMutation({
+        collectionKey: "ssh_keys",
+        mutationType: action === "saveSshKey" ? "put" : "delete",
+        message,
+        owner: chromeOwner
+      });
+      if (!res.ok) return sendResponse(res.error);
+      sendResponse(KeygrainBrowserOwner.success({ ssh_keys: res.data, sshKeys: res.data }));
     }).catch(err => sendResponse(safeMessageError(err)));
     return true;
   }
@@ -1795,8 +2125,73 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) { sendResponse(safeMessageError(error)); }
     return true;
   }
+  if (action === "sync") {
+    startupPromise.then(async () => {
+      const snap = chromeOwner.snapshot();
+      if (snap.state === "locked") return sendResponse(KeygrainBrowserOwner.safeFailure("LOCKED"));
+      const opHandle = chromeOwner.manager.beginSensitiveOperation({
+        capture: fullData => {
+          if (!fullData) return null;
+          return {
+            secret: fullData.secret,
+            email: fullData.email,
+            services: Array.isArray(fullData.services) ? fullData.services.map(s => ({...s})) : [],
+            ssh_keys: Array.isArray(fullData.ssh_keys) ? fullData.ssh_keys.map(k => ({...k})) : [],
+            wallets: Array.isArray(fullData.wallets) ? fullData.wallets.map(w => ({...w})) : [],
+            walletAuditLog: Array.isArray(fullData.walletAuditLog) ? [...fullData.walletAuditLog] : [],
+            tombstones: Array.isArray(fullData.tombstones) ? [...fullData.tombstones] : [],
+            deletionReview: Array.isArray(fullData.deletionReview) ? [...fullData.deletionReview] : [],
+          };
+        }
+      });
+      const captured = chromeOwner.manager.getSensitiveOperationInput(opHandle);
+      if (!captured || !captured.secret || !captured.email) {
+        try { chromeOwner.manager.cancelSensitiveOperation(opHandle, "sync_read_failed"); } catch (_) {}
+        return sendResponse(KeygrainBrowserOwner.safeFailure("OPERATION_ERROR"));
+      }
+      try {
+        const syncRes = await syncWithServer(
+          captured.secret,
+          captured.email,
+          captured.services,
+          captured.wallets,
+          captured.walletAuditLog,
+          captured.tombstones,
+          0,
+          false,
+          captured.ssh_keys
+        );
+        const accepted = syncLocalV2(syncRes);
+        const nextFullData = {
+          secret: captured.secret,
+          email: captured.email,
+          services: accepted.services,
+          wallets: accepted.wallets,
+          ssh_keys: accepted.sshKeys || captured.ssh_keys,
+          walletAuditLog: accepted.walletAuditLog || [],
+          tombstones: accepted.tombstones || [],
+          deletionReview: accepted.deletionReview || [],
+        };
+        chromeOwner.manager.installFullPayloadReplacement({
+          operationHandle: opHandle,
+          fullData: nextFullData,
+          records: nextFullData.services,
+        });
+        await persistV2(nextFullData.email, nextFullData.secret, nextFullData);
+        await updateSession(async (session) => {
+          if (!session) return session;
+          return { ...session, metadata: extractMetadata() };
+        });
+        sendResponse(KeygrainBrowserOwner.success({ syncResult: syncRes }));
+      } catch (err) {
+        try { chromeOwner.manager.cancelSensitiveOperation(opHandle, "sync_failed"); } catch (_) {}
+        sendResponse(safeMessageError(err));
+      }
+    }).catch(err => sendResponse(safeMessageError(err)));
+    return true;
+  }
   if (KeygrainBrowserOwner.isExactPopupRequest(message)
-    && (action === "heartbeat" || action === "extendSensitive" || action === "sync"
+    && (action === "heartbeat" || action === "extendSensitive"
       || KeygrainBrowserOwner.POPUP_RESERVED_ACTIONS.includes(action))) {
     startupPromise.then(async () => {
       const res = chromeOwner.dispatchLegacyOrPhaseB(sender, chrome.runtime.id, message, "chrome", KEYGRAIN_EXTENSION_ORIGIN);

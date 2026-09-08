@@ -181,6 +181,46 @@ internal object SyncStore {
         getPrefs(context).edit().putString("wallets", arr.toString()).apply()
     }
 
+    fun putWallet(context: Context, wallet: WalletEntry) {
+        val current = getWallets(context).toMutableList()
+        val targetKey = WalletEntry.mergeKey(wallet)
+        val idx = current.indexOfFirst { it.id == wallet.id || WalletEntry.mergeKey(it) == targetKey }
+        if (idx >= 0) {
+            current[idx] = wallet
+        } else {
+            current.add(wallet)
+        }
+        saveWallets(context, current)
+    }
+
+    fun removeWallet(context: Context, wallet: WalletEntry): Boolean {
+        val current = getWallets(context).toMutableList()
+        val targetKey = WalletEntry.mergeKey(wallet)
+        val removed = current.removeAll { it.id == wallet.id || WalletEntry.mergeKey(it) == targetKey }
+        if (removed) saveWallets(context, current)
+        return removed
+    }
+
+    fun putSshKey(context: Context, key: SshKeyEntry) {
+        val current = getSshKeys(context).toMutableList()
+        val targetKey = SshKeyEntry.mergeKey(key)
+        val idx = current.indexOfFirst { it.id == key.id || SshKeyEntry.mergeKey(it) == targetKey }
+        if (idx >= 0) {
+            current[idx] = key
+        } else {
+            current.add(key)
+        }
+        saveSshKeys(context, current)
+    }
+
+    fun removeSshKey(context: Context, key: SshKeyEntry): Boolean {
+        val current = getSshKeys(context).toMutableList()
+        val targetKey = SshKeyEntry.mergeKey(key)
+        val removed = current.removeAll { it.id == key.id || SshKeyEntry.mergeKey(it) == targetKey }
+        if (removed) saveSshKeys(context, current)
+        return removed
+    }
+
     fun getAuditLog(context: Context): List<WalletAuditEntry> {
         val json = getPrefs(context).getString("wallet_audit_log", "[]") ?: "[]"
         val arr = JSONArray(json)

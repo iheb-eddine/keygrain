@@ -31,7 +31,7 @@ internal object SyncBlob {
         syncConflicts: List<SyncConflict>
     ): String {
         val orderedServices = services.sortedBy { it.id ?: "" }
-        val orderedSshKeys = sshKeys.sortedBy { "${it.keyName.lowercase()}:${it.email.lowercase()}:${it.id}" }
+        val orderedSshKeys = sshKeys.sortedBy { SshKeyEntry.mergeKey(it) }
         val orderedWallets = wallets.sortedBy { it.walletName.lowercase() + ":" + it.chain.lowercase() }
         val orderedAudit = auditLog.sortedBy { "${it.timestamp}\u0000${it.walletName}\u0000${it.chain}\u0000${it.action}" }
         val orderedConflicts = syncConflicts.sortedBy { it.dedupeKey() }

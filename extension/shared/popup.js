@@ -43,6 +43,7 @@
   const SVG_FILL = `<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M14 0H2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zM4 3h8v2H4V3zm0 4h8v2H4V7zm0 4h5v2H4v-2z"/></svg>`;
   const SVG_EDIT = `<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5L13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175l-.886 2.215 2.214-.886L3.032 10.675z"/></svg>`;
   const SVG_DELETE = `<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4L4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>`;
+  const SVG_PLUS = `<svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm3.5 7.75h-2.75v2.75h-1.5V8.75H4.5v-1.5h2.75V4.5h1.5v2.75h2.75v1.5z"/></svg>`;
 
   const loadingScreen = document.getElementById("loading-screen");
   const lockScreen = document.getElementById("lock-screen");
@@ -76,6 +77,11 @@
   const leaseCountdown = document.getElementById("lease-countdown");
   const headerExtendBtn = document.getElementById("header-extend-btn");
   const lockError = document.getElementById("lock-error");
+
+  const tabNav = document.getElementById("tab-nav");
+  const tabLogins = document.getElementById("tab-logins");
+  const tabSsh = document.getElementById("tab-ssh");
+  const tabWallets = document.getElementById("tab-wallets");
 
   const sshDialog = document.getElementById("ssh-dialog");
   const sshDialogSubtitle = document.getElementById("ssh-dialog-subtitle");
@@ -142,6 +148,12 @@
     lockError.classList.add("hidden");
   }
 
+  leaseStateBadge?.addEventListener("click", () => {
+    if (currentOwnerState === "metadata") {
+      promptReauth(() => requestOwnerView());
+    }
+  });
+
   function updateSyncIndicator(isOffline) {
     const syncIndicator = document.getElementById("sync-indicator");
     const syncTime = document.getElementById("sync-time");
@@ -157,6 +169,23 @@
         syncIndicator.classList.add("hidden");
       }
     }
+  }
+
+  const syncIndicatorEl = document.getElementById("sync-indicator");
+  if (syncIndicatorEl) {
+    if (syncIndicatorEl.style) syncIndicatorEl.style.cursor = "pointer";
+    syncIndicatorEl.title = "Click to sync now";
+    syncIndicatorEl.addEventListener("click", async () => {
+      const syncTime = document.getElementById("sync-time");
+      if (syncTime) syncTime.textContent = "Syncing...";
+      try {
+        const res = await sendMsg({action: "sync"});
+        if (res?.ok) {
+          await requestOwnerView();
+        }
+      } catch (_) {}
+      updateSyncIndicator(false);
+    });
   }
 
   function closeSshDialog() {
@@ -232,13 +261,80 @@
   const addTotpSeedGroup = document.getElementById("add-totp-seed-group");
   const addTotpSeed = document.getElementById("add-totp-seed");
   const addTotpSection = document.getElementById("add-totp-section");
-  const addSshSection = document.getElementById("add-ssh-section");
-  const addSshKeyname = document.getElementById("add-ssh-keyname");
   const addEditWarning = document.getElementById("add-edit-warning");
   const rotateSection = document.getElementById("rotate-section");
   const rotateBtn = document.getElementById("rotate-btn");
   const addCancel = document.getElementById("add-cancel");
   const addConfirm = document.getElementById("add-confirm");
+
+  const sshEditDialog = document.getElementById("ssh-edit-dialog");
+  const sshEditDialogTitle = document.getElementById("ssh-edit-dialog-title");
+  const sshEditKeyname = document.getElementById("ssh-edit-keyname");
+  const sshEditCounter = document.getElementById("ssh-edit-counter");
+  const sshEditComment = document.getElementById("ssh-edit-comment");
+  const sshEditDelete = document.getElementById("ssh-edit-delete");
+  const sshEditCancel = document.getElementById("ssh-edit-cancel");
+  const sshEditConfirm = document.getElementById("ssh-edit-confirm");
+
+  const walletEditDialog = document.getElementById("wallet-edit-dialog");
+  const walletEditDialogTitle = document.getElementById("wallet-edit-dialog-title");
+  const walletEditId = document.getElementById("wallet-edit-id");
+  const walletEditLabel = document.getElementById("wallet-edit-label");
+  const walletEditWords = document.getElementById("wallet-edit-words");
+  const walletEditCounter = document.getElementById("wallet-edit-counter");
+  const walletEditNotes = document.getElementById("wallet-edit-notes");
+  const walletEditDelete = document.getElementById("wallet-edit-delete");
+  const walletEditCancel = document.getElementById("wallet-edit-cancel");
+  const walletEditConfirm = document.getElementById("wallet-edit-confirm");
+
+  let currentEditSshItem = null;
+  let currentEditWalletItem = null;
+
+  function openSshEditDialog(item) {
+    currentEditSshItem = item || null;
+    if (item) {
+      if (sshEditDialogTitle) sshEditDialogTitle.textContent = "Edit SSH Key";
+      if (sshEditConfirm) sshEditConfirm.textContent = "Save";
+      if (sshEditKeyname) sshEditKeyname.value = item.keyName || item.key_name || "";
+      if (sshEditCounter) sshEditCounter.value = item.counter || 1;
+      if (sshEditComment) sshEditComment.value = item.comment || "";
+      if (sshEditDelete) sshEditDelete.classList.remove("hidden");
+    } else {
+      if (sshEditDialogTitle) sshEditDialogTitle.textContent = "Add SSH Key";
+      if (sshEditConfirm) sshEditConfirm.textContent = "Add";
+      if (sshEditKeyname) sshEditKeyname.value = "";
+      if (sshEditCounter) sshEditCounter.value = 1;
+      if (sshEditComment) sshEditComment.value = "";
+      if (sshEditDelete) sshEditDelete.classList.add("hidden");
+    }
+    sshEditDialog?.classList.remove("hidden");
+    sshEditKeyname?.focus();
+  }
+
+  function openWalletEditDialog(item) {
+    currentEditWalletItem = item || null;
+    if (item) {
+      if (walletEditDialogTitle) walletEditDialogTitle.textContent = "Edit Wallet";
+      if (walletEditConfirm) walletEditConfirm.textContent = "Save";
+      if (walletEditId) walletEditId.value = item.wallet_id || item.walletId || item.walletName || item.wallet_name || "";
+      if (walletEditLabel) walletEditLabel.value = item.label || item.walletName || "";
+      if (walletEditWords) walletEditWords.value = String(item.words === 12 ? 12 : 24);
+      if (walletEditCounter) walletEditCounter.value = item.counter || 1;
+      if (walletEditNotes) walletEditNotes.value = item.notes || "";
+      if (walletEditDelete) walletEditDelete.classList.remove("hidden");
+    } else {
+      if (walletEditDialogTitle) walletEditDialogTitle.textContent = "Add HD Wallet";
+      if (walletEditConfirm) walletEditConfirm.textContent = "Add";
+      if (walletEditId) walletEditId.value = "";
+      if (walletEditLabel) walletEditLabel.value = "";
+      if (walletEditWords) walletEditWords.value = "24";
+      if (walletEditCounter) walletEditCounter.value = 1;
+      if (walletEditNotes) walletEditNotes.value = "";
+      if (walletEditDelete) walletEditDelete.classList.add("hidden");
+    }
+    walletEditDialog?.classList.remove("hidden");
+    walletEditId?.focus();
+  }
 
   const reauthDialog = document.getElementById("reauth-dialog");
   const reauthSecret = document.getElementById("reauth-secret");
@@ -302,6 +398,9 @@
   })();
 
   let popupRenderItems = [];
+  let currentTab = "logins";
+  let popupSshItems = [];
+  let popupWalletItems = [];
   let currentOwnerState = null;
   let currentSnapshot = null;
   let renderEpoch = 0;
@@ -312,6 +411,7 @@
   let currentEditId = null;
   let deleteTargetId = null;
   let activeTimers = new Set();
+  let autoSyncAttempted = false;
 
   function registerTimer(timerId) {
     if (timerId) {
@@ -463,8 +563,13 @@
         for (const item of items) {
           const match = popupRenderItems.find(p => p.id === item.id);
           if (match) match.sshToken = item.selectionToken;
+          const sshMatch = popupSshItems?.find(p => p.id === item.id || (p.keyName && p.keyName === item.keyName));
+          if (sshMatch) {
+            sshMatch.sshToken = item.selectionToken;
+            sshMatch.selectionToken = item.selectionToken;
+          }
         }
-        const match = items.find(i => i.id === id);
+        const match = items.find(i => i.id === id || (i.keyName && i.keyName === id) || (i.key_name && i.key_name === id));
         return match?.selectionToken || null;
       }
     } catch (_) {}
@@ -473,29 +578,29 @@
 
   async function openSshDialog(item) {
     if (!item) return;
-    if (!item.sshToken) {
+    let token = item.selectionToken || item.sshToken;
+    if (!token) {
       if (currentOwnerState === "metadata") {
         promptReauth({action: () => openSshDialog(item), id: item.id});
         return;
       }
-      const token = await acquireSshToken(item.id);
+      token = await acquireSshToken(item.id || item.keyName || item.key_name);
       if (!token) return;
-      item.sshToken = token;
     }
-    const token = item.sshToken;
+    item.selectionToken = null;
     item.sshToken = null;
     try {
       let genRes = await sendMsg({action: FIXED_ACTIONS.sshGenerate, selectionToken: token});
       if (genRes?.code === "KEYGRAIN_STALE_OPERATION") {
-        const freshToken = await acquireSshToken(item.id);
+        const freshToken = await acquireSshToken(item.id || item.keyName || item.key_name);
         if (freshToken) {
           genRes = await sendMsg({action: FIXED_ACTIONS.sshGenerate, selectionToken: freshToken});
         }
       }
       if (genRes?.ok && genRes.result?.authorizedKeys) {
-        const rawKeyName = item.sshKeyName || item.name || item.site || "id_ed25519";
+        const rawKeyName = item.keyName || item.key_name || item.name || item.site || "id_ed25519";
         currentSshDownloadFilename = rawKeyName.replace(/[^a-zA-Z0-9_\-]/g, "_");
-        if (sshDialogSubtitle) sshDialogSubtitle.textContent = `Key name: ${item.sshKeyName || "default"}`;
+        if (sshDialogSubtitle) sshDialogSubtitle.textContent = `Key name: ${item.keyName || item.key_name || "default"}`;
         if (sshDialogPubkey) sshDialogPubkey.value = genRes.result.authorizedKeys;
         if (sshDialogPrivkey) sshDialogPrivkey.value = genRes.result.privateKeyPem || "";
         if (sshPrivkeyContainer) sshPrivkeyContainer.classList.add("hidden");
@@ -775,7 +880,17 @@
 
   function showLockScreen() {
     renderEpoch++;
+    autoSyncAttempted = false;
     popupRenderItems = [];
+    currentTab = "logins";
+    popupSshItems = [];
+    popupWalletItems = [];
+    tabLogins?.classList.add("active");
+    tabLogins?.setAttribute("aria-selected", "true");
+    tabSsh?.classList.remove("active");
+    tabSsh?.setAttribute("aria-selected", "false");
+    tabWallets?.classList.remove("active");
+    tabWallets?.setAttribute("aria-selected", "false");
     currentOwnerState = "locked";
     currentSnapshot = null;
     clearLockError();
@@ -914,6 +1029,11 @@
   }
 
   function validateSshOptionsResponse(response) {
+    if (!response || typeof response !== "object" || response.ok !== true || !response.result || !Array.isArray(response.result.items)) return [];
+    return response.result.items;
+  }
+
+  function validateWalletOptionsResponse(response) {
     if (!response || typeof response !== "object" || response.ok !== true || !response.result || !Array.isArray(response.result.items)) return [];
     return response.result.items;
   }
@@ -1292,10 +1412,6 @@
               }
             }
             if (addTotpSection) addTotpSection.open = !!detail.totp?.mode;
-            if (addSshKeyname) {
-              addSshKeyname.value = detail.ssh?.key_name || "";
-            }
-            if (addSshSection) addSshSection.open = !!detail.ssh?.key_name;
             addDialog?.classList.remove("hidden");
             addName?.focus();
           } else if (detailRes?.code === "KEYGRAIN_EXPIRED") {
@@ -1506,81 +1622,407 @@
         row.appendChild(totpRow);
       }
 
-      // --- Inline SSH row (if service has SSH) ---
-      if (item.sshKeyName) {
-        const sshRow = document.createElement("div");
-        sshRow.className = "ssh-row";
+      serviceList.appendChild(row);
+    }
+  }
 
-        const badge = document.createElement("span");
-        badge.className = "ssh-badge";
-        badge.textContent = "SSH";
+  function renderSshCards(items, epoch) {
+    if (!serviceList) return;
+    serviceList.textContent = "";
 
-        const keyName = document.createElement("span");
-        keyName.className = "ssh-keyname";
-        keyName.textContent = item.sshKeyName;
+    if (!items || items.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "No SSH keys found.";
+      serviceList.appendChild(empty);
+      return;
+    }
 
-        const copyPubBtn = document.createElement("button");
-        copyPubBtn.className = "ssh-copy-btn";
-        copyPubBtn.type = "button";
-        copyPubBtn.innerHTML = SVG_COPY + " Copy pubkey";
-        copyPubBtn.addEventListener("click", async () => {
-          copyPubBtn.disabled = true;
-          try {
-            let token = item.sshToken;
-            if (!token) {
-              if (currentOwnerState === "metadata") {
-                promptReauth({action: "copyPub", id: item.id});
-                return;
-              }
-              token = await acquireSshToken(item.id);
-              if (!token) return;
-            }
-            item.sshToken = null;
-            let genRes = await sendMsg({action: FIXED_ACTIONS.sshGenerate, selectionToken: token});
-            if (genRes?.code === "KEYGRAIN_STALE_OPERATION") {
-              const freshToken = await acquireSshToken(item.id);
-              if (freshToken) {
-                genRes = await sendMsg({action: FIXED_ACTIONS.sshGenerate, selectionToken: freshToken});
-              }
-            }
-            if (genRes?.ok && genRes.result?.authorizedKeys) {
-              if (typeof navigator !== "undefined" && navigator?.clipboard?.writeText) {
-                await navigator.clipboard.writeText(genRes.result.authorizedKeys);
-              }
-              showStatus(statusEl, "SSH public key copied!");
-            } else if (genRes?.code === "KEYGRAIN_EXPIRED") {
-              promptReauth({action: "copyPub", id: item.id});
-            } else {
-              showStatus(statusEl, "Failed to copy SSH public key.");
-            }
-          } catch (_) {
-          } finally {
-            copyPubBtn.disabled = false;
-          }
-        });
-
-        const viewKeysBtn = document.createElement("button");
-        viewKeysBtn.className = "ssh-copy-btn";
-        viewKeysBtn.type = "button";
-        viewKeysBtn.innerHTML = SVG_EYE + " View Keys";
-        viewKeysBtn.addEventListener("click", () => {
-          openSshDialog(item);
-        });
-
-        sshRow.appendChild(badge);
-        sshRow.appendChild(keyName);
-        sshRow.appendChild(copyPubBtn);
-        sshRow.appendChild(viewKeysBtn);
-        row.appendChild(sshRow);
+    for (const [index, item] of items.entries()) {
+      const card = document.createElement("div");
+      card.className = "service-item ssh-card";
+      card.id = "ssh-item-" + index;
+      if (typeof card.setAttribute === "function") {
+        card.setAttribute("role", "option");
+        card.setAttribute("tabindex", "-1");
+        card.setAttribute("aria-selected", "false");
       }
 
-      serviceList.appendChild(row);
+      const header = document.createElement("div");
+      header.className = "ssh-card-header";
+
+      const topRow = document.createElement("div");
+      topRow.className = "ssh-card-top";
+
+      const title = document.createElement("span");
+      title.className = "ssh-card-title";
+      title.textContent = item.keyName || item.key_name || item.site || "id_ed25519";
+
+      const counterBadge = document.createElement("span");
+      counterBadge.className = "counter-badge";
+      counterBadge.textContent = "v" + (item.counter || 1);
+
+      topRow.appendChild(title);
+      topRow.appendChild(counterBadge);
+      header.appendChild(topRow);
+
+      const commentText = item.comment || "";
+      if (commentText) {
+        const comment = document.createElement("div");
+        comment.className = "ssh-card-comment";
+        comment.textContent = commentText;
+        header.appendChild(comment);
+      }
+
+      card.appendChild(header);
+
+      const actions = document.createElement("div");
+      actions.className = "service-actions ssh-card-actions";
+
+      const copyPubBtn = document.createElement("button");
+      copyPubBtn.className = "ssh-copy-btn";
+      copyPubBtn.type = "button";
+      copyPubBtn.innerHTML = SVG_COPY + " Copy pubkey";
+      copyPubBtn.addEventListener("click", async () => {
+        copyPubBtn.disabled = true;
+        try {
+          let token = item.selectionToken || item.sshToken;
+          if (!token) {
+            if (currentOwnerState === "metadata") {
+              promptReauth({action: "copyPub", id: item.id});
+              return;
+            }
+            token = await acquireSshToken(item.id || item.keyName || item.key_name);
+            if (!token) return;
+          }
+          item.selectionToken = null;
+          item.sshToken = null;
+          let genRes = await sendMsg({action: FIXED_ACTIONS.sshGenerate, selectionToken: token});
+          if (genRes?.code === "KEYGRAIN_STALE_OPERATION") {
+            const freshToken = await acquireSshToken(item.id || item.keyName || item.key_name);
+            if (freshToken) {
+              genRes = await sendMsg({action: FIXED_ACTIONS.sshGenerate, selectionToken: freshToken});
+            }
+          }
+          if (genRes?.ok && genRes.result?.authorizedKeys) {
+            if (typeof navigator !== "undefined" && navigator?.clipboard?.writeText) {
+              await navigator.clipboard.writeText(genRes.result.authorizedKeys);
+            }
+            showStatus(statusEl, "SSH public key copied!");
+          } else if (genRes?.code === "KEYGRAIN_EXPIRED") {
+            promptReauth({action: "copyPub", id: item.id});
+          } else {
+            showStatus(statusEl, "Failed to copy SSH public key.");
+          }
+        } catch (_) {
+        } finally {
+          copyPubBtn.disabled = false;
+        }
+      });
+
+      const viewKeysBtn = document.createElement("button");
+      viewKeysBtn.className = "ssh-copy-btn";
+      viewKeysBtn.type = "button";
+      viewKeysBtn.innerHTML = SVG_EYE + " View Keys";
+      viewKeysBtn.addEventListener("click", () => {
+        openSshDialog(item);
+      });
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "ssh-copy-btn";
+      editBtn.type = "button";
+      editBtn.innerHTML = SVG_EDIT + " Edit";
+      editBtn.title = "Edit SSH key";
+      editBtn.setAttribute("aria-label", "Edit SSH key");
+      editBtn.addEventListener("click", () => {
+        openSshEditDialog(item);
+      });
+
+      actions.appendChild(copyPubBtn);
+      actions.appendChild(viewKeysBtn);
+      actions.appendChild(editBtn);
+      card.appendChild(actions);
+
+      serviceList.appendChild(card);
+    }
+  }
+
+  function renderWalletCards(items, epoch) {
+    if (!serviceList) return;
+    serviceList.textContent = "";
+
+    if (!items || items.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "No wallets found.";
+      serviceList.appendChild(empty);
+      return;
+    }
+
+    for (const [index, item] of items.entries()) {
+      const card = document.createElement("div");
+      card.className = "service-item wallet-card";
+      card.id = "wallet-item-" + index;
+      if (typeof card.setAttribute === "function") {
+        card.setAttribute("role", "option");
+        card.setAttribute("tabindex", "-1");
+        card.setAttribute("aria-selected", "false");
+      }
+
+      const header = document.createElement("div");
+      header.className = "wallet-card-header";
+
+      const title = document.createElement("span");
+      title.className = "wallet-card-title";
+      title.style.fontWeight = "600";
+      title.textContent = item.label || item.wallet_id || item.walletId || item.walletName || "Wallet";
+
+      const wordsBadge = document.createElement("span");
+      wordsBadge.className = "wallet-chain-badge";
+      wordsBadge.textContent = item.chain || ((item.words === 12 ? 12 : 24) + " words");
+      title.appendChild(wordsBadge);
+
+      header.appendChild(title);
+
+      const counterBadge = document.createElement("span");
+      counterBadge.className = "counter-badge";
+      counterBadge.textContent = "v" + (item.counter || 1);
+      header.appendChild(counterBadge);
+
+      const notesText = item.notes || "";
+      if (notesText) {
+        const notes = document.createElement("div");
+        notes.className = "wallet-card-notes";
+        notes.textContent = notesText;
+        header.appendChild(notes);
+      }
+
+      card.appendChild(header);
+
+      const mnemonicRow = document.createElement("div");
+      mnemonicRow.className = "wallet-mnemonic-row";
+
+      const mnemonicText = document.createElement("span");
+      mnemonicText.className = "wallet-mnemonic-text masked";
+      mnemonicText.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+
+      let revealedMnemonic = null;
+
+      const revealBtn = document.createElement("button");
+      revealBtn.className = "ssh-reveal-btn";
+      revealBtn.type = "button";
+      revealBtn.textContent = "Reveal";
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "ssh-reveal-btn";
+      copyBtn.type = "button";
+      copyBtn.textContent = "Copy";
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "ssh-reveal-btn";
+      editBtn.type = "button";
+      editBtn.innerHTML = SVG_EDIT + " Edit";
+      editBtn.title = "Edit wallet";
+      editBtn.setAttribute("aria-label", "Edit wallet");
+      editBtn.addEventListener("click", () => {
+        openWalletEditDialog(item);
+      });
+
+      revealBtn.addEventListener("click", async () => {
+        if (revealedMnemonic) {
+          if (mnemonicText.classList.contains("masked")) {
+            mnemonicText.classList.remove("masked");
+            mnemonicText.textContent = revealedMnemonic;
+            revealBtn.textContent = "Hide";
+          } else {
+            mnemonicText.classList.add("masked");
+            mnemonicText.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+            revealBtn.textContent = "Reveal";
+          }
+          return;
+        }
+
+        if (currentOwnerState === "metadata") {
+          promptReauth(async () => {
+            await requestOwnerView();
+            const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+            popupWalletItems = wRes?.result?.items || [];
+            renderWalletCards(popupWalletItems, renderEpoch);
+          });
+          return;
+        }
+
+        let token = item.selectionToken;
+        if (!token) {
+          const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+          const freshItems = wRes?.result?.items || [];
+          popupWalletItems = freshItems;
+          const match = freshItems.find(w => (w.id === item.id || (w.wallet_id && w.wallet_id === (item.wallet_id || item.walletId || item.walletName)) || (w.walletName && w.walletName === item.walletName)));
+          token = match?.selectionToken || null;
+          if (!token) {
+            showStatus(statusEl, "Wallet token expired or unavailable.");
+            return;
+          }
+        }
+        item.selectionToken = null;
+        revealBtn.disabled = true;
+        try {
+          let genRes = await sendMsg({action: FIXED_ACTIONS.walletGenerate, selectionToken: token});
+          if (genRes?.code === "KEYGRAIN_STALE_OPERATION") {
+            const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+            const freshItems = wRes?.result?.items || [];
+            popupWalletItems = freshItems;
+            const match = freshItems.find(w => (w.id === item.id || (w.wallet_id && w.wallet_id === (item.wallet_id || item.walletId || item.walletName)) || (w.walletName && w.walletName === item.walletName)));
+            const freshToken = match?.selectionToken || null;
+            if (freshToken) {
+              genRes = await sendMsg({action: FIXED_ACTIONS.walletGenerate, selectionToken: freshToken});
+            }
+          }
+          if (genRes?.ok && genRes.result?.mnemonic) {
+            revealedMnemonic = genRes.result.mnemonic;
+            mnemonicText.classList.remove("masked");
+            mnemonicText.textContent = revealedMnemonic;
+            revealBtn.textContent = "Hide";
+          } else if (genRes?.code === "KEYGRAIN_EXPIRED") {
+            promptReauth(async () => {
+              await requestOwnerView();
+              const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+              popupWalletItems = wRes?.result?.items || [];
+              renderWalletCards(popupWalletItems, renderEpoch);
+            });
+          } else {
+            showStatus(statusEl, "Failed to reveal wallet mnemonic.");
+          }
+        } catch (_) {
+        } finally {
+          revealBtn.disabled = false;
+        }
+      });
+
+      copyBtn.addEventListener("click", async () => {
+        if (revealedMnemonic) {
+          if (typeof navigator !== "undefined" && navigator?.clipboard?.writeText) {
+            await navigator.clipboard.writeText(revealedMnemonic);
+          }
+          showStatus(statusEl, "Wallet mnemonic copied!");
+          return;
+        }
+
+        if (currentOwnerState === "metadata") {
+          promptReauth(async () => {
+            await requestOwnerView();
+            const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+            popupWalletItems = wRes?.result?.items || [];
+            renderWalletCards(popupWalletItems, renderEpoch);
+          });
+          return;
+        }
+
+        let token = item.selectionToken;
+        if (!token) {
+          const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+          const freshItems = wRes?.result?.items || [];
+          popupWalletItems = freshItems;
+          const match = freshItems.find(w => (w.id === item.id || (w.wallet_id && w.wallet_id === (item.wallet_id || item.walletId || item.walletName)) || (w.walletName && w.walletName === item.walletName)));
+          token = match?.selectionToken || null;
+          if (!token) {
+            showStatus(statusEl, "Wallet token expired or unavailable.");
+            return;
+          }
+        }
+        item.selectionToken = null;
+        copyBtn.disabled = true;
+        try {
+          let genRes = await sendMsg({action: FIXED_ACTIONS.walletGenerate, selectionToken: token});
+          if (genRes?.code === "KEYGRAIN_STALE_OPERATION") {
+            const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+            const freshItems = wRes?.result?.items || [];
+            popupWalletItems = freshItems;
+            const match = freshItems.find(w => (w.id === item.id || (w.wallet_id && w.wallet_id === (item.wallet_id || item.walletId || item.walletName)) || (w.walletName && w.walletName === item.walletName)));
+            const freshToken = match?.selectionToken || null;
+            if (freshToken) {
+              genRes = await sendMsg({action: FIXED_ACTIONS.walletGenerate, selectionToken: freshToken});
+            }
+          }
+          if (genRes?.ok && genRes.result?.mnemonic) {
+            revealedMnemonic = genRes.result.mnemonic;
+            if (typeof navigator !== "undefined" && navigator?.clipboard?.writeText) {
+              await navigator.clipboard.writeText(revealedMnemonic);
+            }
+            showStatus(statusEl, "Wallet mnemonic copied!");
+          } else if (genRes?.code === "KEYGRAIN_EXPIRED") {
+            promptReauth(async () => {
+              await requestOwnerView();
+              const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+              popupWalletItems = wRes?.result?.items || [];
+              renderWalletCards(popupWalletItems, renderEpoch);
+            });
+          } else {
+            showStatus(statusEl, "Failed to generate wallet mnemonic.");
+          }
+        } catch (_) {
+        } finally {
+          copyBtn.disabled = false;
+        }
+      });
+
+      mnemonicRow.appendChild(mnemonicText);
+      mnemonicRow.appendChild(revealBtn);
+      mnemonicRow.appendChild(copyBtn);
+      mnemonicRow.appendChild(editBtn);
+      card.appendChild(mnemonicRow);
+
+      serviceList.appendChild(card);
+    }
+  }
+
+  function updateAddButton(tab) {
+    if (!addBtn) return;
+    if (tab === "ssh") {
+      addBtn.innerHTML = SVG_PLUS + " Add SSH key";
+      addBtn.title = "Add SSH key";
+      if (typeof addBtn.setAttribute === "function") {
+        addBtn.setAttribute("aria-label", "Add SSH key");
+      }
+    } else if (tab === "wallets") {
+      addBtn.innerHTML = SVG_PLUS + " Add wallet";
+      addBtn.title = "Add wallet";
+      if (typeof addBtn.setAttribute === "function") {
+        addBtn.setAttribute("aria-label", "Add wallet");
+      }
+    } else {
+      addBtn.innerHTML = SVG_PLUS + " Add service";
+      addBtn.title = "Add service";
+      if (typeof addBtn.setAttribute === "function") {
+        addBtn.setAttribute("aria-label", "Add service");
+      }
+    }
+  }
+
+  function renderActiveTabList(epoch, state) {
+    updateAddButton(currentTab);
+    const query = searchInput?.value?.trim() || "";
+    if (currentTab === "logins") {
+      const items = (query && typeof getFilteredServices === "function")
+        ? getFilteredServices(popupRenderItems, query)
+        : popupRenderItems;
+      renderFullServiceList(items, epoch, state);
+    } else if (currentTab === "ssh") {
+      const items = (query && typeof getFilteredSshKeys === "function")
+        ? getFilteredSshKeys(popupSshItems, query)
+        : popupSshItems;
+      renderSshCards(items, epoch);
+    } else if (currentTab === "wallets") {
+      const items = (query && typeof getFilteredWallets === "function")
+        ? getFilteredWallets(popupWalletItems, query)
+        : popupWalletItems;
+      renderWalletCards(items, epoch);
     }
   }
 
   function renderItems(items, state) {
     popupRenderItems = items || [];
-    renderFullServiceList(popupRenderItems, renderEpoch, state);
+    renderActiveTabList(renderEpoch, state);
   }
 
   async function requestOwnerView() {
@@ -1623,11 +2065,12 @@
       const boundedItems = validateItemsResponse(response);
 
       if (state.state === "full") {
-        const [pwRes, selRes, totpRes, sshRes] = await Promise.all([
+        const [pwRes, selRes, totpRes, sshRes, walletRes] = await Promise.all([
           sendMsg({action: FIXED_ACTIONS.passwordOptions}),
           sendMsg({action: FIXED_ACTIONS.selectionOptions}),
           sendMsg({action: FIXED_ACTIONS.totpOptions}),
           sendMsg({action: FIXED_ACTIONS.sshOptions}),
+          sendMsg({action: FIXED_ACTIONS.walletOptions}),
         ]);
         if (epoch !== renderEpoch) return;
 
@@ -1643,6 +2086,9 @@
         const selItems = validateSelectionOptionsResponse(selRes);
         const totpItems = validateTotpOptionsResponse(totpRes);
         const sshItems = validateSshOptionsResponse(sshRes);
+        popupSshItems = Array.isArray(sshItems) ? sshItems : [];
+        const walletItems = validateWalletOptionsResponse(walletRes);
+        popupWalletItems = Array.isArray(walletItems) ? walletItems : [];
 
         const mergedMap = new Map();
         for (const item of boundedItems) {
@@ -1663,13 +2109,6 @@
             const existing = mergedMap.get(item.id);
             existing.totpToken = item.selectionToken;
             existing.hasTotp = true;
-          }
-        }
-        for (const item of sshItems) {
-          if (item.id && mergedMap.has(item.id)) {
-            const existing = mergedMap.get(item.id);
-            existing.sshToken = item.selectionToken;
-            existing.sshKeyName = item.keyName || "id_ed25519";
           }
         }
 
@@ -1696,11 +2135,7 @@
           }
         }
         currentSnapshot = postState;
-        if (searchInput?.value?.trim() && typeof getFilteredServices === "function") {
-          renderFullServiceList(getFilteredServices(popupRenderItems, searchInput.value.trim()), epoch, state);
-        } else {
-          renderFullServiceList(popupRenderItems, epoch, state);
-        }
+        renderActiveTabList(epoch, state);
 
         const fullExpiresAt = postState.fullExpiresAt || state.fullExpiresAt;
         if (typeof fullExpiresAt === "number" && fullExpiresAt > 0) {
@@ -1770,6 +2205,14 @@
         }
       }
       showMainScreen();
+      if (!autoSyncAttempted && state.state === "full") {
+        autoSyncAttempted = true;
+        sendMsg({action: "sync"}).then(res => {
+          if (res?.ok && res?.result?.syncResult?.status !== "unchanged" && epoch === renderEpoch) {
+            requestOwnerView();
+          }
+        }).catch(() => {});
+      }
     } catch (error) {
       if (epoch === renderEpoch) {
         renderItems([]);
@@ -1949,7 +2392,14 @@
       return;
     }
     if (intent.action === "add") {
-      addBtn?.click();
+      const tab = intent.tab || currentTab;
+      if (tab === "ssh") {
+        openSshEditDialog(null);
+      } else if (tab === "wallets") {
+        openWalletEditDialog(null);
+      } else {
+        openAddDialog();
+      }
       return;
     }
     if (intent.action === "addConfirm") {
@@ -2160,11 +2610,18 @@
     settingsBtn?.click();
   });
 
-  // --- Add / Edit Dialog Handlers ---
   addBtn?.addEventListener("click", async () => {
     const stRes = await sendMsg({action: FIXED_ACTIONS.state});
     if (stRes?.result?.state === "metadata") {
-      promptReauth({action: "add"});
+      promptReauth({action: "add", tab: currentTab});
+      return;
+    }
+    if (currentTab === "ssh") {
+      openSshEditDialog(null);
+      return;
+    }
+    if (currentTab === "wallets") {
+      openWalletEditDialog(null);
       return;
     }
     currentEditToken = null;
@@ -2182,8 +2639,6 @@
     if (addTotpSeed) addTotpSeed.value = "";
     addTotpSeedGroup?.classList.add("hidden");
     if (addTotpSection) addTotpSection.open = false;
-    if (addSshKeyname) addSshKeyname.value = "";
-    if (addSshSection) addSshSection.open = false;
     rotateSection?.classList.add("hidden");
     addDialog?.classList.remove("hidden");
     addName?.focus();
@@ -2237,20 +2692,11 @@
         totp = null;
       }
 
-      let ssh = undefined;
-      const sshKeyNameVal = addSshKeyname?.value.trim() || "";
-      if (sshKeyNameVal) {
-        ssh = {key_name: sshKeyNameVal, counter: 1};
-      } else if (currentEditToken) {
-        ssh = null;
-      }
-
       const patch = {
         site, name, email, length, symbols, counter,
         characterPolicyPresent: false, characterPolicy: null,
       };
       if (totp !== undefined) patch.totp = totp;
-      if (ssh !== undefined) patch.ssh = ssh;
 
       let res;
       if (currentEditToken) {
@@ -2312,6 +2758,155 @@
       }
     } finally {
       deleteConfirm.disabled = false;
+    }
+  });
+
+  // --- SSH Key Edit Dialog Handlers ---
+  sshEditCancel?.addEventListener("click", () => {
+    sshEditDialog?.classList.add("hidden");
+    currentEditSshItem = null;
+  });
+
+  sshEditConfirm?.addEventListener("click", async () => {
+    const rawKeyName = sshEditKeyname?.value?.trim() || "";
+    if (!rawKeyName) {
+      showStatus(statusEl, "Key name is required.");
+      return;
+    }
+    const cleanKeyName = rawKeyName.replace(/\s+/g, "-").toLowerCase();
+    const counter = parseInt(sshEditCounter?.value, 10) || 1;
+    const comment = sshEditComment?.value?.trim() || "";
+
+    sshEditConfirm.disabled = true;
+    try {
+      const res = await sendMsg({
+        action: "saveSshKey",
+        id: currentEditSshItem?.id,
+        key_name: cleanKeyName,
+        counter: counter,
+        comment: comment,
+      });
+      if (res?.ok === false) {
+        showStatus(statusEl, res.message || "Failed to save SSH key.");
+        return;
+      }
+      sshEditDialog?.classList.add("hidden");
+      currentEditSshItem = null;
+      // Refresh SSH items
+      const sshRes = await sendMsg({action: FIXED_ACTIONS.sshOptions});
+      popupSshItems = validateSshOptionsResponse(sshRes);
+      renderSshCards(popupSshItems, renderEpoch);
+      showStatus(statusEl, "SSH key saved.");
+    } catch (_) {
+      showStatus(statusEl, "Failed to save SSH key.");
+    } finally {
+      sshEditConfirm.disabled = false;
+    }
+  });
+
+  sshEditDelete?.addEventListener("click", async () => {
+    if (!currentEditSshItem) return;
+    sshEditDelete.disabled = true;
+    try {
+      const res = await sendMsg({
+        action: "deleteSshKey",
+        id: currentEditSshItem.id,
+        key_name: currentEditSshItem.keyName || currentEditSshItem.key_name,
+      });
+      if (res?.ok === false) {
+        showStatus(statusEl, res.message || "Failed to delete SSH key.");
+        return;
+      }
+      sshEditDialog?.classList.add("hidden");
+      currentEditSshItem = null;
+      // Refresh SSH items
+      const sshRes = await sendMsg({action: FIXED_ACTIONS.sshOptions});
+      popupSshItems = validateSshOptionsResponse(sshRes);
+      renderSshCards(popupSshItems, renderEpoch);
+      showStatus(statusEl, "SSH key deleted.");
+    } catch (_) {
+      showStatus(statusEl, "Failed to delete SSH key.");
+    } finally {
+      sshEditDelete.disabled = false;
+    }
+  });
+
+  // --- HD Wallet Edit Dialog Handlers ---
+  walletEditCancel?.addEventListener("click", () => {
+    walletEditDialog?.classList.add("hidden");
+    currentEditWalletItem = null;
+  });
+
+  walletEditConfirm?.addEventListener("click", async () => {
+    const rawWalletId = walletEditId?.value?.trim() || "";
+    if (!rawWalletId) {
+      showStatus(statusEl, "Wallet ID is required.");
+      return;
+    }
+    const cleanWalletId = rawWalletId.replace(/\s+/g, "-").toLowerCase();
+    if (!/^[a-z0-9-]+$/.test(cleanWalletId)) {
+      showStatus(statusEl, "Wallet ID must contain lowercase letters, numbers, and hyphens only.");
+      return;
+    }
+    const label = walletEditLabel?.value?.trim() || "";
+    const words = parseInt(walletEditWords?.value, 10) === 12 ? 12 : 24;
+    const counter = parseInt(walletEditCounter?.value, 10) || 1;
+    const notes = walletEditNotes?.value?.trim() || "";
+
+    walletEditConfirm.disabled = true;
+    try {
+      const res = await sendMsg({
+        action: "saveWallet",
+        id: currentEditWalletItem?.id,
+        wallet_id: cleanWalletId,
+        label: label,
+        words: words,
+        counter: counter,
+        notes: notes,
+      });
+      if (res?.ok === false) {
+        showStatus(statusEl, res.message || "Failed to save wallet.");
+        return;
+      }
+      walletEditDialog?.classList.add("hidden");
+      currentEditWalletItem = null;
+      // Refresh wallet items
+      const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+      popupWalletItems = validateWalletOptionsResponse(wRes);
+      renderWalletCards(popupWalletItems, renderEpoch);
+      showStatus(statusEl, "Wallet saved.");
+    } catch (_) {
+      showStatus(statusEl, "Failed to save wallet.");
+    } finally {
+      walletEditConfirm.disabled = false;
+    }
+  });
+
+  walletEditDelete?.addEventListener("click", async () => {
+    if (!currentEditWalletItem) return;
+    walletEditDelete.disabled = true;
+    try {
+      const res = await sendMsg({
+        action: "deleteWallet",
+        id: currentEditWalletItem.id,
+        wallet_id: currentEditWalletItem.wallet_id || currentEditWalletItem.walletId || currentEditWalletItem.walletName,
+        chain: currentEditWalletItem.chain,
+      });
+      if (res?.ok === false) {
+        showStatus(statusEl, res.message || "Failed to delete wallet.");
+        return;
+      }
+      walletEditDialog?.classList.add("hidden");
+      currentEditWalletItem = null;
+      // Refresh wallet items
+      const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+      popupWalletItems = validateWalletOptionsResponse(wRes);
+      renderWalletCards(popupWalletItems, renderEpoch);
+      showStatus(statusEl, "Wallet deleted.");
+    } catch (_) {
+      showStatus(statusEl, "Failed to delete wallet.");
+    } finally {
+      walletEditDelete.disabled = false;
     }
   });
 
@@ -2724,7 +3319,7 @@
   pinInput?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); unlockFromPin(); }
   });
-  [addName, addSite, addEmail, addLength, addSymbols, addCounter, addTotpSeed, addSshKeyname].forEach((input) => {
+  [addName, addSite, addEmail, addLength, addSymbols, addCounter, addTotpSeed].forEach((input) => {
     input?.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); addConfirm?.click(); }
     });
@@ -2779,12 +3374,80 @@
   unlockBtn?.addEventListener("click", unlockFromForm);
   createBtn?.addEventListener("click", createAccountFromForm);
 
+  tabLogins?.addEventListener("click", () => {
+    currentTab = "logins";
+    try { (globalThis.chrome || globalThis.browser)?.storage?.session?.set?.({lastActiveTab: "logins"}); } catch (_) {}
+    tabLogins.classList.add("active");
+    tabLogins.setAttribute("aria-selected", "true");
+    tabSsh?.classList.remove("active");
+    tabSsh?.setAttribute("aria-selected", "false");
+    tabWallets?.classList.remove("active");
+    tabWallets?.setAttribute("aria-selected", "false");
+    if (searchInput) {
+      searchInput.placeholder = "Search services...";
+      searchInput.value = "";
+    }
+    renderActiveTabList(renderEpoch, currentSnapshot);
+  });
+
+  tabSsh?.addEventListener("click", () => {
+    currentTab = "ssh";
+    try { (globalThis.chrome || globalThis.browser)?.storage?.session?.set?.({lastActiveTab: "ssh"}); } catch (_) {}
+    tabSsh.classList.add("active");
+    tabSsh.setAttribute("aria-selected", "true");
+    tabLogins?.classList.remove("active");
+    tabLogins?.setAttribute("aria-selected", "false");
+    tabWallets?.classList.remove("active");
+    tabWallets?.setAttribute("aria-selected", "false");
+    if (searchInput) {
+      searchInput.placeholder = "Search SSH keys...";
+      searchInput.value = "";
+    }
+    renderActiveTabList(renderEpoch, currentSnapshot);
+  });
+
+  tabWallets?.addEventListener("click", async () => {
+    currentTab = "wallets";
+    try { (globalThis.chrome || globalThis.browser)?.storage?.session?.set?.({lastActiveTab: "wallets"}); } catch (_) {}
+    tabWallets.classList.add("active");
+    tabWallets.setAttribute("aria-selected", "true");
+    tabLogins?.classList.remove("active");
+    tabLogins?.setAttribute("aria-selected", "false");
+    tabSsh?.classList.remove("active");
+    tabSsh?.setAttribute("aria-selected", "false");
+    if (searchInput) {
+      searchInput.placeholder = "Search wallets...";
+      searchInput.value = "";
+    }
+    if (currentOwnerState === "full" && popupWalletItems.length === 0) {
+      try {
+        const wRes = await sendMsg({action: FIXED_ACTIONS.walletOptions});
+        popupWalletItems = validateWalletOptionsResponse(wRes);
+      } catch (_) {}
+    }
+    renderActiveTabList(renderEpoch, currentSnapshot);
+  });
+
   searchInput?.addEventListener("input", () => {
     const query = searchInput.value.trim();
-    if (query && typeof getFilteredServices === "function") {
-      renderFullServiceList(getFilteredServices(popupRenderItems, query));
+    if (currentTab === "ssh") {
+      if (query && typeof getFilteredSshKeys === "function") {
+        renderSshCards(getFilteredSshKeys(popupSshItems, query), renderEpoch);
+      } else {
+        renderSshCards(popupSshItems, renderEpoch);
+      }
+    } else if (currentTab === "wallets") {
+      if (query && typeof getFilteredWallets === "function") {
+        renderWalletCards(getFilteredWallets(popupWalletItems, query), renderEpoch);
+      } else {
+        renderWalletCards(popupWalletItems, renderEpoch);
+      }
     } else {
-      renderFullServiceList(popupRenderItems);
+      if (query && typeof getFilteredServices === "function") {
+        renderFullServiceList(getFilteredServices(popupRenderItems, query));
+      } else {
+        renderFullServiceList(popupRenderItems);
+      }
     }
   });
 
@@ -2848,6 +3511,15 @@
   window.addEventListener("pagehide", () => {
     renderEpoch++;
     popupRenderItems = [];
+    currentTab = "logins";
+    popupSshItems = [];
+    popupWalletItems = [];
+    tabLogins?.classList.add("active");
+    tabLogins?.setAttribute("aria-selected", "true");
+    tabSsh?.classList.remove("active");
+    tabSsh?.setAttribute("aria-selected", "false");
+    tabWallets?.classList.remove("active");
+    tabWallets?.setAttribute("aria-selected", "false");
     clearAllTimers();
     stopLongLivedTimers();
     if (typeof clearFingerprint === "function") clearFingerprint();
@@ -2857,8 +3529,19 @@
 
   await requestOwnerView();
 
-  // Check and consume pending autofill intent from in-page fill icon / shortcut / context menu
   const sessionStore = (globalThis.chrome || globalThis.browser)?.storage?.session;
+  if (sessionStore?.get) {
+    try {
+      const savedTabData = await sessionStore.get("lastActiveTab");
+      if (savedTabData?.lastActiveTab === "ssh") {
+        tabSsh?.click();
+      } else if (savedTabData?.lastActiveTab === "wallets") {
+        tabWallets?.click();
+      }
+    } catch (_) {}
+  }
+
+  // Check and consume pending autofill intent from in-page fill icon / shortcut / context menu
   if (sessionStore?.get) {
     try {
       const data = await sessionStore.get("pendingAutofillIntent");

@@ -19,7 +19,7 @@ function fuzzyScore(query, text) {
 function getFilteredServices(services, filter) {
   if (!filter) return services.slice().sort((a, b) => (b.frecency || 0) - (a.frecency || 0));
   return services.map(s => {
-    const score = Math.max(fuzzyScore(filter, s.name), fuzzyScore(filter, s.email), fuzzyScore(filter, s.site || ""));
+    const score = Math.max(fuzzyScore(filter, s.name || ""), fuzzyScore(filter, s.email || ""), fuzzyScore(filter, s.site || ""));
     return {svc: s, score};
   }).filter(x => x.score > 0)
     .sort((a, b) => {
@@ -28,3 +28,38 @@ function getFilteredServices(services, filter) {
       return sb - sa;
     }).map(x => x.svc);
 }
+
+function getFilteredSshKeys(keys, filter) {
+  if (!filter) return keys.slice();
+  return keys.map(k => {
+    const score = Math.max(
+      fuzzyScore(filter, k.keyName || k.key_name || ""),
+      fuzzyScore(filter, k.comment || ""),
+      fuzzyScore(filter, k.site || ""),
+      fuzzyScore(filter, k.name || ""),
+      fuzzyScore(filter, k.email || "")
+    );
+    return {item: k, score};
+  }).filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(x => x.item);
+}
+
+function getFilteredWallets(wallets, filter) {
+  if (!filter) return wallets.slice();
+  return wallets.map(w => {
+    const score = Math.max(
+      fuzzyScore(filter, w.wallet_id || ""),
+      fuzzyScore(filter, w.walletId || ""),
+      fuzzyScore(filter, w.walletName || w.wallet_name || w.name || ""),
+      fuzzyScore(filter, w.chain || ""),
+      fuzzyScore(filter, w.label || ""),
+      fuzzyScore(filter, w.notes || ""),
+      fuzzyScore(filter, w.email || "")
+    );
+    return {item: w, score};
+  }).filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(x => x.item);
+}
+

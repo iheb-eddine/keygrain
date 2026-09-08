@@ -106,13 +106,13 @@
           walletsList.forEach(w => {
             const tr = document.createElement("tr");
             tr.title = "Click to load parameters";
-            const td1 = document.createElement("td"); td1.textContent = w.wallet_name || "";
-            const td2 = document.createElement("td"); td2.textContent = w.chain || "";
+            const td1 = document.createElement("td"); td1.textContent = w.wallet_name || w.wallet_id || w.label || "";
+            const td2 = document.createElement("td"); td2.textContent = w.chain || (w.words ? w.words + " words" : "universal");
             const td3 = document.createElement("td"); td3.textContent = w.counter || 1;
             const td4 = document.createElement("td"); td4.textContent = w.created_at ? new Date(w.created_at).toLocaleDateString() : "\u2014";
             tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
             tr.addEventListener("click", () => {
-              if (nameInput) nameInput.value = w.wallet_name || "";
+              if (nameInput) nameInput.value = w.wallet_name || w.wallet_id || "";
               if (chainSelect) chainSelect.value = w.chain || "bitcoin";
               if (counterInput) counterInput.value = w.counter || 1;
               if (w.email && emailInput) emailInput.value = w.email;
@@ -207,7 +207,7 @@
     deriveBtn.disabled = true;
     deriveBtn.textContent = "Deriving...";
     try {
-      const mnemonic = await deriveWalletMnemonic(secret, em, { walletName, chain, counter });
+      const mnemonic = await deriveWalletMnemonic(secret, { walletId: walletName, counter });
       mnemonicValue = mnemonic;
 
       const words = mnemonicValue.split(" ");

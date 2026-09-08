@@ -39,6 +39,7 @@ function v3(marker = null) {
   return {
     version: 3,
     services: [{id: 'svc', site: 'example.com', unknown: {z: 1, a: 2}}],
+    ssh_keys: [],
     wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: marker,
   };
 }

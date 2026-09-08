@@ -350,7 +350,7 @@ function popupHarness({staleOptions = false, staleAction = false} = {}) {
   };
   const document = {getElementById(id) { return elements.get(id) || null; }, createElement() { return new Element(); }};
   const window = {addEventListener(type, fn) { if (type === 'unload' || type === 'pagehide') unload = fn; }};
-  const context = createContext({document, window, chrome: {runtime}, console, TextEncoder, TextDecoder, URL, crypto,
+  const context = createContext({document, window, chrome: {runtime}, console, TextEncoder, TextDecoder, URL, crypto: globalThis.crypto,
     KeygrainDiagnostics: {recordWorkerResponse() {}}, KeygrainWorkerIngress: {makeEnvelope: async () => ({})},
     Object, Array, Map, Set, Promise, Number, String, Error, JSON, Math, RegExp, Uint8Array, Date, setTimeout, clearTimeout,
   });

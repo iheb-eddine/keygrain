@@ -204,7 +204,9 @@ data class WalletEntry(
 
     companion object {
         fun fromJson(obj: JSONObject): WalletEntry {
-            val wid = if (obj.has("wallet_id")) obj.optString("wallet_id", "") else obj.optString("wallet_name", "")
+            val wid = if (obj.has("wallet_id")) obj.optString("wallet_id", "")
+            else if (obj.has("wallet_name")) obj.optString("wallet_name", "")
+            else obj.optString("id", "")
             val lbl = if (obj.has("label")) obj.optString("label", "") else obj.optString("wallet_name", wid)
             val wName = if (obj.has("wallet_name")) obj.optString("wallet_name", wid) else wid
             val idVal = if (obj.has("id")) obj.optString("id", "") else java.util.UUID.randomUUID().toString()
@@ -225,7 +227,7 @@ data class WalletEntry(
         }
 
         fun mergeKey(w: WalletEntry): String {
-            val primary = if (w.walletId.isNotEmpty()) w.walletId else w.walletName
+            val primary = if (w.walletId.isNotEmpty()) w.walletId else if (w.walletName.isNotEmpty()) w.walletName else w.id
             val secondary = if (w.chain.isNotEmpty()) w.chain else "universal"
             return "${primary.lowercase()}:${secondary.lowercase()}"
         }
@@ -283,6 +285,19 @@ data class SshKeyEntry(
     }
 
     companion object {
+        private fun parseTime(obj: JSONObject, key: String): Long {
+            if (!obj.has(key)) return System.currentTimeMillis()
+            val raw = obj.opt(key) ?: return System.currentTimeMillis()
+            if (raw is Number) return raw.toLong()
+            val s = raw.toString().trim()
+            s.toLongOrNull()?.let { return it }
+            return try {
+                java.time.Instant.parse(s).toEpochMilli()
+            } catch (_: Exception) {
+                System.currentTimeMillis()
+            }
+        }
+
         fun fromJson(obj: JSONObject): SshKeyEntry {
             val kn = obj.optString("key_name", "")
             val emailVal = obj.optString("email", "")
@@ -293,15 +308,14 @@ data class SshKeyEntry(
                 counter = obj.optInt("counter", 1),
                 email = emailVal,
                 comment = commentVal,
-                createdAt = obj.optLong("created_at", System.currentTimeMillis()),
-                updatedAt = obj.optLong("updated_at", System.currentTimeMillis())
+                createdAt = parseTime(obj, "created_at"),
+                updatedAt = parseTime(obj, "updated_at")
             )
         }
 
         fun mergeKey(entry: SshKeyEntry): String {
-            val kn = entry.keyName.trim().lowercase()
-            val em = entry.email.trim().lowercase()
-            return if (em.isNotEmpty()) "$em:$kn" else kn
+            val primary = if (entry.keyName.isNotEmpty()) entry.keyName else entry.id
+            return primary.trim().lowercase()
         }
     }
 }

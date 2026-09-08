@@ -128,6 +128,24 @@ await test('S13: Score × frecency ordering', async () => {
   const result = runInContext(`getFilteredServices(_svcs, "git")`, ctx);
   assert.equal(result[0].name, 'git'); // exact match + higher frecency wins
 });
+await test('S14: Filter SSH keys by keyName or comment', async () => {
+  ctx._keys = [{keyName: 'deploy-key', comment: 'prod'}, {keyName: 'office', comment: 'staging'}];
+  const r1 = runInContext(`getFilteredSshKeys(_keys, "deploy")`, ctx);
+  assert.equal(r1.length, 1);
+  assert.equal(r1[0].keyName, 'deploy-key');
+  const r2 = runInContext(`getFilteredSshKeys(_keys, "staging")`, ctx);
+  assert.equal(r2.length, 1);
+  assert.equal(r2[0].keyName, 'office');
+});
+await test('S15: Filter wallets by walletName or chain', async () => {
+  ctx._wallets = [{walletName: 'savings', chain: 'ethereum'}, {walletName: 'cold', chain: 'bitcoin'}];
+  const r1 = runInContext(`getFilteredWallets(_wallets, "sav")`, ctx);
+  assert.equal(r1.length, 1);
+  assert.equal(r1[0].walletName, 'savings');
+  const r2 = runInContext(`getFilteredWallets(_wallets, "bit")`, ctx);
+  assert.equal(r2.length, 1);
+  assert.equal(r2[0].walletName, 'cold');
+});
 
 // ============================================================
 // POPUP-CRYPTO TESTS
@@ -223,7 +241,7 @@ await test('C11: legacy payload reads expose null pendingSync without changing v
 await test('C12: v3 payload validates exact marker and round-trips in the existing envelope', async () => {
   const mutationId = await runInContext(`createLocalMutationId()`, ctx);
   assert.equal(mutationId.length, 43);
-  ctx._v3 = {version: 3, services: [{id: 's1'}], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: {version: 1, mutationId, updateVersion: 42}};
+  ctx._v3 = {version: 3, services: [{id: 's1'}], ssh_keys: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: {version: 1, mutationId, updateVersion: 42}};
   const validated = runInContext(`validateLocalPayload(_v3)`, ctx);
   assert.equal(validated.payloadVersion, 3);
   assert.equal(validated.pendingSync.mutationId, mutationId);
@@ -245,16 +263,16 @@ await test('C12: v3 payload validates exact marker and round-trips in the existi
   }
 });
 await test('C13: canonical v3 JSON and fingerprint use fixed top-level order and sorted nested keys', async () => {
-  const empty = {version: 3, services: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: null};
+  const empty = {version: 3, services: [], ssh_keys: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: null};
   ctx._emptyV3 = empty;
-  assert.equal(runInContext(`canonicalLocalPayloadJson(_emptyV3)`, ctx), '{"version":3,"services":[],"wallets":[],"wallet_audit_log":[],"tombstones":[],"deletion_review":[],"pending_sync":null}');
-  assert.equal(await runInContext(`fingerprintLocalPayload(_emptyV3)`, ctx), '6d27aad8f905c093cbab06d40841fdaed7b7843d79985ba5b537040efd8c7b8e');
+  assert.equal(runInContext(`canonicalLocalPayloadJson(_emptyV3)`, ctx), '{"version":3,"services":[],"ssh_keys":[],"wallets":[],"wallet_audit_log":[],"tombstones":[],"deletion_review":[],"pending_sync":null}');
+  assert.equal(await runInContext(`fingerprintLocalPayload(_emptyV3)`, ctx), 'dfc772ef201bc763f70f9a20755ac322438098f5493568364a44c06bb4a824b6');
   ctx._orderedA = {...empty, services: [{z: 1, nested: {z: 2, a: 1}, a: 0}]};
   ctx._orderedB = {...empty, services: [{a: 0, nested: {a: 1, z: 2}, z: 1}]};
   assert.equal(await runInContext(`fingerprintLocalPayload(_orderedA)`, ctx), await runInContext(`fingerprintLocalPayload(_orderedB)`, ctx));
 });
 await test('C14: canonical payload rejects accessors, symbols, prototypes, cycles, and unsafe numbers', async () => {
-  const base = {version: 3, services: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: null};
+  const base = {version: 3, services: [], ssh_keys: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: [], pending_sync: null};
   const accessor = {...base};
   Object.defineProperty(accessor, 'services', {enumerable: true, get() { return []; }});
   const symbol = {...base, services: [{[Symbol('x')]: 1}]};

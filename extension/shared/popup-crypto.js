@@ -176,9 +176,10 @@ function validateLocalPayload(data) {
     };
   }
   if (version === LOCAL_PAYLOAD_V3_VERSION) {
-    localOrderedKeys(data, ["version", "services", "wallets", "wallet_audit_log", "tombstones", "deletion_review", "pending_sync"]);
+    localOrderedKeys(data, ["version", "services", "ssh_keys", "wallets", "wallet_audit_log", "tombstones", "deletion_review", "pending_sync"]);
     return {
       services: localCollection(localOwnValue(data, "services")),
+      sshKeys: localCollection(localOwnValue(data, "ssh_keys")),
       wallets: localCollection(localOwnValue(data, "wallets")),
       walletAuditLog: localCollection(localOwnValue(data, "wallet_audit_log")),
       tombstones: localCollection(localOwnValue(data, "tombstones")),
@@ -228,6 +229,7 @@ async function encryptServicesV3(storageKey, email, payload) {
   const plaintext = new TextEncoder().encode(JSON.stringify({
     version: LOCAL_PAYLOAD_V3_VERSION,
     services: normalized.services,
+    ssh_keys: normalized.sshKeys,
     wallets: normalized.wallets,
     wallet_audit_log: normalized.walletAuditLog,
     tombstones: normalized.tombstones,
@@ -283,12 +285,13 @@ function localCanonicalJson(value, seen = new Set()) {
 
 function canonicalLocalPayloadJson(payload) {
   if (!localPlainObject(payload)) throw new Error("invalid_local_payload");
-  localOrderedKeys(payload, ["version", "services", "wallets", "wallet_audit_log", "tombstones", "deletion_review", "pending_sync"]);
+  localOrderedKeys(payload, ["version", "services", "ssh_keys", "wallets", "wallet_audit_log", "tombstones", "deletion_review", "pending_sync"]);
   const normalized = validateLocalPayload(payload);
   if (normalized.payloadVersion !== LOCAL_PAYLOAD_V3_VERSION) throw new Error("invalid_local_payload");
   const fields = [
     ["version", LOCAL_PAYLOAD_V3_VERSION],
     ["services", normalized.services],
+    ["ssh_keys", normalized.sshKeys],
     ["wallets", normalized.wallets],
     ["wallet_audit_log", normalized.walletAuditLog],
     ["tombstones", normalized.tombstones],

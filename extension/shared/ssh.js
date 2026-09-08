@@ -1,11 +1,10 @@
 // ssh.js — Deterministic Ed25519 SSH key derivation (depends on keygrain.js, tweetnacl.js)
 
 async function deriveSshKeypair(secret, { keyName, counter = 1 }) {
-  if (!keyName) throw new Error("keyName must not be empty");
-  if (/\s/.test(keyName)) throw new Error("keyName must not contain whitespace");
+  if (!keyName || typeof keyName !== "string") throw new Error("keyName must not be empty");
+  const cleanName = keyName.trim().replace(/\s+/g, "-").toLowerCase();
+  if (!cleanName) throw new Error("keyName must not be empty");
   if (counter < 1) throw new Error("counter must be >= 1");
-
-  const cleanName = keyName.toLowerCase();
   const enc = new TextEncoder();
   const strengthenGeneration = getStrengthenGeneration();
   const strengthened = await strengthenWithSalt(secret, "keygrain-ssh:" + cleanName);

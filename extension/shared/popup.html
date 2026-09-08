@@ -122,6 +122,12 @@
 
     <input type="text" id="search" placeholder="Search services..." autocomplete="off">
 
+    <div id="tab-nav" class="tab-nav" role="tablist">
+      <button type="button" class="tab-btn active" id="tab-logins" role="tab" aria-selected="true" data-tab="logins">Logins</button>
+      <button type="button" class="tab-btn" id="tab-ssh" role="tab" aria-selected="false" data-tab="ssh">SSH Keys</button>
+      <button type="button" class="tab-btn" id="tab-wallets" role="tab" aria-selected="false" data-tab="wallets">Wallets</button>
+    </div>
+
     <div id="site-suggestion" class="hidden"></div>
 
     <div id="breach-warnings" role="alert" aria-live="assertive"></div>
@@ -183,11 +189,6 @@
       </div>
     </details>
 
-    <details id="add-ssh-section">
-      <summary><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 1a4.5 4.5 0 0 0-4.5 4.5c0 1.77 1.02 3.3 2.5 4.03V14a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-4.47c1.48-.73 2.5-2.26 2.5-4.03A4.5 4.5 0 0 0 7.5 1zm0 2a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z"/></svg> SSH Key</summary>
-      <label for="add-ssh-keyname">Key Name</label>
-      <input type="text" id="add-ssh-keyname" placeholder="e.g. github or id_ed25519" autocomplete="off" spellcheck="false">
-    </details>
 
     <div id="rotate-section" class="hidden">
       <label for="add-counter">Password version</label>
@@ -199,6 +200,45 @@
     <div class="dialog-actions">
       <button id="add-cancel">Cancel</button>
       <button id="add-confirm">Add</button>
+    </div>
+  </div>
+
+  <!-- SSH Key Edit/Add Dialog -->
+  <div id="ssh-edit-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="ssh-edit-dialog-title">
+    <h2 id="ssh-edit-dialog-title">Edit SSH Key</h2>
+    <label for="ssh-edit-keyname">Key Name</label>
+    <input type="text" id="ssh-edit-keyname" placeholder="e.g. github or id_ed25519" autocomplete="off" spellcheck="false" required>
+    <label for="ssh-edit-counter">Counter / Version</label>
+    <input type="number" id="ssh-edit-counter" min="1" step="1" value="1" required>
+    <label for="ssh-edit-comment">Comment</label>
+    <input type="text" id="ssh-edit-comment" placeholder="Optional comment (e.g. machine or purpose)" autocomplete="off" spellcheck="false">
+    <div class="dialog-actions">
+      <button type="button" id="ssh-edit-delete" class="btn-danger hidden" style="margin-right: auto;">Delete</button>
+      <button type="button" id="ssh-edit-cancel">Cancel</button>
+      <button type="button" id="ssh-edit-confirm">Save</button>
+    </div>
+  </div>
+
+  <!-- HD Wallet Edit/Add Dialog -->
+  <div id="wallet-edit-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="wallet-edit-dialog-title">
+    <h2 id="wallet-edit-dialog-title">Edit Wallet</h2>
+    <label for="wallet-edit-id">Wallet ID <span style="font-size:0.75rem">(lowercase, digits, hyphens only)</span></label>
+    <input type="text" id="wallet-edit-id" placeholder="e.g. personal-vault" pattern="[a-z0-9\-]+" autocomplete="off" spellcheck="false" required>
+    <label for="wallet-edit-label">Label</label>
+    <input type="text" id="wallet-edit-label" placeholder="e.g. Personal Cold Storage" autocomplete="off" spellcheck="false">
+    <label for="wallet-edit-words">Recovery Phrase Length</label>
+    <select id="wallet-edit-words">
+      <option value="24" selected>24 words (standard HD wallet)</option>
+      <option value="12">12 words</option>
+    </select>
+    <label for="wallet-edit-counter">Counter / Version</label>
+    <input type="number" id="wallet-edit-counter" min="1" step="1" value="1" required>
+    <label for="wallet-edit-notes">Notes</label>
+    <textarea id="wallet-edit-notes" rows="2" placeholder="Optional notes" autocomplete="off" style="width: 100%; box-sizing: border-box; resize: vertical;"></textarea>
+    <div class="dialog-actions">
+      <button type="button" id="wallet-edit-delete" class="btn-danger hidden" style="margin-right: auto;">Delete</button>
+      <button type="button" id="wallet-edit-cancel">Cancel</button>
+      <button type="button" id="wallet-edit-confirm">Save</button>
     </div>
   </div>
 
