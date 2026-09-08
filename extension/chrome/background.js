@@ -1944,22 +1944,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (action === "getSecret" || action === "getEmail") {
-    startupPromise.then(async () => {
-      const snap = chromeOwner.snapshot();
-      if (snap.state !== "full") return sendResponse(KeygrainBrowserOwner.safeFailure("LOCKED"));
-      let secret = null;
-      let email = null;
-      const opHandle = chromeOwner.manager.beginSensitiveOperation({capture: fullData => ({secret: fullData?.secret, email: fullData?.email})});
-      try {
-        const input = chromeOwner.manager.getSensitiveOperationInput(opHandle);
-        secret = input?.secret || null;
-        email = input?.email || null;
-      } finally {
-        try { chromeOwner.manager.completeSensitiveOperation(opHandle, "get_credentials"); } catch (_) {}
-      }
-      if (action === "getSecret") sendResponse({secret});
-      else sendResponse({email});
-    }).catch(err => sendResponse(safeMessageError(err)));
+    sendResponse({ error: action === "getSecret" ? "Unauthorized: getSecret is deprecated and blocked." : "Unauthorized: getEmail is deprecated and blocked." });
     return true;
   }
   if (action === "getSavedWallets" || action === "getWallets") {

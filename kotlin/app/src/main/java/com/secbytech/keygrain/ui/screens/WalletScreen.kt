@@ -38,6 +38,8 @@ import com.secbytech.keygrain.data.SyncStore
 import com.secbytech.keygrain.data.WalletAuditEntry
 import com.secbytech.keygrain.data.WalletEngine
 import com.secbytech.keygrain.data.WalletEntry
+import com.secbytech.keygrain.ui.components.CryptoFieldLabel
+import com.secbytech.keygrain.ui.components.CryptoInfoBanner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -275,10 +277,11 @@ private fun WalletItemCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onView),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -288,16 +291,16 @@ private fun WalletItemCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(40.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.size(42.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                Icons.Default.Key,
+                                Icons.Default.AccountBalanceWallet,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(20.dp)
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
@@ -306,84 +309,152 @@ private fun WalletItemCard(
                         Text(
                             text = wallet.effectiveDisplayName(),
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            text = "ID: ${wallet.effectiveId()} • ${wallet.words} words • counter ${wallet.counter}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Fingerprint,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = wallet.effectiveId(),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
 
-                Box {
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Options")
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("View & Export") },
-                            leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) },
-                            onClick = {
-                                menuExpanded = false
-                                onView()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Edit") },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                            onClick = {
-                                menuExpanded = false
-                                onEdit()
-                            }
-                        )
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                            onClick = {
-                                menuExpanded = false
-                                onDelete()
-                            }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onEdit) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit Wallet",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "Options",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("View & Export") },
+                                leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onView()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Edit") },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onEdit()
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onDelete()
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                ) {
+                    Text(
+                        "${wallet.words} words",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer
+                ) {
+                    Text(
+                        "v${wallet.counter}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
 
             if (wallet.notes.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = wallet.notes,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = wallet.notes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
             }
 
             Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
+                FilledTonalButton(
                     onClick = onQuickCopy,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Copy Mnemonic", style = MaterialTheme.typography.labelMedium)
                 }
-                Spacer(Modifier.width(8.dp))
                 Button(
                     onClick = onView,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("View", style = MaterialTheme.typography.labelMedium)
+                    Text("View Phrase", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -447,6 +518,8 @@ private fun WalletEditorDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    CryptoInfoBanner("Wallet ID, Word Count, and Counter directly determine your BIP-39 mnemonic. Labels and notes are metadata.")
+
                     OutlinedTextField(
                         value = walletId,
                         onValueChange = {
@@ -454,7 +527,7 @@ private fun WalletEditorDialog(
                                 walletId = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '-' }
                             }
                         },
-                        label = { Text("Wallet ID (Derivation Seed)") },
+                        label = { CryptoFieldLabel("Wallet ID", isCrypto = true, cryptoType = "Salt & Seed") },
                         placeholder = { Text("e.g. personal, savings, 1") },
                         enabled = !isEdit,
                         supportingText = {
@@ -467,13 +540,13 @@ private fun WalletEditorDialog(
                     OutlinedTextField(
                         value = label,
                         onValueChange = { label = it },
-                        label = { Text("Visual Label") },
+                        label = { CryptoFieldLabel("Visual Label", isCrypto = false) },
                         placeholder = { Text("e.g. Primary Coldcard Vault") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Text("Word Count", style = MaterialTheme.typography.labelMedium)
+                    CryptoFieldLabel("Recovery Phrase Length", isCrypto = true, cryptoType = "Entropy")
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -497,7 +570,7 @@ private fun WalletEditorDialog(
                     OutlinedTextField(
                         value = counterText,
                         onValueChange = { counterText = it.filter { c -> c.isDigit() } },
-                        label = { Text("Counter") },
+                        label = { CryptoFieldLabel("Counter / Version", isCrypto = true, cryptoType = "Counter") },
                         supportingText = { Text("Incrementing derives a completely independent root wallet") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
@@ -507,7 +580,7 @@ private fun WalletEditorDialog(
                     OutlinedTextField(
                         value = notes,
                         onValueChange = { notes = it },
-                        label = { Text("Notes (Optional)") },
+                        label = { CryptoFieldLabel("Notes (Optional)", isCrypto = false) },
                         placeholder = { Text("e.g. Bound to Electrum hardware device") },
                         minLines = 2,
                         maxLines = 4,

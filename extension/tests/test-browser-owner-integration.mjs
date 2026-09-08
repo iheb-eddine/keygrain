@@ -550,6 +550,10 @@ async function runPopupUnlockListenerCase(browserName) {
   const unknownRejected = await invoke({action: 'futureAction'}, popupSender);
   assert.equal(unknownRejected.code, 'KEYGRAIN_AUTH_PROTOCOL_ERROR', `${browserName}: trusted unknown is protocol-invalid`);
   assert.equal(popupDispatchCalls.length, 4, `${browserName}: malformed/unknown requests use shared dispatch`);
+  const getSecretBlocked = await invoke({action: 'getSecret'}, popupSender);
+  assert.equal(getSecretBlocked.error, 'Unauthorized: getSecret is deprecated and blocked.', `${browserName}: getSecret blocked`);
+  const getEmailBlocked = await invoke({action: 'getEmail'}, popupSender);
+  assert.equal(getEmailBlocked.error, 'Unauthorized: getEmail is deprecated and blocked.', `${browserName}: getEmail blocked`);
 
   for (const [label, sender] of [
     ['wrong id', {...popupSender, id: 'other-extension'}],

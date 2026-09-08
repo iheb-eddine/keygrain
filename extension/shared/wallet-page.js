@@ -181,13 +181,8 @@
     const walletName = nameInput.value.trim().toLowerCase();
     const chain = chainSelect.value;
     const counter = parseInt(counterInput.value, 10);
-    const em = emailInput.value.trim();
+    const em = emailInput ? emailInput.value.trim() : "";
 
-    if (!em) {
-      errorMsg.textContent = "Email is required.";
-      errorMsg.classList.remove("hidden");
-      return;
-    }
     if (!secret) {
       errorMsg.textContent = "Master secret is required.";
       errorMsg.classList.remove("hidden");
@@ -272,6 +267,26 @@
   }
 
   clearBtn?.addEventListener("click", clearMnemonic);
+
+  [emailInput, secretInput, nameInput, chainSelect, counterInput].forEach((input) => {
+    input?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (deriveBtn && !deriveBtn.disabled) {
+          deriveBtn.click();
+        } else if (confirmCheck && !confirmCheck.checked) {
+          confirmCheck.checked = true;
+          confirmCheck.dispatchEvent(new Event("change"));
+        }
+      }
+    });
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      clearMnemonic();
+    }
+  });
 
   window.addEventListener("pagehide", clearMnemonic);
 })();

@@ -86,6 +86,17 @@ function externalChanges(changes, area, watched, selfMarkers) {
 function openDialog(dialog, trigger) {
   const focusTrigger = trigger || document.activeElement;
   const handler = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      const cancelBtn = dialog.querySelector('#add-cancel, #ssh-edit-cancel, #wallet-edit-cancel, #reauth-cancel, #delete-cancel, #switch-account-cancel, #migration-notice-close, #delete-server-cancel, #settings-cancel, #ssh-dialog-close, #reset-cancel, #inline-consent-cancel, [data-cancel], .dialog-actions button:first-child');
+      if (cancelBtn) {
+        cancelBtn.click();
+      } else {
+        closeDialog(dialog, {trapHandler: handler, trigger: focusTrigger});
+      }
+      return;
+    }
     if (e.key !== "Tab") return;
     const focusable = [...dialog.querySelectorAll('input:not([disabled]),button:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el => el.offsetParent !== null);
     if (!focusable.length) return;

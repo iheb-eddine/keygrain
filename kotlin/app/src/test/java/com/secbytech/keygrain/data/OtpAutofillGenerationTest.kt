@@ -134,10 +134,19 @@ class OtpAutofillGenerationTest {
     fun rejectedDerivedWorkRunsNotStartedCleanup() {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
-        val first = TotpAutofillDerivedExecutor.submit {
+        var first = TotpAutofillDerivedExecutor.submit {
             started.countDown()
             release.await(5, TimeUnit.SECONDS)
             "first"
+        }
+        repeat(50) {
+            if (first != null) return@repeat
+            Thread.sleep(10L)
+            first = TotpAutofillDerivedExecutor.submit {
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                "first"
+            }
         }
         assertNotNull(first)
         assertTrue(started.await(5, TimeUnit.SECONDS))

@@ -1985,22 +1985,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
     }).catch(safeMessageError);
   }
   if (action === "getSecret" || action === "getEmail") {
-    return startupPromise.then(async () => {
-      const snap = firefoxOwner.snapshot();
-      if (snap.state !== "full") return KeygrainBrowserOwner.safeFailure("LOCKED");
-      let secret = null;
-      let email = null;
-      const opHandle = firefoxOwner.manager.beginSensitiveOperation({capture: fullData => ({secret: fullData?.secret, email: fullData?.email})});
-      try {
-        const input = firefoxOwner.manager.getSensitiveOperationInput(opHandle);
-        secret = input?.secret || null;
-        email = input?.email || null;
-      } finally {
-        try { firefoxOwner.manager.completeSensitiveOperation(opHandle, "get_credentials"); } catch (_) {}
-      }
-      if (action === "getSecret") return {secret};
-      return {email};
-    }).catch(safeMessageError);
+    return Promise.resolve({ error: action === "getSecret" ? "Unauthorized: getSecret is deprecated and blocked." : "Unauthorized: getEmail is deprecated and blocked." });
   }
   if (action === "getSavedWallets" || action === "getWallets") {
     return startupPromise.then(async () => {

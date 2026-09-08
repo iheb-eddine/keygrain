@@ -28,8 +28,8 @@ import com.secbytech.keygrain.data.Keygrain
 import com.secbytech.keygrain.data.ServiceEntry
 import com.secbytech.keygrain.data.SyncCrypto
 import com.secbytech.keygrain.data.TotpEngine
-
-
+import com.secbytech.keygrain.ui.components.CryptoFieldLabel
+import com.secbytech.keygrain.ui.components.CryptoInfoBanner
 import com.secbytech.keygrain.ui.components.QrScannerDialog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -268,22 +268,18 @@ internal fun ServiceEditorScreen(
                 .padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                "ℹ️ Changing any field will generate a different password.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            CryptoInfoBanner("Site, Email, Length, Symbols, and Counter determine your generated password. Service name is for display only.")
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it; onInteraction() },
-                label = { Text("Service name") },
+                label = { CryptoFieldLabel("Service name", isCrypto = false) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
                 value = site,
                 onValueChange = { if (!isEdit) site = it; onInteraction() },
-                label = { Text("Site") },
+                label = { CryptoFieldLabel("Site", isCrypto = true, cryptoType = "HMAC Input") },
                 supportingText = if (detectedFullDomain != null && site == initialSite) {
                     { Text("Detected $detectedFullDomain \u2014 matches all subdomains") }
                 } else null,
@@ -294,7 +290,7 @@ internal fun ServiceEditorScreen(
             OutlinedTextField(
                 value = email,
                 onValueChange = { email = it; onInteraction() },
-                label = { Text("Email") },
+                label = { CryptoFieldLabel("Email", isCrypto = true, cryptoType = "Argon2id Salt") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
@@ -316,7 +312,7 @@ internal fun ServiceEditorScreen(
                     OutlinedTextField(
                         value = length,
                         onValueChange = { length = it.filter { c -> c.isDigit() }; onInteraction() },
-                        label = { Text("Length") },
+                        label = { CryptoFieldLabel("Length", isCrypto = true, cryptoType = "Derivation") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
@@ -324,14 +320,14 @@ internal fun ServiceEditorScreen(
                     OutlinedTextField(
                         value = symbols,
                         onValueChange = { symbols = it; onInteraction() },
-                        label = { Text("Symbols") },
+                        label = { CryptoFieldLabel("Symbols", isCrypto = true, cryptoType = "Derivation") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = counter,
                         onValueChange = { counter = it.filter { c -> c.isDigit() }; onInteraction() },
-                        label = { Text("Counter") },
+                        label = { CryptoFieldLabel("Counter (Version)", isCrypto = true, cryptoType = "Rotation") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
@@ -359,7 +355,7 @@ internal fun ServiceEditorScreen(
                         OutlinedTextField(
                             value = totpSeed,
                             onValueChange = { totpSeed = it; onInteraction() },
-                            label = { Text("Seed / otpauth:// URI") },
+                            label = { CryptoFieldLabel("Seed / otpauth:// URI", isCrypto = true, cryptoType = "Seed") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -384,7 +380,7 @@ internal fun ServiceEditorScreen(
                     OutlinedTextField(
                         value = sshKeyName,
                         onValueChange = { sshKeyName = it.filter { c -> !c.isWhitespace() }; onInteraction() },
-                        label = { Text("Key name (optional)") },
+                        label = { CryptoFieldLabel("Key name (optional)", isCrypto = true, cryptoType = "SSH Derivation") },
                         placeholder = { Text("e.g. github, work-servers") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()

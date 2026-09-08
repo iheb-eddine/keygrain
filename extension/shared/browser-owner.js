@@ -2321,12 +2321,15 @@
           check();
         }
         if (typeof root.derivePassword !== "function") throw error("KEYGRAIN_DERIVATION_ERROR");
+        const length = input.bound?.defaultLength || request.length || 20;
+        const symbols = input.bound?.defaultSymbols || request.symbols || KEYGRAIN_PASSWORD_DEFAULT_SYMBOLS;
+        const counter = input.bound?.defaultCounter || request.counter || 1;
+        const policy = input.bound?.defaultPolicy || request.policy || KEYGRAIN_PASSWORD_DEFAULT_POLICY;
         const password = await root.derivePassword(input.secret, input.email, {
-          site: input.site, length: request.length, symbols: request.symbols,
-          counter: request.counter, policy: request.policy,
+          site: input.site, length, symbols, counter, policy,
         });
         check();
-        const boundedPassword = passwordOutput(password, request.length, request.symbols);
+        const boundedPassword = passwordOutput(password, length, symbols);
         if (!fill) {
           const response = passwordResponse({ok: true, result: {password: boundedPassword}});
           finish("completeSensitiveOperation", "password_generate_complete");
@@ -3040,6 +3043,7 @@
       try {
         popupContext(sender, runtimeId, browser, extensionOrigin);
         popupClearCapabilities(); passwordClearCapabilities(); b2AdvanceRecordGeneration();
+        if (typeof root.clearStrengthenCache === "function") root.clearStrengthenCache();
         const before = manager.snapshot();
         const after = everything ? manager.lockEverything() : manager.lockSensitive();
         if (everything || after.state === "locked") popupClearAuthenticatedIdentity();
@@ -3368,6 +3372,9 @@
       }
       lastSnapshot = after;
       if (after.state === "locked") popupClearAuthenticatedIdentity();
+      if (after.state !== "full" && typeof root.clearStrengthenCache === "function") {
+        root.clearStrengthenCache();
+      }
       if (before.stateGeneration !== after.stateGeneration || before.authorizationGeneration !== after.authorizationGeneration) {
         passwordClearCapabilities();
         b2AdvanceRecordGeneration();
@@ -3448,12 +3455,13 @@
             svc = input.services.find(serviceIdOrMatcher);
           }
           if (svc) {
-            const site = svc.site || svc.name;
+            const site = root.normalizeSite(svc.site || svc.name);
+            const email = (svc.email || input.email || "").trim().toLowerCase();
             const length = svc.length || 20;
             const symbols = svc.symbols || "!@#$%&*-_=+?";
             const counter = svc.counter || 1;
-            const pw = await root.derivePassword(input.secret, svc.email || input.email, {site, length, symbols, counter});
-            result = {password: pw, email: svc.email || input.email, service: svc};
+            const pw = await root.derivePassword(input.secret, email, {site, length, symbols, counter});
+            result = {password: pw, email, service: svc};
           }
         }
       } finally {

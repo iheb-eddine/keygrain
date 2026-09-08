@@ -256,7 +256,30 @@ assert.match(popupSource, /downloadTextFile/);
 
 function sshPopupHarness(options = {}) {
   class Element {
-    constructor(id = '') { this.id = id; this.children = []; this.handlers = {}; this.attributes = {}; this._textContent = ''; this.disabled = false; this.value = ''; this.className = ''; this.dataset = {}; this.style = {}; this.classList = {add() {}, remove() {}, toggle() {}}; }
+    constructor(id = '') {
+      this.id = id;
+      this.children = [];
+      this.handlers = {};
+      this.attributes = {};
+      this._textContent = '';
+      this.disabled = false;
+      this.value = '';
+      this.className = '';
+      this.dataset = {};
+      this.style = {};
+      const classSet = new Set();
+      this.classList = {
+        add: (...cls) => cls.forEach(c => classSet.add(c)),
+        remove: (...cls) => cls.forEach(c => classSet.delete(c)),
+        toggle: (c, force) => {
+          if (force === true) classSet.add(c);
+          else if (force === false) classSet.delete(c);
+          else if (classSet.has(c)) classSet.delete(c);
+          else classSet.add(c);
+        },
+        contains: c => classSet.has(c),
+      };
+    }
     setAttribute(name, value) { this.attributes[name] = String(value); }
     getAttribute(name) { return this.attributes[name] ?? null; }
     set textContent(value) { this._textContent = String(value); if (value === '') this.children = []; }
@@ -266,14 +289,38 @@ function sshPopupHarness(options = {}) {
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(child => child !== this); }
     focus() {}
   }
-  const ids = ['loading-screen', 'lock-screen', 'update-required-screen', 'main-screen', 'pin-screen', 'email', 'secret', 'fingerprint', 'auth-mode-unlock', 'auth-mode-create', 'create-confirm-group', 'confirm-secret', 'confirm-fingerprint', 'confirm-secret-match', 'unlock-btn', 'create-btn', 'status', 'service-list', 'search', 'sync-error', 'autolock-warning', 'autolock-extend', 'version-display', 'try-demo', 'tab-nav', 'tab-logins', 'tab-ssh', 'tab-wallets', 'add-btn', 'ssh-edit-dialog', 'ssh-edit-dialog-title', 'ssh-edit-keyname', 'ssh-edit-counter', 'ssh-edit-comment', 'ssh-edit-delete', 'ssh-edit-cancel', 'ssh-edit-confirm', 'wallet-edit-dialog', 'wallet-edit-dialog-title', 'wallet-edit-id', 'wallet-edit-label', 'wallet-edit-words', 'wallet-edit-counter', 'wallet-edit-notes', 'wallet-edit-delete', 'wallet-edit-cancel', 'wallet-edit-confirm'];
+  const ids = ['loading-screen', 'lock-screen', 'update-required-screen', 'main-screen', 'pin-screen', 'email', 'secret', 'fingerprint', 'auth-mode-unlock', 'auth-mode-create', 'create-confirm-group', 'confirm-secret', 'confirm-fingerprint', 'confirm-secret-match', 'unlock-btn', 'create-btn', 'status', 'service-list', 'search', 'sync-error', 'autolock-warning', 'autolock-extend', 'version-display', 'try-demo', 'tab-nav', 'tab-logins', 'tab-ssh', 'tab-wallets', 'add-btn', 'ssh-edit-dialog', 'ssh-edit-dialog-title', 'ssh-edit-keyname', 'ssh-edit-counter', 'ssh-edit-comment', 'ssh-edit-delete', 'ssh-edit-cancel', 'ssh-edit-confirm', 'wallet-edit-dialog', 'wallet-edit-dialog-title', 'wallet-edit-id', 'wallet-edit-label', 'wallet-edit-words', 'wallet-edit-counter', 'wallet-edit-notes', 'wallet-edit-delete', 'wallet-edit-cancel', 'wallet-edit-confirm', 'lock-btn', 'reauth-dialog', 'reauth-secret', 'reauth-error', 'reauth-confirm', 'reauth-cancel'];
   const elements = new Map(ids.map(id => [id, new Element(id)]));
   const messages = [];
   const runtime = {
     getManifest() { return {name: 'Keygrain Keygrain DEV', version: '1'}; },
     async sendMessage(message) {
       messages.push(message);
-      if (message.action === 'keygrain.popup.state') return {ok: true, result: {state: 'full', stateGeneration: 1, authorizationGeneration: 1, fullExpiresAt: 60000, metadataExpiresAt: null, fullWarningAt: 30000, metadataWarningAt: null, metadataAvailable: false, hasFullData: true}};
+      if (message.action === 'keygrain.popup.state') {
+        const stateName = typeof options.getState === 'function' ? options.getState() : (options.state || 'full');
+        return {
+          ok: true,
+          result: {
+            state: stateName,
+            stateGeneration: 1,
+            authorizationGeneration: 1,
+            fullExpiresAt: stateName === 'full' ? 60000 : null,
+            metadataExpiresAt: stateName === 'metadata' ? 60000 : null,
+            fullWarningAt: stateName === 'full' ? 30000 : null,
+            metadataWarningAt: stateName === 'metadata' ? 30000 : null,
+            metadataAvailable: stateName === 'metadata',
+            hasFullData: stateName === 'full',
+            email: 'user@example.com'
+          }
+        };
+      }
+      if (message.action === 'keygrain.popup.lockSensitive') {
+        if (typeof options.onLockSensitive === 'function') options.onLockSensitive();
+        return {ok: true};
+      }
+      if (message.action === 'keygrain.popup.metadata') return {ok: true, result: {items: options.metadataItems || options.serviceItems || [{id: 'svc', site: 'example.com', name: null, email: 'user@example.com'}]}};
+      if (message.action === 'issueUnlockChallenge') return {ok: true, challenge: 'challenge'};
+      if (message.action === 'unlockEncrypted') return {ok: true, result: {token: 'token'}};
       if (message.action === 'keygrain.popup.serviceList') return {ok: true, result: {items: options.serviceItems || [{id: 'svc', site: 'example.com', name: null, email: 'user@example.com'}]}};
       if (message.action === 'keygrain.popup.selectionOptions') {
         const items = options.serviceItems || [{id: 'svc', site: 'example.com', name: null, email: 'user@example.com'}];
@@ -441,9 +488,11 @@ function sshPopupHarness(options = {}) {
   assert(popup.messages.some(m => m.action === 'keygrain.wallet.options'), 'walletOptions fetched on wallet tab click');
   assert.equal(serviceList.children.length, 1);
   assert.equal(serviceList.children[0].id, 'wallet-item-0');
-  const walletTitle = serviceList.children[0].children[0].children[0];
+  const walletTop = serviceList.children[0].children[0].children[0];
+  const walletTitle = walletTop.children[0];
   assert.equal(walletTitle.textContent, 'personal');
-  assert.equal(walletTitle.children[0].textContent, 'bitcoin');
+  const wordsBadge = walletTop.children[1].children[0];
+  assert.equal(wordsBadge.textContent, 'bitcoin');
 
   // Test search scoping in wallets tab
   searchInput.value = 'nonexistent';
@@ -465,6 +514,110 @@ function sshPopupHarness(options = {}) {
   assert.equal(serviceList.children[0].id, 'service-item-0');
 
   console.log('  ✓ multi-asset tab navigation, wallet JIT fetching, and search scoping verified');
+}
+
+{
+  // Test Option 1: metadata mode purges stale SSH/wallet items and renders locked notices
+  let currentState = 'full';
+  const popup = sshPopupHarness({
+    getState: () => currentState,
+    onLockSensitive: () => { currentState = 'metadata'; },
+  });
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
+
+  const tabLogins = popup.elements.get('tab-logins');
+  const tabSsh = popup.elements.get('tab-ssh');
+  const tabWallets = popup.elements.get('tab-wallets');
+  const searchInput = popup.elements.get('search');
+  const serviceList = popup.elements.get('service-list');
+  const lockBtn = popup.elements.get('lock-btn');
+  const reauthDialog = popup.elements.get('reauth-dialog');
+  const reauthSecret = popup.elements.get('reauth-secret');
+  const reauthConfirm = popup.elements.get('reauth-confirm');
+
+  // Verify SSH items rendered in full mode
+  await tabSsh.handlers.click();
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].id, 'ssh-item-0');
+
+  // Verify Wallet items rendered in full mode
+  await tabWallets.handlers.click();
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].id, 'wallet-item-0');
+
+  // Transition from full mode to metadata mode
+  await lockBtn.handlers.click();
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
+
+  // SSH tab in metadata mode: stale items purged, renders locked notice
+  await tabSsh.handlers.click();
+  assert.equal(serviceList.children.length, 1);
+  const sshLockedCard = serviceList.children[0];
+  assert.equal(sshLockedCard.className, 'empty-state metadata-locked-state');
+  assert.equal(sshLockedCard.children.length, 3);
+  assert.equal(sshLockedCard.children[0].className, 'metadata-lock-title');
+  assert.equal(sshLockedCard.children[0].textContent, 'SSH keys require full unlock');
+  assert.equal(sshLockedCard.children[1].className, 'metadata-lock-desc');
+  assert.equal(sshLockedCard.children[1].textContent, 'Your session is in quick-access metadata mode.');
+  assert.equal(sshLockedCard.children[2].className, 'primary-btn metadata-lock-btn');
+  assert.equal(sshLockedCard.children[2].textContent, 'Unlock Keygrain');
+
+  // Search in SSH tab preserves standard empty-state scoping
+  searchInput.value = 'nonexistent';
+  searchInput.handlers.input();
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].className, 'empty-state');
+  assert.equal(serviceList.children[0].textContent, 'No SSH keys found.');
+
+  // Clearing search in SSH tab restores locked notice
+  searchInput.value = '';
+  searchInput.handlers.input();
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].className, 'empty-state metadata-locked-state');
+
+  // Wallets tab in metadata mode: stale items purged, renders locked notice
+  await tabWallets.handlers.click();
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
+  assert.equal(serviceList.children.length, 1);
+  const walletLockedCard = serviceList.children[0];
+  assert.equal(walletLockedCard.className, 'empty-state metadata-locked-state');
+  assert.equal(walletLockedCard.children.length, 3);
+  assert.equal(walletLockedCard.children[0].className, 'metadata-lock-title');
+  assert.equal(walletLockedCard.children[0].textContent, 'HD wallets require full unlock');
+  assert.equal(walletLockedCard.children[1].className, 'metadata-lock-desc');
+  assert.equal(walletLockedCard.children[1].textContent, 'Your session is in quick-access metadata mode.');
+  assert.equal(walletLockedCard.children[2].className, 'primary-btn metadata-lock-btn');
+  assert.equal(walletLockedCard.children[2].textContent, 'Unlock Keygrain');
+
+  // Search in Wallets tab preserves standard empty-state scoping
+  searchInput.value = 'nonexistent';
+  searchInput.handlers.input();
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].className, 'empty-state');
+  assert.equal(serviceList.children[0].textContent, 'No wallets found.');
+
+  // Clearing search in Wallets tab restores locked notice
+  searchInput.value = '';
+  searchInput.handlers.input();
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].className, 'empty-state metadata-locked-state');
+
+  // Clicking unlock button opens promptReauth
+  reauthDialog.classList.add('hidden');
+  assert.equal(reauthDialog.classList.contains('hidden'), true);
+  walletLockedCard.children[2].handlers.click();
+  assert.equal(reauthDialog.classList.contains('hidden'), false);
+
+  // Completing reauth unlocks back to full mode and restores items
+  currentState = 'full';
+  reauthSecret.value = 'auth-secret';
+  await reauthConfirm.handlers.click();
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 0));
+  assert.equal(serviceList.children.length, 1);
+  assert.equal(serviceList.children[0].id, 'wallet-item-0');
+
+  console.log('  ✓ metadata mode purges stale SSH/wallet items and displays locked notice with unlock action');
 }
 
 

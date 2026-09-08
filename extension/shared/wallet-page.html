@@ -28,11 +28,11 @@ RECOMMENDED USAGE:
 • Use this derivation ONLY to verify you can recover your mnemonic if your hardware wallet is lost or destroyed.
 • NEVER send funds to a derived wallet without first verifying the addresses match your hardware wallet.</div>
 
-    <label for="wallet-email">Email</label>
-    <input type="email" id="wallet-email" autocomplete="email">
+    <label for="wallet-email">Email <span class="optional">(optional)</span> <span class="metadata-indicator">Account Identity</span></label>
+    <input type="email" id="wallet-email" placeholder="optional" autocomplete="email">
 
     <div id="secret-group">
-      <label for="wallet-secret">Master Secret</label>
+      <label for="wallet-secret">Master Secret <span class="crypto-indicator" title="Cryptographic derivation input: feeds into Argon2id">🔑 Derivation</span></label>
       <input type="password" id="wallet-secret" autocomplete="off">
       <div id="wallet-fingerprint" role="img" aria-label="Secret fingerprint" style="display:flex; height:6px; border-radius:3px; overflow:hidden; margin-top:4px;"></div>
       <p style="font-size:0.75rem; color:var(--text-secondary); margin:2px 0 0;">Visual fingerprint — confirms the same secret.</p>
@@ -41,10 +41,10 @@ RECOMMENDED USAGE:
       🔓 Unlocked via active Keygrain session (<span id="unlocked-email-badge"></span>). Master secret entry not required.
     </div>
 
-    <label for="wallet-name">Wallet name <span style="font-size:0.75rem">(lowercase, digits, hyphens only)</span></label>
+    <label for="wallet-name">Wallet name <span class="crypto-indicator" title="Cryptographic derivation input: used as Argon2id salt & HMAC seed">🔑 Salt & Seed</span> <span class="field-hint">(lowercase, digits, hyphens only)</span></label>
     <input type="text" id="wallet-name" placeholder="e.g. personal, savings" pattern="[a-z0-9\-]+" autocomplete="off">
 
-    <label for="wallet-chain">Chain</label>
+    <label for="wallet-chain">Chain <span class="metadata-indicator">BIP-44 Path</span></label>
     <select id="wallet-chain">
       <option value="bitcoin">Bitcoin</option>
       <option value="ethereum">Ethereum</option>
@@ -57,7 +57,7 @@ RECOMMENDED USAGE:
       <option value="avalanche">Avalanche</option>
     </select>
 
-    <label for="wallet-counter">Counter</label>
+    <label for="wallet-counter">Counter <span class="crypto-indicator" title="Cryptographic derivation input: counter rotation">🔑 Counter</span></label>
     <input type="number" id="wallet-counter" min="1" value="1">
 
     <div class="confirm-row">

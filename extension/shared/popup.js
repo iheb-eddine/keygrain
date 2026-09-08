@@ -1631,6 +1631,32 @@
     serviceList.textContent = "";
 
     if (!items || items.length === 0) {
+      if (currentOwnerState === "metadata" && (!searchInput || !searchInput.value.trim())) {
+        const container = document.createElement("div");
+        container.className = "empty-state metadata-locked-state";
+
+        const title = document.createElement("div");
+        title.className = "metadata-lock-title";
+        title.textContent = "SSH keys require full unlock";
+        container.appendChild(title);
+
+        const desc = document.createElement("div");
+        desc.className = "metadata-lock-desc";
+        desc.textContent = "Your session is in quick-access metadata mode.";
+        container.appendChild(desc);
+
+        const btn = document.createElement("button");
+        btn.className = "primary-btn metadata-lock-btn";
+        btn.type = "button";
+        btn.textContent = "Unlock Keygrain";
+        btn.addEventListener("click", () => {
+          promptReauth(() => requestOwnerView());
+        });
+        container.appendChild(btn);
+
+        serviceList.appendChild(container);
+        return;
+      }
       const empty = document.createElement("div");
       empty.className = "empty-state";
       empty.textContent = "No SSH keys found.";
@@ -1721,17 +1747,19 @@
       });
 
       const viewKeysBtn = document.createElement("button");
-      viewKeysBtn.className = "ssh-copy-btn";
+      viewKeysBtn.className = "ssh-icon-btn";
       viewKeysBtn.type = "button";
-      viewKeysBtn.innerHTML = SVG_EYE + " View Keys";
+      viewKeysBtn.innerHTML = SVG_EYE;
+      viewKeysBtn.title = "View Keys";
+      viewKeysBtn.setAttribute("aria-label", "View Keys");
       viewKeysBtn.addEventListener("click", () => {
         openSshDialog(item);
       });
 
       const editBtn = document.createElement("button");
-      editBtn.className = "ssh-copy-btn";
+      editBtn.className = "ssh-icon-btn";
       editBtn.type = "button";
-      editBtn.innerHTML = SVG_EDIT + " Edit";
+      editBtn.innerHTML = SVG_EDIT;
       editBtn.title = "Edit SSH key";
       editBtn.setAttribute("aria-label", "Edit SSH key");
       editBtn.addEventListener("click", () => {
@@ -1752,6 +1780,32 @@
     serviceList.textContent = "";
 
     if (!items || items.length === 0) {
+      if (currentOwnerState === "metadata" && (!searchInput || !searchInput.value.trim())) {
+        const container = document.createElement("div");
+        container.className = "empty-state metadata-locked-state";
+
+        const title = document.createElement("div");
+        title.className = "metadata-lock-title";
+        title.textContent = "HD wallets require full unlock";
+        container.appendChild(title);
+
+        const desc = document.createElement("div");
+        desc.className = "metadata-lock-desc";
+        desc.textContent = "Your session is in quick-access metadata mode.";
+        container.appendChild(desc);
+
+        const btn = document.createElement("button");
+        btn.className = "primary-btn metadata-lock-btn";
+        btn.type = "button";
+        btn.textContent = "Unlock Keygrain";
+        btn.addEventListener("click", () => {
+          promptReauth(() => requestOwnerView());
+        });
+        container.appendChild(btn);
+
+        serviceList.appendChild(container);
+        return;
+      }
       const empty = document.createElement("div");
       empty.className = "empty-state";
       empty.textContent = "No wallets found.";
@@ -1772,28 +1826,45 @@
       const header = document.createElement("div");
       header.className = "wallet-card-header";
 
+      const walletId = item.walletId || item.wallet_id || item.walletName || item.wallet_name || item.id || "wallet";
+
+      const topRow = document.createElement("div");
+      topRow.className = "wallet-card-top";
+
       const title = document.createElement("span");
       title.className = "wallet-card-title";
-      title.style.fontWeight = "600";
-      title.textContent = item.label || item.wallet_id || item.walletId || item.walletName || "Wallet";
+      title.textContent = walletId;
+      topRow.appendChild(title);
 
+      const badges = document.createElement("div");
+      badges.className = "wallet-card-badges";
+
+      const wordsCount = item.words === 12 ? 12 : 24;
       const wordsBadge = document.createElement("span");
-      wordsBadge.className = "wallet-chain-badge";
-      wordsBadge.textContent = item.chain || ((item.words === 12 ? 12 : 24) + " words");
-      title.appendChild(wordsBadge);
-
-      header.appendChild(title);
+      wordsBadge.className = "wallet-chain-badge wallet-words-" + wordsCount;
+      wordsBadge.textContent = item.chain || (wordsCount + " words");
 
       const counterBadge = document.createElement("span");
       counterBadge.className = "counter-badge";
       counterBadge.textContent = "v" + (item.counter || 1);
-      header.appendChild(counterBadge);
 
-      const notesText = item.notes || "";
-      if (notesText) {
+      badges.appendChild(wordsBadge);
+      badges.appendChild(counterBadge);
+      topRow.appendChild(badges);
+
+      header.appendChild(topRow);
+
+      if (item.label && item.label !== walletId) {
+        const labelEl = document.createElement("div");
+        labelEl.className = "wallet-card-label";
+        labelEl.textContent = item.label;
+        header.appendChild(labelEl);
+      }
+
+      if (item.notes) {
         const notes = document.createElement("div");
         notes.className = "wallet-card-notes";
-        notes.textContent = notesText;
+        notes.textContent = item.notes;
         header.appendChild(notes);
       }
 
@@ -1809,19 +1880,23 @@
       let revealedMnemonic = null;
 
       const revealBtn = document.createElement("button");
-      revealBtn.className = "ssh-reveal-btn";
+      revealBtn.className = "wallet-action-btn";
       revealBtn.type = "button";
-      revealBtn.textContent = "Reveal";
+      revealBtn.innerHTML = SVG_EYE;
+      revealBtn.title = "Reveal recovery phrase";
+      revealBtn.setAttribute("aria-label", "Reveal recovery phrase");
 
       const copyBtn = document.createElement("button");
-      copyBtn.className = "ssh-reveal-btn";
+      copyBtn.className = "wallet-action-btn";
       copyBtn.type = "button";
-      copyBtn.textContent = "Copy";
+      copyBtn.innerHTML = SVG_COPY;
+      copyBtn.title = "Copy recovery phrase";
+      copyBtn.setAttribute("aria-label", "Copy recovery phrase");
 
       const editBtn = document.createElement("button");
-      editBtn.className = "ssh-reveal-btn";
+      editBtn.className = "wallet-action-btn";
       editBtn.type = "button";
-      editBtn.innerHTML = SVG_EDIT + " Edit";
+      editBtn.innerHTML = SVG_EDIT;
       editBtn.title = "Edit wallet";
       editBtn.setAttribute("aria-label", "Edit wallet");
       editBtn.addEventListener("click", () => {
@@ -1833,11 +1908,15 @@
           if (mnemonicText.classList.contains("masked")) {
             mnemonicText.classList.remove("masked");
             mnemonicText.textContent = revealedMnemonic;
-            revealBtn.textContent = "Hide";
+            revealBtn.innerHTML = SVG_EYE_SLASH;
+            revealBtn.title = "Hide recovery phrase";
+            revealBtn.setAttribute("aria-label", "Hide recovery phrase");
           } else {
             mnemonicText.classList.add("masked");
             mnemonicText.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
-            revealBtn.textContent = "Reveal";
+            revealBtn.innerHTML = SVG_EYE;
+            revealBtn.title = "Reveal recovery phrase";
+            revealBtn.setAttribute("aria-label", "Reveal recovery phrase");
           }
           return;
         }
@@ -1882,7 +1961,9 @@
             revealedMnemonic = genRes.result.mnemonic;
             mnemonicText.classList.remove("masked");
             mnemonicText.textContent = revealedMnemonic;
-            revealBtn.textContent = "Hide";
+            revealBtn.innerHTML = SVG_EYE_SLASH;
+            revealBtn.title = "Hide recovery phrase";
+            revealBtn.setAttribute("aria-label", "Hide recovery phrase");
           } else if (genRes?.code === "KEYGRAIN_EXPIRED") {
             promptReauth(async () => {
               await requestOwnerView();
@@ -2037,6 +2118,8 @@
       if (epoch !== renderEpoch) return;
       if (!stateResponse?.ok) {
         renderItems([]);
+        popupSshItems = [];
+        popupWalletItems = [];
         if (stateResponse?.code === "KEYGRAIN_CONSUMER_MIGRATION_REQUIRED") {
           showUpdateRequiredScreen();
         } else {
@@ -2048,6 +2131,8 @@
       currentOwnerState = state.state;
       currentSnapshot = state;
       if (state.state === "locked") {
+        popupSshItems = [];
+        popupWalletItems = [];
         currentOwnerState = "locked";
         showLockScreen();
         return;
@@ -2078,6 +2163,8 @@
         if (epoch !== renderEpoch) return;
         const postState = validateStateResponse(postCapabilityStateResponse);
         if (postState.state !== "full" || postState.stateGeneration !== state.stateGeneration || postState.authorizationGeneration !== state.authorizationGeneration) {
+          popupSshItems = [];
+          popupWalletItems = [];
           showLockScreen();
           return;
         }
@@ -2162,6 +2249,8 @@
           addBtn.classList.remove("hidden");
         }
       } else {
+        popupSshItems = [];
+        popupWalletItems = [];
         let activeHost = "";
         try {
           const tabs = await (globalThis.chrome || globalThis.browser)?.tabs?.query?.({active: true, currentWindow: true});
@@ -2215,6 +2304,8 @@
       }
     } catch (error) {
       if (epoch === renderEpoch) {
+        popupSshItems = [];
+        popupWalletItems = [];
         renderItems([]);
         showLockScreen();
         showStatus(statusEl, safeFailureMessage(error));
@@ -3324,6 +3415,27 @@
       if (e.key === "Enter") { e.preventDefault(); addConfirm?.click(); }
     });
   });
+  [sshEditKeyname, sshEditCounter, sshEditComment].forEach((input) => {
+    input?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); sshEditConfirm?.click(); }
+    });
+  });
+  [walletEditId, walletEditLabel, walletEditWords, walletEditCounter, walletEditNotes].forEach((input) => {
+    input?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && input.tagName !== "TEXTAREA") { e.preventDefault(); walletEditConfirm?.click(); }
+    });
+  });
+  const pinSetInput = document.getElementById("pin-set-input");
+  const pinSaveBtn = document.getElementById("pin-save-btn");
+  pinSetInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); pinSaveBtn?.click(); }
+  });
+  resetInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && resetConfirmBtn && !resetConfirmBtn.disabled) {
+      e.preventDefault();
+      resetConfirmBtn.click();
+    }
+  });
   const setLockTimeoutInput = document.getElementById("set-lock-timeout");
   const setMetadataTimeoutInput = document.getElementById("set-metadata-timeout");
   const setLengthInput = document.getElementById("set-length");
@@ -3465,6 +3577,46 @@
         e.preventDefault();
         const targetBtn = firstItem.querySelector(".fill-btn") || firstItem.querySelector(".copy-btn");
         if (targetBtn) targetBtn.click();
+      }
+    } else if (e.key === "Escape") {
+      if (searchInput.value) {
+        e.preventDefault();
+        searchInput.value = "";
+        searchInput.dispatchEvent(new Event("input"));
+      }
+    }
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (menuDropdown && !menuDropdown.classList.contains("hidden")) {
+        menuDropdown.classList.add("hidden");
+        menuBtn?.setAttribute("aria-expanded", "false");
+        menuBtn?.focus();
+        return;
+      }
+      const openDialogs = [
+        { el: resetDialog, cancel: resetCancel },
+        { el: deleteDialog, cancel: deleteCancel },
+        { el: deleteServerDialog, cancel: deleteServerCancel },
+        { el: switchAccountDialog, cancel: switchAccountCancel },
+        { el: migrationNoticeDialog, cancel: migrationNoticeClose },
+        { el: inlineConsentDialog, cancel: inlineConsentCancel },
+        { el: reauthDialog, cancel: reauthCancel },
+        { el: sshDialog, cancel: sshDialogClose },
+        { el: sshEditDialog, cancel: sshEditCancel },
+        { el: walletEditDialog, cancel: walletEditCancel },
+        { el: settingsPanel, cancel: settingsCancel },
+        { el: addDialog, cancel: addCancel },
+      ];
+      for (const d of openDialogs) {
+        if (d.el && !d.el.classList.contains("hidden")) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (d.cancel) d.cancel.click();
+          else d.el.classList.add("hidden");
+          return;
+        }
       }
     }
   });

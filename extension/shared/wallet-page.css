@@ -120,8 +120,56 @@ button {
 }
 .error { color: var(--error); margin-top: 8px; }
 
-/* Wallet list */
-#wallet-list-section { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px; }
+/* Cryptographic & Metadata indicators */
+.crypto-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.67rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #0284c7;
+  border: 1px solid rgba(14, 165, 233, 0.28);
+  vertical-align: middle;
+  margin-left: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  .crypto-indicator {
+    background: rgba(56, 189, 248, 0.16);
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.35);
+  }
+}
+.metadata-indicator {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.65rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.field-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
+.optional {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-weight: normal;
+  margin-left: 4px;
+}
 #wallet-list-section h2 { font-size: 1rem; margin-bottom: 8px; }
 .wallet-list-empty { font-size: 0.85rem; color: var(--text-secondary); }
 .wallet-list-table th, .wallet-list-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }

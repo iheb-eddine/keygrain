@@ -190,6 +190,12 @@ if (!window.__keygrain_injected) {
   }
 
   function fillField(field, value) {
+    try {
+      const tracker = field._valueTracker || (field.wrappedJSObject && field.wrappedJSObject._valueTracker);
+      if (tracker && typeof tracker.setValue === "function") {
+        tracker.setValue("");
+      }
+    } catch (_) {}
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
     setter.call(field, value);
     field.dispatchEvent(new Event("input", {bubbles: true}));

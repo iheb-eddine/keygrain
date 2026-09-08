@@ -3,6 +3,7 @@
   --bg-secondary: #f4f4f4;
   --surface: #ffffff;
   --text: #222222;
+  --text-primary: #222222;
   --text-secondary: #555555;
   --border: #cccccc;
   --accent: #1a73e8;
@@ -40,6 +41,7 @@
     --bg-secondary: #25253a;
     --surface: #2a2a40;
     --text: #e0e0e0;
+    --text-primary: #e0e0e0;
     --text-secondary: #a0a0b0;
     --border: #3a3a50;
     --accent: #5b9cf6;
@@ -304,6 +306,12 @@ button { cursor: pointer; }
 .strength-bar.good { width: 70%; background: #8bc34a; }
 .strength-bar.strong { width: 100%; background: var(--success); }
 .empty-state { text-align: center; color: var(--text-secondary); padding: 20px 0; font-size: 0.9rem; }
+.metadata-locked-state { padding: 32px 16px; text-align: center; }
+.metadata-lock-title { font-weight: 600; font-size: 0.95rem; color: var(--text-primary); margin-bottom: 6px; }
+.metadata-lock-desc { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 16px; }
+.metadata-lock-btn { display: inline-block; padding: 8px 16px; font-size: 0.85rem; }
+.primary-btn { background: var(--accent); color: var(--bg); border: none; border-radius: var(--radius-md); font-weight: 500; cursor: pointer; transition: background var(--transition-fast), transform var(--transition-fast); }
+.primary-btn:hover { background: var(--accent-hover); }
 
 /* Add button */
 #add-btn { margin-top: 8px; width: 100%; padding: 10px 16px; background: var(--accent); color: var(--bg); border: none; border-radius: var(--radius-md); font-size: 1rem; box-shadow: var(--shadow-md); transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast); }
@@ -443,27 +451,124 @@ button { cursor: pointer; }
 .ssh-reveal-btn:hover { background: var(--bg-secondary); color: var(--accent); }
 .ssh-key-textarea { width: 100%; font-family: monospace; font-size: 0.75rem; padding: 6px 8px; margin-top: 4px; margin-bottom: 4px; box-sizing: border-box; background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); resize: vertical; }
 
+/* Cryptographic & Metadata indicators */
+.crypto-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.67rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #0284c7;
+  border: 1px solid rgba(14, 165, 233, 0.28);
+  vertical-align: middle;
+  margin-left: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  .crypto-indicator {
+    background: rgba(56, 189, 248, 0.16);
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.35);
+  }
+}
+.metadata-indicator {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.65rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.crypto-notice {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-left: 3px solid #0284c7;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 6px 10px;
+  margin-bottom: 12px;
+  line-height: 1.35;
+}
+
 /* Dedicated SSH & Wallet tab cards */
-.wallet-chain-badge { font-size: 0.65rem; color: var(--accent); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 3px; padding: 1px 4px; margin-left: 4px; font-weight: 600; text-transform: uppercase; }
-.counter-badge { font-size: 0.65rem; color: var(--text-secondary); background: var(--bg-secondary); border-radius: 3px; padding: 1px 4px; margin-left: 4px; font-weight: normal; }
-.wallet-mnemonic-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); margin-top: var(--space-xs); background: var(--bg-secondary); border-radius: var(--radius-sm); flex-basis: 100%; }
-.wallet-mnemonic-text { font-family: monospace; font-size: 0.78rem; color: var(--text); flex: 1; word-break: break-all; }
-.wallet-mnemonic-text.masked { letter-spacing: 2px; color: var(--text-secondary); }
+.wallet-chain-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-radius: 4px;
+  padding: 2px 6px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  color: var(--accent);
+  background: rgba(26, 115, 232, 0.08);
+  border-color: rgba(26, 115, 232, 0.35);
+}
+.wallet-chain-badge.wallet-words-24 {
+  color: var(--accent);
+  background: rgba(26, 115, 232, 0.08);
+  border-color: rgba(26, 115, 232, 0.35);
+}
+.wallet-chain-badge.wallet-words-12 {
+  color: #00897b;
+  background: rgba(0, 137, 123, 0.08);
+  border-color: rgba(0, 137, 123, 0.35);
+}
+@media (prefers-color-scheme: dark) {
+  .wallet-chain-badge,
+  .wallet-chain-badge.wallet-words-24 {
+    color: var(--accent);
+    background: rgba(91, 156, 246, 0.12);
+    border-color: rgba(91, 156, 246, 0.4);
+  }
+  .wallet-chain-badge.wallet-words-12 {
+    color: #2dd4bf;
+    background: rgba(45, 212, 191, 0.12);
+    border-color: rgba(45, 212, 191, 0.4);
+  }
+}
+.counter-badge {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.ssh-type-badge { font-size: 0.68rem; color: #fff; background: var(--accent); border-radius: 4px; padding: 2px 6px; font-weight: 600; }
 
 .service-item.ssh-card, .service-item.wallet-card {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
-  padding: 12px 14px;
-  margin-bottom: 8px;
-  background: var(--bg-secondary);
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 .service-item.ssh-card:hover, .service-item.wallet-card:hover {
-  background: var(--bg-secondary);
+  background: var(--surface);
   border-color: var(--accent);
   box-shadow: var(--shadow-md);
   transform: translateY(-1px);
@@ -472,44 +577,132 @@ button { cursor: pointer; }
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 4px;
+  gap: 6px;
   width: 100%;
 }
 .ssh-card-top, .wallet-card-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   width: 100%;
 }
-.ssh-card-title {
+.ssh-card-title, .wallet-card-title {
   font-family: monospace;
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--text);
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+.wallet-card-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.wallet-card-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ssh-card-comment, .wallet-card-notes {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--text-secondary);
   word-break: break-word;
   white-space: normal;
-  line-height: 1.35;
+  line-height: 1.4;
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--border);
 }
 .ssh-card-actions {
   display: flex;
-  gap: 6px;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   margin-top: 4px;
   width: 100%;
 }
 .ssh-card-actions .ssh-copy-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  font-size: 0.78rem;
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: var(--bg-secondary);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 .ssh-card-actions .ssh-copy-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  transform: translateY(-1px);
+}
+.ssh-card-actions .ssh-copy-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
+}
+.ssh-card-actions .ssh-icon-btn, .wallet-mnemonic-row .wallet-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.ssh-card-actions .ssh-icon-btn:hover, .wallet-mnemonic-row .wallet-action-btn:hover {
+  background: var(--surface);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.wallet-mnemonic-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  width: 100%;
+  box-sizing: border-box;
+}
+.wallet-mnemonic-text {
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  flex: 1;
+  word-break: break-all;
+  line-height: 1.35;
+}
+.wallet-mnemonic-text.masked {
+  letter-spacing: 2px;
+  color: var(--text-secondary);
+  font-weight: bold;
 }
 
 /* Reset / Danger button */

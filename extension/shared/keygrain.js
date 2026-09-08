@@ -28,9 +28,11 @@ async function strengthenWithSalt(secret, saltString) {
   }
   // Serialize concurrent calls: if a computation is in-flight, wait then re-check cache.
   // A rejected queue must propagate to current waiters but must not poison later calls.
-  if (_strengthenQueue) {
+  while (_strengthenQueue) {
     const pending = _strengthenQueue;
-    await pending;
+    try {
+      await pending;
+    } catch (_) {}
     if (_strengthenCache && _strengthenCache.secret === secret && _strengthenCache.salt === saltString) {
       return new Uint8Array(_strengthenCache.result);
     }

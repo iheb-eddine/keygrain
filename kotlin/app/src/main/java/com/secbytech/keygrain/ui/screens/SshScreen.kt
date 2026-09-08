@@ -45,6 +45,8 @@ import com.secbytech.keygrain.data.ServiceManager
 import com.secbytech.keygrain.data.SshEngine
 import com.secbytech.keygrain.data.SshKeyEntry
 import com.secbytech.keygrain.data.SyncStore
+import com.secbytech.keygrain.ui.components.CryptoFieldLabel
+import com.secbytech.keygrain.ui.components.CryptoInfoBanner
 import com.secbytech.keygrain.ui.util.canUseBiometric
 import com.secbytech.keygrain.ui.util.showBiometric
 import kotlinx.coroutines.Dispatchers
@@ -293,8 +295,9 @@ private fun SshItemCard(
     }
 
     Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
         modifier = Modifier.fillMaxWidth().clickable { onView() }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -304,67 +307,92 @@ private fun SshItemCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.secondaryContainer),
-                        contentAlignment = Alignment.Center
+                    Surface(
+                        modifier = Modifier.size(42.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
                     ) {
-                        Icon(
-                            Icons.Default.Key,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.Terminal,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                     Spacer(Modifier.width(12.dp))
                     Column {
                         Text(
                             item.keyName,
                             style = MaterialTheme.typography.titleMedium,
+                            fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            item.email,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        val commentDisplay = if (item.comment.isNotBlank()) item.comment else item.email
+                        if (commentDisplay.isNotBlank()) {
+                            Text(
+                                commentDisplay,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
 
-                Box {
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onView) {
+                        Icon(
+                            Icons.Default.Visibility,
+                            contentDescription = "View Keypair",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("View & Export") },
-                            leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) },
-                            onClick = {
-                                menuExpanded = false
-                                onView()
-                            }
+                    IconButton(onClick = onEdit) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit SSH Key",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        DropdownMenuItem(
-                            text = { Text("Edit") },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                            onClick = {
-                                menuExpanded = false
-                                onEdit()
-                            }
-                        )
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                            onClick = {
-                                menuExpanded = false
-                                onDelete()
-                            }
-                        )
+                    }
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "More Options",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("View & Export") },
+                                leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onView()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Edit") },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onEdit()
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onDelete()
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -378,60 +406,68 @@ private fun SshItemCard(
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surface
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                        border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
                     ) {
                         Text(
                             "Ed25519",
                             style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.tertiaryContainer
+                    ) {
+                        Text(
+                            "v${item.counter}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                             fontWeight = FontWeight.Medium
                         )
                     }
-                    if (item.counter > 1) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.tertiaryContainer
-                        ) {
-                            Text(
-                                "v${item.counter}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            FilledTonalButton(
+                onClick = {
+                    scope.launch {
+                        try {
+                            val line = withContext(Dispatchers.Default) {
+                                val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), item.keyName, item.counter)
+                                val comment = item.keyName.lowercase()
+                                SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
+                            }
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            cm.setPrimaryClip(ClipData.newPlainText("ssh-pubkey", line))
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            copiedPub = true
+                            Toast.makeText(context, "Public key copied", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Derivation error: ${e.message}", Toast.LENGTH_SHORT).show()
                         }
                     }
-                }
-
-                Button(
-                    onClick = {
-                        scope.launch {
-                            try {
-                                val line = withContext(Dispatchers.Default) {
-                                    val kp = SshEngine.deriveSshKeypair(masterSecret.toByteArray(), item.keyName, item.counter)
-                                    val comment = item.keyName.lowercase()
-                                    SshEngine.formatAuthorizedKeys(kp.publicKey, comment)
-                                }
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText("ssh-pubkey", line))
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                copiedPub = true
-                                Toast.makeText(context, "Public key copied", Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Derivation error: ${e.message}", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    },
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Icon(
-                        if (copiedPub) Icons.Default.Check else Icons.Default.ContentCopy,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (copiedPub) "Copied!" else "Copy Pubkey", style = MaterialTheme.typography.labelMedium)
-                }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                Icon(
+                    if (copiedPub) Icons.Default.Check else Icons.Default.ContentCopy,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (copiedPub) "Public Key Copied!" else "Copy Public Key",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
@@ -775,13 +811,16 @@ private fun SshEditorDialog(
         title = { Text(if (initialItem == null) "New SSH Keypair" else "Edit SSH Key") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                CryptoInfoBanner("Key Name and Counter determine the deterministic Ed25519 keypair. Comment is metadata only.")
+
                 OutlinedTextField(
                     value = keyName,
                     onValueChange = {
                         keyName = it.filter { c -> !c.isWhitespace() }
                         errorMsg = null
                     },
-                    label = { Text("Key Name (e.g. github, vps)") },
+                    label = { CryptoFieldLabel("Key Name", isCrypto = true, cryptoType = "Salt & Seed") },
+                    placeholder = { Text("e.g. github, vps") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -789,7 +828,8 @@ private fun SshEditorDialog(
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it; errorMsg = null },
-                    label = { Text("Comment (optional, e.g. email or machine)") },
+                    label = { CryptoFieldLabel("Comment", isCrypto = false) },
+                    placeholder = { Text("Optional comment (e.g. machine or purpose)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -799,7 +839,7 @@ private fun SshEditorDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Counter (Generation):", style = MaterialTheme.typography.bodyMedium)
+                    CryptoFieldLabel("Counter (Generation)", isCrypto = true, cryptoType = "Counter")
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { if (counter > 1) counter-- }) {
                             Icon(Icons.Default.Remove, contentDescription = "Decrement")

@@ -159,39 +159,40 @@
   <div id="add-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="add-dialog-title">
     <h2 id="add-dialog-title">Add Service</h2>
     <div id="add-edit-warning" class="hidden" style="background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning-text); border-radius: var(--radius-md); padding: 8px 10px; margin-bottom: 8px; font-size: 0.82rem; font-weight: 500;" role="alert">⚠️ Changing site, length, symbols, or counter will generate a different password.</div>
-    <label for="add-name">Service name</label>
+    <div class="crypto-notice">Fields marked <span class="crypto-indicator">🔑 Derivation</span> determine your deterministic password.</div>
+    <label for="add-name">Service name <span class="metadata-indicator">Display only</span></label>
     <input type="text" id="add-name" required>
     <div id="add-rule-indicator" class="hidden" aria-live="polite"></div>
-    <label for="add-site">Site</label>
+    <label for="add-site">Site <span class="crypto-indicator" title="Cryptographic derivation input: feeds into HMAC">🔑 Derivation</span></label>
     <input type="text" id="add-site" required>
-    <label for="add-email">Email</label>
+    <label for="add-email">Email <span class="crypto-indicator" title="Cryptographic derivation input: feeds into Argon2id salt">🔑 Salt</span></label>
     <input type="email" id="add-email" required>
     <details id="add-options">
       <summary><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6.32-1.9l-1.09-.63a5.4 5.4 0 0 0 0-1.94l1.09-.63a.5.5 0 0 0 .18-.68l-1-1.73a.5.5 0 0 0-.68-.18l-1.09.63a5.3 5.3 0 0 0-1.68-.97V1.5a.5.5 0 0 0-.5-.5h-2a.5.5 0 0 0-.5.5v1.26a5.3 5.3 0 0 0-1.68.97L4.28 3.1a.5.5 0 0 0-.68.18l-1 1.73a.5.5 0 0 0 .18.68l1.09.63a5.4 5.4 0 0 0 0 1.94l-1.09.63a.5.5 0 0 0-.18.68l1 1.73a.5.5 0 0 0 .68.18l1.09-.63c.5.42 1.07.74 1.68.97v1.26a.5.5 0 0 0 .5.5h2a.5.5 0 0 0 .5-.5v-1.26a5.3 5.3 0 0 0 1.68-.97l1.09.63a.5.5 0 0 0 .68-.18l1-1.73a.5.5 0 0 0-.18-.68z"/></svg> Options</summary>
-      <label for="add-length">Length</label>
+      <label for="add-length">Length <span class="crypto-indicator" title="Cryptographic derivation input">🔑 Derivation</span></label>
       <input type="number" id="add-length" min="8" value="20">
-      <label for="add-symbols">Symbols</label>
+      <label for="add-symbols">Symbols <span class="crypto-indicator" title="Cryptographic derivation input">🔑 Derivation</span></label>
       <input type="text" id="add-symbols" value="!@#$%&*-_=+?">
       <div id="add-pw-warning" class="hidden" aria-live="polite"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.56 1.69a.63.63 0 0 0-1.12 0L.34 14.03A.63.63 0 0 0 .9 15h14.2a.63.63 0 0 0 .56-.97L8.56 1.69zM8 12.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5zM7.25 6h1.5v4h-1.5V6z"/></svg> Changing these options will change your generated password.</div>
     </details>
 
     <details id="add-totp-section">
       <summary><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.75 4.75a.75.75 0 0 0-1.5 0v3.5c0 .414.336.75.75.75h3.5a.75.75 0 0 0 0-1.5H8.75V4.75z"/></svg> One-Time Codes (TOTP)</summary>
-      <label for="add-totp-mode">TOTP Mode</label>
+      <label for="add-totp-mode">TOTP Mode <span class="crypto-indicator" title="Cryptographic derivation input">🔑 Derivation</span></label>
       <select id="add-totp-mode">
         <option value="">None</option>
         <option value="derived">Deterministic (from master secret)</option>
         <option value="stored">Stored seed (from website)</option>
       </select>
       <div id="add-totp-seed-group" class="hidden">
-        <label for="add-totp-seed">Base32 Seed / Key</label>
+        <label for="add-totp-seed">Base32 Seed / Key <span class="crypto-indicator" title="Cryptographic secret seed">🔑 Seed</span></label>
         <input type="text" id="add-totp-seed" placeholder="JBSWY3DPEHPK3PXP" autocomplete="off" spellcheck="false">
       </div>
     </details>
 
 
     <div id="rotate-section" class="hidden">
-      <label for="add-counter">Password version</label>
+      <label for="add-counter">Password version <span class="crypto-indicator" title="Cryptographic derivation input: counter rotation">🔑 Counter</span></label>
       <input type="number" id="add-counter" min="1" step="1" value="1">
       <button id="rotate-btn" type="button"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13.65 2.35A7.96 7.96 0 0 0 8 0C3.58 0 0 3.58 0 8s3.58 8 8 8a7.99 7.99 0 0 0 7.56-5.34h-2.03A6 6 0 1 1 8 2a5.98 5.98 0 0 1 4.24 1.76L9 7h7V0l-2.35 2.35z"/></svg> Rotate password</button>
       <button id="mark-rotated-btn" type="button" class="hidden"><svg class="icon" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.35 6.35l-4 4a.5.5 0 0 1-.7 0l-2-2a.5.5 0 1 1 .7-.7L7 9.29l3.65-3.64a.5.5 0 1 1 .7.7z"/></svg> Mark as rotated</button>
@@ -206,11 +207,12 @@
   <!-- SSH Key Edit/Add Dialog -->
   <div id="ssh-edit-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="ssh-edit-dialog-title">
     <h2 id="ssh-edit-dialog-title">Edit SSH Key</h2>
-    <label for="ssh-edit-keyname">Key Name</label>
+    <div class="crypto-notice">Fields marked <span class="crypto-indicator">🔑 Derivation</span> directly determine your Ed25519 keypair.</div>
+    <label for="ssh-edit-keyname">Key Name <span class="crypto-indicator" title="Cryptographic input: used as Argon2id salt & HMAC seed">🔑 Salt & Seed</span></label>
     <input type="text" id="ssh-edit-keyname" placeholder="e.g. github or id_ed25519" autocomplete="off" spellcheck="false" required>
-    <label for="ssh-edit-counter">Counter / Version</label>
+    <label for="ssh-edit-counter">Counter / Version <span class="crypto-indicator" title="Cryptographic input: counter rotation">🔑 Counter</span></label>
     <input type="number" id="ssh-edit-counter" min="1" step="1" value="1" required>
-    <label for="ssh-edit-comment">Comment</label>
+    <label for="ssh-edit-comment">Comment <span class="metadata-indicator" title="Metadata only: OpenSSH label, does not alter key derivation">Metadata</span></label>
     <input type="text" id="ssh-edit-comment" placeholder="Optional comment (e.g. machine or purpose)" autocomplete="off" spellcheck="false">
     <div class="dialog-actions">
       <button type="button" id="ssh-edit-delete" class="btn-danger hidden" style="margin-right: auto;">Delete</button>
@@ -222,18 +224,19 @@
   <!-- HD Wallet Edit/Add Dialog -->
   <div id="wallet-edit-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="wallet-edit-dialog-title">
     <h2 id="wallet-edit-dialog-title">Edit Wallet</h2>
-    <label for="wallet-edit-id">Wallet ID <span style="font-size:0.75rem">(lowercase, digits, hyphens only)</span></label>
+    <div class="crypto-notice">Fields marked <span class="crypto-indicator">🔑 Derivation</span> determine your BIP-39 recovery phrase.</div>
+    <label for="wallet-edit-id">Wallet ID <span class="crypto-indicator" title="Cryptographic input: used as Argon2id salt & HMAC seed">🔑 Salt & Seed</span> <span style="font-size:0.75rem">(lowercase, digits, hyphens only)</span></label>
     <input type="text" id="wallet-edit-id" placeholder="e.g. personal-vault" pattern="[a-z0-9\-]+" autocomplete="off" spellcheck="false" required>
-    <label for="wallet-edit-label">Label</label>
+    <label for="wallet-edit-label">Label <span class="metadata-indicator" title="Metadata only: display label">Metadata</span></label>
     <input type="text" id="wallet-edit-label" placeholder="e.g. Personal Cold Storage" autocomplete="off" spellcheck="false">
-    <label for="wallet-edit-words">Recovery Phrase Length</label>
+    <label for="wallet-edit-words">Recovery Phrase Length <span class="crypto-indicator" title="Cryptographic derivation input">🔑 Entropy</span></label>
     <select id="wallet-edit-words">
       <option value="24" selected>24 words (standard HD wallet)</option>
       <option value="12">12 words</option>
     </select>
-    <label for="wallet-edit-counter">Counter / Version</label>
+    <label for="wallet-edit-counter">Counter / Version <span class="crypto-indicator" title="Cryptographic derivation input: counter rotation">🔑 Counter</span></label>
     <input type="number" id="wallet-edit-counter" min="1" step="1" value="1" required>
-    <label for="wallet-edit-notes">Notes</label>
+    <label for="wallet-edit-notes">Notes <span class="metadata-indicator" title="Metadata only: organizational notes">Metadata</span></label>
     <textarea id="wallet-edit-notes" rows="2" placeholder="Optional notes" autocomplete="off" style="width: 100%; box-sizing: border-box; resize: vertical;"></textarea>
     <div class="dialog-actions">
       <button type="button" id="wallet-edit-delete" class="btn-danger hidden" style="margin-right: auto;">Delete</button>

@@ -327,3 +327,12 @@ await test('standalone wallet options projection preserves id, label, notes, cha
   assert.equal(generated.ok, true);
 });
 
+await test('wallet-page.html marks email as optional and wallet-page.js does not require email', async () => {
+  const html = readFileSync(resolve(shared, 'wallet-page.html'), 'utf8');
+  assert.match(html, /<label for="wallet-email">Email <span class="optional">\(optional\)<\/span>/);
+  assert.match(html, /id="wallet-email"[^>]*placeholder="optional"/);
+
+  const js = readFileSync(resolve(shared, 'wallet-page.js'), 'utf8');
+  assert.doesNotMatch(js, /Email is required/);
+});
+
