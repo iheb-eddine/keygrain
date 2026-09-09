@@ -32,6 +32,8 @@
         .hidden { display: none !important; }
         label { display: block; margin-top: 1rem; color: var(--text-secondary); font-size: 0.9rem; }
         input, select, textarea { width: 100%; padding: 8px 10px; margin-top: 4px; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; box-sizing: border-box; background: var(--surface); color: var(--text); }
+        select { cursor: pointer; }
+        select option { background: var(--surface); color: var(--text); }
         input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2); }
         button { padding: 10px 20px; font-size: 1rem; border: none; border-radius: 8px; cursor: pointer; transition: background 0.2s, opacity 0.2s; }
         .btn-primary { margin-top: 1.5rem; background: var(--accent); color: #fff; width: 100%; font-weight: 500; }
@@ -204,7 +206,7 @@
     <section id="panel-wallets" role="tabpanel" aria-labelledby="tab-wallets" class="hidden">
         <div class="warning-banner" role="alert">
             <strong>⚠️ BIP-39 Seed Generation Only (Disaster Recovery)</strong>
-            Keygrain derives deterministic 24-word BIP-39 mnemonic phrases directly from your master secret and wallet ID. This generates a standard BIP-39 seed phrase for disaster recovery — it does <em>not</em> implement BIP-32/BIP-44 multi-account wallet hierarchies, key derivation trees, or address generation. Deriving mnemonics in web browsers carries inherent host and clipboard exposure risks. Never share your mnemonic phrase.
+            Keygrain derives deterministic BIP-39 mnemonic phrases (12 or 24 words) directly from your master secret and wallet ID. This generates a standard BIP-39 seed phrase for disaster recovery — it does <em>not</em> implement BIP-32/BIP-44 multi-account wallet hierarchies, key derivation trees, or address generation. Deriving mnemonics in web browsers carries inherent host and clipboard exposure risks. Never share your mnemonic phrase.
         </div>
 
         <form id="form-wallet">
@@ -213,6 +215,12 @@
             <small style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
               Lowercase identifier with letters, numbers, or hyphens (e.g. <code>cold-storage</code>)
             </small>
+
+            <label for="wallet-words">Words (Length)</label>
+            <select id="wallet-words">
+                <option value="24" selected>24 words (recommended)</option>
+                <option value="12">12 words</option>
+            </select>
 
             <label for="wallet-counter">Counter (Version)</label>
             <input type="number" id="wallet-counter" min="1" value="1" required>
@@ -753,6 +761,7 @@
     const formWallet = document.getElementById("form-wallet");
     const walletConfirm = document.getElementById("wallet-confirm");
     const generateWalletBtn = document.getElementById("generate-wallet");
+    const walletWords = document.getElementById("wallet-words");
     const walletResult = document.getElementById("wallet-result");
     const mnemonicGrid = document.getElementById("mnemonic-grid");
     const walletClearTimer = document.getElementById("wallet-clear-timer");
@@ -762,6 +771,16 @@
 
     walletConfirm.addEventListener("change", () => {
       generateWalletBtn.disabled = !walletConfirm.checked;
+    });
+
+    function updateWalletButtonText() {
+      const wordsCount = parseInt(walletWords.value, 10) === 12 ? 12 : 24;
+      generateWalletBtn.textContent = `Derive Mnemonic (${wordsCount} Words)`;
+    }
+
+    walletWords.addEventListener("change", () => {
+      updateWalletButtonText();
+      clearWalletMnemonic();
     });
 
     let walletCountdownInterval = null;
@@ -781,6 +800,7 @@
       e.preventDefault();
       const secret = sharedSecret.value;
       const walletName = document.getElementById("wallet-name").value.trim().toLowerCase();
+      const wordsCount = parseInt(walletWords.value, 10) === 12 ? 12 : 24;
       const counter = parseInt(document.getElementById("wallet-counter").value, 10) || 1;
 
       if (!secret) { statusWallet.textContent = "Secret is required."; return; }
@@ -792,7 +812,7 @@
       generateWalletBtn.disabled = true;
       statusWallet.textContent = "Deriving HD wallet entropy…";
       try {
-        const entropy = await deriveWalletEntropy(secret, walletName, 24, counter);
+        const entropy = await deriveWalletEntropy(secret, walletName, wordsCount, counter);
         const words = await entropyToMnemonic(entropy);
         walletWordsCache = words;
 
