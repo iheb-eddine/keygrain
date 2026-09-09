@@ -156,7 +156,16 @@ internal class FillCompletion(private val deliver: (FillResponse?) -> Unit) {
 }
 
 internal object OtpAutofillResponse {
-    fun addValue(dataset: Dataset.Builder, id: AutofillId, code: String) {
-        dataset.setValue(id, AutofillValue.forText(code))
+    fun addValue(
+        dataset: Dataset.Builder,
+        id: AutofillId,
+        code: String,
+        presentation: android.widget.RemoteViews? = null
+    ) {
+        if (presentation != null) {
+            dataset.setValue(id, AutofillValue.forText(code), presentation)
+        } else {
+            dataset.setValue(id, AutofillValue.forText(code))
+        }
     }
 }

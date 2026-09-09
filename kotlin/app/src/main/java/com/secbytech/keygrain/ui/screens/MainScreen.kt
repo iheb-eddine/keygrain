@@ -3,13 +3,18 @@ package com.secbytech.keygrain.ui.screens
 import android.content.ClipboardManager
 import android.content.Context
 import android.util.Log
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.secbytech.keygrain.data.Keygrain
@@ -25,6 +30,9 @@ import com.secbytech.keygrain.data.SyncResult
 import com.secbytech.keygrain.data.SyncStore
 import com.secbytech.keygrain.data.WalletEntry
 import com.secbytech.keygrain.ui.UserMessages
+import com.secbytech.keygrain.ui.components.AutofillSettingsDialog
+import com.secbytech.keygrain.ui.components.launchAutofillSettings
+import com.secbytech.keygrain.ui.util.AutofillUtils
 
 import com.secbytech.keygrain.ui.util.canUseBiometric
 import com.secbytech.keygrain.ui.util.formatRelativeTime
@@ -70,6 +78,22 @@ fun MainScreen() {
     // Global navigation/dialog state
     var showHelpScreen by remember { mutableStateOf(false) }
     var showSwitchAccountDialog by remember { mutableStateOf(false) }
+    var showAutofillSettingsDialog by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    var isAutofillEnabled by remember { mutableStateOf(AutofillUtils.isAutofillEnabled(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isAutofillEnabled = AutofillUtils.isAutofillEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     // FAB add trigger state
     var showAddLoginDialog by remember { mutableStateOf(false) }
@@ -270,19 +294,6 @@ fun MainScreen() {
                             }
                         },
                         actions = {
-                            IconButton(onClick = {
-                                val newOffline = !offlineMode
-                                offlineMode = newOffline
-                                settingsPrefs.edit().putBoolean("offline_mode", newOffline).apply()
-                                if (!newOffline) {
-                                    performAutoSync()
-                                }
-                            }) {
-                                Icon(
-                                    if (offlineMode) Icons.Default.CloudOff else Icons.Default.CloudQueue,
-                                    contentDescription = if (offlineMode) "Offline Mode On" else "Offline Mode Off"
-                                )
-                            }
                             IconButton(
                                 onClick = {
                                     val email = getEffectiveEmail()
@@ -325,14 +336,99 @@ fun MainScreen() {
                             ) {
                                 Icon(Icons.Default.Sync, contentDescription = "Sync now")
                             }
-                            IconButton(onClick = { showHelpScreen = true }) {
-                                Icon(Icons.Default.HelpOutline, contentDescription = "Help")
-                            }
-                            IconButton(onClick = { showSwitchAccountDialog = true }) {
-                                Icon(Icons.Default.SwitchAccount, contentDescription = "Switch account")
-                            }
                             IconButton(onClick = onLockAction) {
                                 Icon(Icons.Default.Lock, contentDescription = "Lock")
+                            }
+                            Box {
+                                IconButton(onClick = {
+                                    isAutofillEnabled = AutofillUtils.isAutofillEnabled(context)
+                                    menuExpanded = true
+                                }) {
+                                    Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                                }
+                                DropdownMenu(
+                                    expanded = menuExpanded,
+                                    onDismissRequest = { menuExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Autofill Settings") },
+                                        trailingIcon = {
+                                            Surface(
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = if (isAutofillEnabled) {
+                                                    MaterialTheme.colorScheme.primaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.errorContainer
+                                                },
+                                                contentColor = if (isAutofillEnabled) {
+                                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.onErrorContainer
+                                                }
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(6.dp)
+                                                            .background(
+                                                                color = if (isAutofillEnabled) {
+                                                                    MaterialTheme.colorScheme.primary
+                                                                } else {
+                                                                    MaterialTheme.colorScheme.error
+                                                                },
+                                                                shape = CircleShape
+                                                            )
+                                                    )
+                                                    Spacer(modifier = Modifier.width(5.dp))
+                                                    Text(
+                                                        text = if (isAutofillEnabled) "Active" else "Off",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showAutofillSettingsDialog = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Offline Mode") },
+                                        trailingIcon = {
+                                            Switch(
+                                                checked = offlineMode,
+                                                onCheckedChange = null
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            val newOffline = !offlineMode
+                                            offlineMode = newOffline
+                                            settingsPrefs.edit().putBoolean("offline_mode", newOffline).apply()
+                                            if (!newOffline) {
+                                                performAutoSync()
+                                            }
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Help") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showHelpScreen = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Switch Account") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showSwitchAccountDialog = true
+                                        }
+                                    )
+                                }
                             }
                         }
                     )
@@ -431,7 +527,8 @@ fun MainScreen() {
                                 prefillSiteFromFab = prefillLoginSite,
                                 detectedFullDomainFromFab = detectedLoginFullDomain,
                                 onDismissAddDialog = { showAddLoginDialog = false },
-                                onServicesChanged = { list -> loginCount = list.size }
+                                onServicesChanged = { list -> loginCount = list.size },
+                                onOpenAutofillSettings = { showAutofillSettingsDialog = true }
                             )
                         }
                         1 -> {
@@ -496,6 +593,23 @@ fun MainScreen() {
                         wipeLocalAndRestart()
                     },
                     onDismiss = { showSwitchAccountDialog = false }
+                )
+            }
+
+            if (showAutofillSettingsDialog) {
+                AutofillSettingsDialog(
+                    isAutofillEnabled = isAutofillEnabled,
+                    onDismiss = { showAutofillSettingsDialog = false },
+                    onOpenSystemSettings = { launchAutofillSettings(context) },
+                    onLaunchChrome = {
+                        val intent = AutofillUtils.createLaunchChromeIntent(context.packageManager)
+                        if (intent != null) {
+                            context.startActivity(intent)
+                        } else {
+                            launchAutofillSettings(context)
+                        }
+                    },
+                    chromeInstalled = AutofillUtils.getInstalledChromePackage(context.packageManager) != null
                 )
             }
         }

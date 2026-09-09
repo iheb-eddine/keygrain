@@ -62,7 +62,8 @@ internal fun ServiceListScreen(
     detectedFullDomainFromFab: String? = null,
     onDismissAddDialog: (() -> Unit)? = null,
     onInteraction: () -> Unit = {},
-    onServicesChanged: ((List<ServiceEntry>) -> Unit)? = null
+    onServicesChanged: ((List<ServiceEntry>) -> Unit)? = null,
+    onOpenAutofillSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val demoServices = remember { listOf(
@@ -192,7 +193,6 @@ internal fun ServiceListScreen(
 
     // Autofill & Chrome setup state
     var isAutofillEnabled by remember { mutableStateOf(AutofillUtils.isAutofillEnabled(context)) }
-    var showAutofillSettingsDialog by remember { mutableStateOf(false) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -546,9 +546,7 @@ internal fun ServiceListScreen(
         if (!isAutofillEnabled && !isDemoMode) {
             com.secbytech.keygrain.ui.components.AutofillSetupBanner(
                 isAutofillEnabled = false,
-                onEnableAutofill = {
-                    showAutofillSettingsDialog = true
-                }
+                onEnableAutofill = onOpenAutofillSettings
             )
         }
         if (services.isEmpty()) {

@@ -24,9 +24,55 @@ class KeygrainAutofillService : AutofillService() {
         private const val PREFS_NAME = "keygrain_autofill"
         private const val KEY_BROWSERS = "trusted_browsers"
         // Provisional bounded value; API 26+/slow-device measurements are a release gate.
-        private const val OPTIONAL_TOTP_BUDGET_MILLIS = 500L
+        private const val OPTIONAL_TOTP_BUDGET_MILLIS = 1500L
         private val OPTIONAL_TOTP_BUDGET = object : OtpAutofillBudget {
             override fun maxDurationMillis(): Long = OPTIONAL_TOTP_BUDGET_MILLIS
+        }
+
+        internal fun isPasswordHint(hint: String?): Boolean {
+            if (hint == null) return false
+            return hint.contains("password", ignoreCase = true)
+        }
+
+        internal fun isPasswordInputType(inputType: Int): Boolean {
+            val maskClass = inputType and android.text.InputType.TYPE_MASK_CLASS
+            val variation = inputType and android.text.InputType.TYPE_MASK_VARIATION
+            return (maskClass == android.text.InputType.TYPE_CLASS_TEXT &&
+                (variation == android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                 variation == android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
+                 variation == android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)) ||
+                (maskClass == android.text.InputType.TYPE_CLASS_NUMBER &&
+                 variation == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD)
+        }
+
+        internal fun isPasswordAttributes(attrs: Map<String, String>): Boolean {
+            val type = attrs["type"] ?: ""
+            val autocomplete = attrs["autocomplete"] ?: ""
+            val name = attrs["name"] ?: ""
+            val id = attrs["id"] ?: ""
+
+            if (type.equals("password", ignoreCase = true)) return true
+            if (autocomplete.contains("password", ignoreCase = true)) return true
+
+            val isTextEnterable = type.isEmpty() || type.equals("text", ignoreCase = true)
+            if (isTextEnterable) {
+                if (hasPasswordToken(name) || hasPasswordToken(id)) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        private fun hasPasswordToken(value: String): Boolean {
+            if (value.isEmpty()) return false
+            if (value.contains("password", ignoreCase = true) ||
+                value.contains("passwd", ignoreCase = true)) {
+                return true
+            }
+            val tokens = value.lowercase().split('_', '-', ' ', '.')
+            val nonPasswordModifiers = setOf("boarding", "bus", "train", "boardingpass", "event", "transit")
+            if (tokens.any { it in nonPasswordModifiers }) return false
+            return tokens.any { it == "pass" || it == "pwd" }
         }
     }
 
@@ -102,12 +148,17 @@ class KeygrainAutofillService : AutofillService() {
                 return
             }
 
-            val passwordNodes = mutableListOf<AutofillNodeInfo>()
-            for (i in 0 until structure.windowNodeCount) {
-                findPasswordNodes(structure.getWindowNodeAt(i).rootViewNode, passwordNodes)
+            val otpExcludeIds = when (otpCandidate) {
+                is OtpCandidateResult.One -> setOf(otpCandidate.id)
+                else -> emptySet()
             }
 
-            val passwordIds = passwordNodes.map { it.id }.toSet()
+            val passwordNodes = mutableListOf<AutofillNodeInfo>()
+            for (i in 0 until structure.windowNodeCount) {
+                findPasswordNodes(structure.getWindowNodeAt(i).rootViewNode, passwordNodes, otpExcludeIds)
+            }
+
+            val passwordIds = passwordNodes.map { it.id }.toSet() + otpExcludeIds
             val usernameNodes = mutableListOf<AutofillNodeInfo>()
             for (i in 0 until structure.windowNodeCount) {
                 findUsernameNodes(structure.getWindowNodeAt(i).rootViewNode, usernameNodes, passwordIds)
@@ -171,6 +222,7 @@ class KeygrainAutofillService : AutofillService() {
         val service: ServiceEntry,
         val passwordBuilder: Dataset.Builder,
         val otpBuilder: Dataset.Builder,
+        val presentation: RemoteViews,
         val hasPasswordValue: Boolean,
         var hasOtpValue: Boolean
     )
@@ -201,8 +253,8 @@ class KeygrainAutofillService : AutofillService() {
                 val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
                     setTextViewText(android.R.id.text1, "Keygrain — ${service.name}")
                 }
-                val passwordDataset = Dataset.Builder()
-                val otpDataset = Dataset.Builder()
+                val passwordDataset = Dataset.Builder(presentation)
+                val otpDataset = Dataset.Builder(presentation)
                 var hasPasswordValue = false
                 for (node in usernameNodes) {
                     val value = AutofillValue.forText(service.email)
@@ -224,7 +276,7 @@ class KeygrainAutofillService : AutofillService() {
                     otpDataset.setValue(node.id, value, presentation)
                     hasPasswordValue = true
                 }
-                OtpDatasetState(service, passwordDataset, otpDataset, hasPasswordValue, false)
+                OtpDatasetState(service, passwordDataset, otpDataset, presentation, hasPasswordValue, false)
             }.toMutableList()
         } catch (_: Exception) {
             completion.complete(null)
@@ -281,7 +333,7 @@ class KeygrainAutofillService : AutofillService() {
                 try {
                     values!!.forEach { value ->
                         val state = states.firstOrNull { it.service == value.service } ?: return@forEach
-                        OtpAutofillResponse.addValue(state.otpBuilder, otpId, value.code)
+                        OtpAutofillResponse.addValue(state.otpBuilder, otpId, value.code, state.presentation)
                         state.hasOtpValue = true
                     }
                 } catch (_: Exception) {
@@ -374,23 +426,34 @@ class KeygrainAutofillService : AutofillService() {
 
     private data class AutofillNodeInfo(val id: android.view.autofill.AutofillId)
 
-    private fun findPasswordNodes(node: AssistStructure.ViewNode, results: MutableList<AutofillNodeInfo>) {
+    private fun findPasswordNodes(
+        node: AssistStructure.ViewNode,
+        results: MutableList<AutofillNodeInfo>,
+        excludeIds: Set<android.view.autofill.AutofillId> = emptySet()
+    ) {
         val autofillId = node.autofillId
-        if (autofillId != null) {
+        if (autofillId != null && autofillId !in excludeIds) {
             val hints = node.autofillHints
-            val isPassword = hints?.any {
-                it.equals("password", ignoreCase = true) ||
-                it.equals(android.view.View.AUTOFILL_HINT_PASSWORD, ignoreCase = true)
-            } == true || (node.inputType and android.text.InputType.TYPE_MASK_CLASS == android.text.InputType.TYPE_CLASS_TEXT
-                    && node.inputType and android.text.InputType.TYPE_MASK_VARIATION == android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)
-                || (node.inputType and android.text.InputType.TYPE_MASK_CLASS == android.text.InputType.TYPE_CLASS_NUMBER
-                    && node.inputType and android.text.InputType.TYPE_MASK_VARIATION == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD)
+            val isPassword = hints?.any { isPasswordHint(it) } == true
+                || isPasswordInputType(node.inputType)
+                || run {
+                    val html = node.htmlInfo
+                    html != null && html.tag.equals("input", ignoreCase = true) && run {
+                        val attributes = html.attributes ?: emptyList()
+                        val attrs = mutableMapOf<String, String>()
+                        for (pair in attributes) {
+                            val key = pair?.first?.lowercase() ?: continue
+                            attrs[key] = pair.second?.lowercase() ?: ""
+                        }
+                        isPasswordAttributes(attrs)
+                    }
+                }
             if (isPassword) {
                 results.add(AutofillNodeInfo(autofillId))
             }
         }
         for (i in 0 until node.childCount) {
-            findPasswordNodes(node.getChildAt(i), results)
+            findPasswordNodes(node.getChildAt(i), results, excludeIds)
         }
     }
 
@@ -415,7 +478,8 @@ class KeygrainAutofillService : AutofillService() {
                         val attributes = html.attributes ?: emptyList()
                         val attrs = mutableMapOf<String, String>()
                         for (pair in attributes) {
-                            attrs[pair.first.lowercase()] = pair.second?.lowercase() ?: ""
+                            val key = pair?.first?.lowercase() ?: continue
+                            attrs[key] = pair.second?.lowercase() ?: ""
                         }
                         attrs["type"] == "email" ||
                             attrs["name"]?.let { it.contains("email") || it.contains("user") || it.contains("login") } == true ||

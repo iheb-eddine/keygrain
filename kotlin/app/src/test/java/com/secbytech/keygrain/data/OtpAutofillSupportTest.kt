@@ -141,6 +141,44 @@ class OtpAutofillSupportTest {
         }
     }
 
+    @Test
+    fun otpAutofillHintsDetection() {
+        assertEquals(true, OtpAutofillDetector.hasOtpHint(listOf("one-time-code")))
+        assertEquals(true, OtpAutofillDetector.hasOtpHint(listOf("ONE-TIME-CODE")))
+        assertEquals(true, OtpAutofillDetector.hasOtpHint(listOf("oneTimeCode")))
+        assertEquals(true, OtpAutofillDetector.hasOtpHint(listOf("ONETIMECODE")))
+        assertEquals(true, OtpAutofillDetector.hasOtpHint(listOf("smsOTPCode")))
+        assertEquals(true, OtpAutofillDetector.hasOtpHint(listOf("SMSOTPCODE")))
+        assertEquals(true, OtpAutofillDetector.hasOtpHint(listOf("prefix-one-time-code")))
+        assertEquals(true, OtpAutofillDetector.hasOtpHint(listOf("one-time-code-suffix")))
+        assertEquals(true, OtpAutofillDetector.hasOtpHint(listOf("username", "oneTimeCode")))
+
+        assertEquals(false, OtpAutofillDetector.hasOtpHint(emptyList()))
+        assertEquals(false, OtpAutofillDetector.hasOtpHint(listOf("password")))
+        assertEquals(false, OtpAutofillDetector.hasOtpHint(listOf("username")))
+        assertEquals(false, OtpAutofillDetector.hasOtpHint(listOf("otp")))
+        assertEquals(false, OtpAutofillDetector.hasOtpHint(listOf("smsCode")))
+        assertEquals(false, OtpAutofillDetector.hasOtpHint(listOf("code")))
+    }
+
+    @Test
+    fun otpIdentifierDetection() {
+        assertEquals(true, OtpAutofillDetector.isOtpIdentifier("totp"))
+        assertEquals(true, OtpAutofillDetector.isOtpIdentifier("app_totp"))
+        assertEquals(true, OtpAutofillDetector.isOtpIdentifier("totp_token"))
+        assertEquals(true, OtpAutofillDetector.isOtpIdentifier("otp"))
+        assertEquals(true, OtpAutofillDetector.isOtpIdentifier("login_otp"))
+        assertEquals(true, OtpAutofillDetector.isOtpIdentifier("user-otp"))
+        assertEquals(true, OtpAutofillDetector.isOtpIdentifier("two_factor"))
+        assertEquals(true, OtpAutofillDetector.isOtpIdentifier("mfaCode"))
+        assertEquals(true, OtpAutofillDetector.isOtpIdentifier("passcode"))
+
+        assertEquals(false, OtpAutofillDetector.isOtpIdentifier(""))
+        assertEquals(false, OtpAutofillDetector.isOtpIdentifier("username"))
+        assertEquals(false, OtpAutofillDetector.isOtpIdentifier("password"))
+        assertEquals(false, OtpAutofillDetector.isOtpIdentifier("email"))
+    }
+
     private fun assertTrueContract(value: String) {
         assertTrueContract(value, "input")
     }

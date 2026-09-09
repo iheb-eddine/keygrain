@@ -1,6 +1,7 @@
 package com.secbytech.keygrain.ui.util
 
 import android.content.Context
+import android.content.ContextWrapper
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -13,8 +14,21 @@ internal fun canUseBiometric(context: Context): Boolean {
         BiometricManager.BIOMETRIC_SUCCESS
 }
 
+private fun Context.findFragmentActivity(): FragmentActivity? {
+    var current = this
+    while (current is ContextWrapper) {
+        if (current is FragmentActivity) return current
+        current = current.baseContext
+    }
+    return null
+}
+
 internal fun showBiometric(context: Context, onSuccess: () -> Unit, onFailed: () -> Unit = {}) {
-    val activity = context as FragmentActivity
+    val activity = context.findFragmentActivity()
+    if (activity == null) {
+        onFailed()
+        return
+    }
     val executor = ContextCompat.getMainExecutor(activity)
     val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
         override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {

@@ -29,12 +29,62 @@ internal object OtpAutofillDetector {
 
     private fun collect(node: AssistStructure.ViewNode, ids: MutableSet<AutofillId>) {
         val id = node.autofillId
-        if (id != null && hasExactOtpContract(node.htmlInfo?.tag, node.htmlInfo?.attributes)) {
+        if (id != null && isOtpCandidateNode(node)) {
             ids += id
         }
         for (childIndex in 0 until node.childCount) {
             collect(node.getChildAt(childIndex), ids)
         }
+    }
+
+    internal fun isOtpCandidateNode(node: AssistStructure.ViewNode): Boolean {
+        if (hasExactOtpContract(node.htmlInfo?.tag, node.htmlInfo?.attributes)) return true
+        if (hasOtpHint(node.autofillHints)) return true
+        val tag = node.htmlInfo?.tag
+        if (tag != null && tag.equals("input", ignoreCase = true)) {
+            val attributes = node.htmlInfo?.attributes ?: return false
+            val attrs = mutableMapOf<String, String>()
+            for (pair in attributes) {
+                val key = pair?.first?.lowercase() ?: continue
+                attrs[key] = pair.second?.lowercase() ?: ""
+            }
+            val type = attrs["type"] ?: ""
+            if (type == "hidden" || type == "checkbox" || type == "radio" || type == "submit" || type == "button" || type == "password") {
+                return false
+            }
+            val autocomplete = attrs["autocomplete"] ?: ""
+            if (autocomplete.contains("one-time-code", ignoreCase = true)) return true
+            val name = attrs["name"] ?: ""
+            val id = attrs["id"] ?: ""
+            if (isOtpIdentifier(name) || isOtpIdentifier(id)) return true
+        }
+        return false
+    }
+
+    internal fun isOtpIdentifier(value: String): Boolean {
+        if (value.isEmpty()) return false
+        val v = value.lowercase()
+        return v == "totp" || v.contains("totp") || v == "otp" ||
+               v.contains("_otp") || v.contains("otp_") || v.contains("-otp") || v.contains("otp-") ||
+               v.contains("two_factor") || v.contains("twofactor") || v.contains("passcode") ||
+               v.contains("mfacode") || v.contains("mfa_code")
+    }
+
+    internal fun hasOtpHint(hints: Array<String>?): Boolean {
+        if (hints == null) return false
+        return hints.any { isOtpHint(it) }
+    }
+
+    internal fun hasOtpHint(hints: Collection<String>?): Boolean {
+        if (hints == null) return false
+        return hints.any { isOtpHint(it) }
+    }
+
+    private fun isOtpHint(hint: String?): Boolean {
+        if (hint == null) return false
+        return hint.equals("oneTimeCode", ignoreCase = true) ||
+               hint.equals("smsOTPCode", ignoreCase = true) ||
+               hint.contains("one-time-code", ignoreCase = true)
     }
 
     /** The sole HTML authority used by [findCandidate]; attributes are untrusted. */
