@@ -8,15 +8,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Components are 
 
 ### [1.4.0] - 2026-09-09
 
-- Multi-asset interface: Access Logins, SSH Keys, and HD Wallets directly from dedicated tabs inside the popup.
-- SSH key management: View, copy, and download Ed25519 public keys (.pub) and OpenSSH private keys (PEM) right from the extension.
-- HD wallets: Generate 12-word or 24-word BIP-39 disaster recovery phrases directly from your master secret.
-- Email-decoupled keys and wallets (Spec v5): SSH keys and crypto wallets now derive independently of your account email, ensuring address updates never alter your keys or recovery phrases. Password and TOTP derivations remain byte-identical.
-- Background session resilience: Unlocked sessions persist across service worker hibernation using secure in-memory storage, eliminating unexpected lockouts while idle.
-- Two-tier auto-lock: Separate timeouts for clearing the master secret from memory and clearing cached service names, with quick re-authentication to derive credentials.
-- Safer account setup: New toggle between unlocking an existing account and creating a new one, with email and secret confirmation to prevent typo lockouts.
-- Offline mode and server data controls: Toggle offline mode anytime to isolate the extension from sync, or delete server-side data while retaining your local vault.
-- Autofill enhancements: Updated default shortcut to Ctrl+Shift+L (Command+Shift+L on Mac) and improved form fill reliability on modern reactive websites.
+- Enhanced security & PIN removal: Removed local PIN unlock to eliminate storing encrypted master secrets on disk. All cryptographic operations and session secrets now live strictly in volatile memory.
+- Two-tier auto-lock UX: Fast, seamless access without sacrificing security. Keep service names and usernames visible for quick search and navigation while the master secret expires on a shorter timeout, prompting for quick re-authentication only when copying or filling credentials.
+- Session resilience across hibernation: Extension sessions safely survive Manifest V3 service worker sleep using secure in-memory session persistence, eliminating frustrating mid-session lockouts while idle.
+- Multi-asset interface: Top-level tabs for Logins, SSH Keys, and HD Wallets directly inside the popup.
+- SSH keypair management: Generate, view, and export Ed25519 public keys (.pub) and OpenSSH private keys (PEM) with on-screen reveal protection.
+- HD wallets (12 & 24 words): Derive standard BIP-39 disaster recovery phrases directly from your master secret.
+- Decoupled keys and wallets (Spec v5): SSH keys and crypto wallets derive independently of your account email, ensuring email updates never alter your keys or phrases. Password and TOTP derivations remain byte-identical.
+- Offline mode and server controls: Easily toggle offline mode to isolate from sync networks, or delete server data while retaining your local vault.
+- Autofill enhancements: Default shortcut updated to Ctrl+Shift+L (Command+Shift+L on Mac) to prevent browser conflicts, with improved fill reliability on reactive web apps.
+- Migration notice: Vault migration from other password managers is temporarily paused while being rebuilt for the new security architecture, returning in an upcoming release.
 
 ### [1.3.0] - 2026-08-11
 
@@ -88,15 +89,16 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ### [1.4.0] - 2026-09-09
 
-- Multi-asset interface: Dedicated tabs for Logins, SSH Keys, and HD Wallets right in the popup make all your derived credentials easily accessible without navigating auxiliary menus.
-- SSH key management: Generate, view, copy, and download Ed25519 public keys (.pub) and OpenSSH PEM private keys with on-screen reveal protection.
-- HD wallets: Derive 12-word or 24-word BIP-39 recovery phrases directly from your master secret with dedicated entry labels and counter rotation.
-- Email-decoupled keys and wallets (Spec v5): Derivation of SSH keys and HD wallet seeds is now completely independent of your account email. Changing your email address will never change your SSH keypairs or wallet recovery phrases. Password and TOTP derivations remain byte-identical.
-- Manifest V3 architecture and session resilience: Upgraded Firefox background architecture to Manifest V3. Unlocked sessions now safely persist across background page hibernation using secure in-memory storage, preventing premature lockouts while idle.
-- Two-tier auto-lock: Set separate timeouts for clearing the master secret from memory and expiring cached service names. When the secret expires, service metadata remains visible for quick navigation with one-click re-authentication when deriving credentials.
-- Safer account setup: Explicit tabs on the lock screen distinguish between unlocking an existing account and creating a new one, complete with confirmation fields to prevent accidental typo lockouts.
-- Offline mode and server data controls: Added an Offline Mode toggle to use Keygrain completely decoupled from network requests. A new Server Data Deletion option allows erasing remote sync data while keeping your local vault intact.
+- Enhanced security architecture & PIN removal: Removed local PIN unlock to eliminate disk-bound secret storage. All cryptographic operations, keys, and session secrets now live strictly in volatile memory, ensuring zero persistent disk exposure of your credentials.
+- Two-tier auto-lock UX: Retains fast everyday access without compromising security. You can now configure independent timeouts for the master secret and cached service metadata. Service names remain visible for fast searching and browsing, while deriving, copying, or autofilling credentials prompts for quick master secret re-authentication.
+- Manifest V3 & session resilience: Upgraded Firefox background architecture to Manifest V3. Unlocked sessions safely persist across background page hibernation using secure in-memory storage, eliminating unexpected lockouts while idle.
+- Multi-asset interface: Access Logins, SSH Keys, and HD Wallets directly from dedicated top-level tabs inside the popup without digging through auxiliary menus.
+- SSH keypair management: Generate, view, copy, and download Ed25519 public keys (.pub) and OpenSSH PEM private keys with on-screen reveal protection.
+- HD wallets (12 & 24 words): Derive standard BIP-39 disaster recovery phrases directly from your master secret with dedicated labels and counter rotation.
+- Email-decoupled keys and wallets (Spec v5): Derivation of SSH keys and HD wallet seeds is now completely decoupled from your account email. Changing your email address will never alter your SSH keypairs or wallet recovery phrases. Password and TOTP derivations remain 100% byte-identical.
+- Offline mode and server controls: Added an Offline Mode toggle to use Keygrain completely decoupled from network requests. A new Server Data Deletion option allows erasing remote sync data while keeping your local vault intact.
 - Autofill enhancements: Default keyboard shortcut updated to Ctrl+Shift+L (Command+Shift+L on Mac) to avoid browser conflicts, with improved input event triggering on modern reactive websites (React, Vue, Angular).
+- Migration notice: Vault migration from other password managers is temporarily paused while being re-architected for the new security model, returning in an upcoming release.
 
 ### [1.3.0] - 2026-08-11
 
