@@ -6,6 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Components are 
 
 ## Chrome extension
 
+### [1.4.0] - 2026-09-09
+
+- Multi-asset interface: Access Logins, SSH Keys, and HD Wallets directly from dedicated tabs inside the popup.
+- SSH key management: View, copy, and download Ed25519 public keys (.pub) and OpenSSH private keys (PEM) right from the extension.
+- HD wallets: Generate 12-word or 24-word BIP-39 disaster recovery phrases directly from your master secret.
+- Email-decoupled keys and wallets (Spec v5): SSH keys and crypto wallets now derive independently of your account email, ensuring address updates never alter your keys or recovery phrases. Password and TOTP derivations remain byte-identical.
+- Background session resilience: Unlocked sessions persist across service worker hibernation using secure in-memory storage, eliminating unexpected lockouts while idle.
+- Two-tier auto-lock: Separate timeouts for clearing the master secret from memory and clearing cached service names, with quick re-authentication to derive credentials.
+- Safer account setup: New toggle between unlocking an existing account and creating a new one, with email and secret confirmation to prevent typo lockouts.
+- Offline mode and server data controls: Toggle offline mode anytime to isolate the extension from sync, or delete server-side data while retaining your local vault.
+- Autofill enhancements: Updated default shortcut to Ctrl+Shift+L (Command+Shift+L on Mac) and improved form fill reliability on modern reactive websites.
+
 ### [1.3.0] - 2026-08-11
 
 - You can now stop a password migration part-way through. Services you have not rotated are removed from the migration batch and that decision syncs to your other devices; their old site passwords remain unchanged, so change them if needed.
@@ -73,6 +85,18 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 (SPEC v4).
 
 ## Firefox extension
+
+### [1.4.0] - 2026-09-09
+
+- Multi-asset interface: Dedicated tabs for Logins, SSH Keys, and HD Wallets right in the popup make all your derived credentials easily accessible without navigating auxiliary menus.
+- SSH key management: Generate, view, copy, and download Ed25519 public keys (.pub) and OpenSSH PEM private keys with on-screen reveal protection.
+- HD wallets: Derive 12-word or 24-word BIP-39 recovery phrases directly from your master secret with dedicated entry labels and counter rotation.
+- Email-decoupled keys and wallets (Spec v5): Derivation of SSH keys and HD wallet seeds is now completely independent of your account email. Changing your email address will never change your SSH keypairs or wallet recovery phrases. Password and TOTP derivations remain byte-identical.
+- Manifest V3 architecture and session resilience: Upgraded Firefox background architecture to Manifest V3. Unlocked sessions now safely persist across background page hibernation using secure in-memory storage, preventing premature lockouts while idle.
+- Two-tier auto-lock: Set separate timeouts for clearing the master secret from memory and expiring cached service names. When the secret expires, service metadata remains visible for quick navigation with one-click re-authentication when deriving credentials.
+- Safer account setup: Explicit tabs on the lock screen distinguish between unlocking an existing account and creating a new one, complete with confirmation fields to prevent accidental typo lockouts.
+- Offline mode and server data controls: Added an Offline Mode toggle to use Keygrain completely decoupled from network requests. A new Server Data Deletion option allows erasing remote sync data while keeping your local vault intact.
+- Autofill enhancements: Default keyboard shortcut updated to Ctrl+Shift+L (Command+Shift+L on Mac) to avoid browser conflicts, with improved input event triggering on modern reactive websites (React, Vue, Angular).
 
 ### [1.3.0] - 2026-08-11
 
@@ -142,6 +166,13 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ## Android app
 
+### [1.4.0] - 2026-09-09
+
+- Added dedicated tabs for Logins, SSH Keys, and Wallets, plus live sync status in the top bar.
+- Derive OpenSSH Ed25519 keypairs and BIP-39 recovery phrases (12 or 24 words), decoupled from email.
+- Autofill now detects and fills TOTP codes, with improved form heuristics and setup shortcuts.
+- More reliable biometric unlock handling across device manufacturers.
+
 ### [1.3.0] - 2026-08-11
 
 - Autofill now chooses the most-specific saved service for a site, reducing ambiguous matches on subdomains.
@@ -188,6 +219,15 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 (SPEC v4).
 
 ## Python CLI
+
+### [1.1.0] - 2026-09-09
+
+- Decoupled SSH keypair derivation from account email (`keygrain ssh --name <name>`); authorized_keys comments now default to the key name.
+- Decoupled wallet derivation from account email and chain identifiers (`keygrain wallet --name <id>`); `--chain` now defaults to bitcoin for derivation path display.
+- Added 12-word mnemonic support alongside 24-word phrases via `--words 12` (or `--words 24`).
+- Added wallet export formats via `--format` (`json`, `sparrow`, `electrum`, `metamask`, `seed`, `entropy`).
+- `keygrain --version` now reports git commit metadata and dirty state when run from source or a development repository.
+- Gracefully aborts `keygrain sync` when server capability requirements necessitate an upgrade, protecting the local cache.
 
 ### [1.0.1] - 2026-08-11
 
