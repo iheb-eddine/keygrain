@@ -8,12 +8,78 @@ import subprocess
 import sys
 import time
 
-from importlib.metadata import version as pkg_version, PackageNotFoundError
+def _resolve_version(base_version: str | None = None, component_dir: str | None = None) -> str:
+    if base_version is None:
+        try:
+            from importlib.metadata import version as pkg_version
+            base_version = pkg_version("keygrain")
+        except Exception:
+            base_version = "dev"
 
-try:
-    __version__ = pkg_version("keygrain")
-except PackageNotFoundError:
-    __version__ = "dev"
+    try:
+        if component_dir is None:
+            component_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        # Verify git is available and component_dir is inside a git working tree
+        proc_check = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=component_dir,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if proc_check.returncode != 0 or proc_check.stdout.strip() != "true":
+            return base_version
+
+        # Ensure cli.py is tracked by git in this worktree (avoids picking up
+        # an unrelated git repo if installed in site-packages inside a git tree).
+        cli_file = os.path.join(component_dir, "keygrain", "cli.py")
+        if not os.path.exists(cli_file):
+            cli_file = os.path.abspath(__file__)
+        proc_tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", cli_file],
+            cwd=component_dir,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if proc_tracked.returncode != 0:
+            return base_version
+
+        # Query short 7-character commit hash
+        proc_hash = subprocess.run(
+            ["git", "rev-parse", "--short=7", "HEAD"],
+            cwd=component_dir,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if proc_hash.returncode != 0:
+            return base_version
+        commit_hash = proc_hash.stdout.strip()
+        if not commit_hash:
+            return base_version
+
+        # Path-scoped dirty check for this component only
+        proc_status = subprocess.run(
+            ["git", "status", "--porcelain", "--", "."],
+            cwd=component_dir,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        is_dirty = bool(proc_status.returncode == 0 and proc_status.stdout.strip())
+
+        local_suffix = f"+g{commit_hash}"
+        if is_dirty:
+            local_suffix += ".dirty"
+
+        return f"{base_version}{local_suffix}"
+    except Exception:
+        return base_version
+
+
+__version__ = _resolve_version()
 
 from .derive import derive_password, normalize_site, DEFAULT_SYMBOLS
 from .ssh import derive_ssh_keypair, format_openssh_private_key, format_authorized_keys

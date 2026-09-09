@@ -1,3 +1,4 @@
+import java.util.concurrent.TimeUnit
 import org.gradle.api.tasks.Copy
 
 plugins {
@@ -16,6 +17,57 @@ require(versionParts[1].toInt() < 100 && versionParts[2].toInt() < 100) {
 }
 val computedVersionCode = versionParts[0].toInt() * 10000 + versionParts[1].toInt() * 100 + versionParts[2].toInt()
 val suffix = findProperty("versionSuffix")?.toString()?.let { "-$it" } ?: ""
+
+// Query Git metadata for debug build stamping (fallback cleanly if git is unavailable or fails)
+val gitHash: String? = runCatching {
+    val process = ProcessBuilder("git", "rev-parse", "--short=7", "HEAD")
+        .directory(rootProject.projectDir)
+        .redirectOutput(ProcessBuilder.Redirect.PIPE)
+        .redirectError(ProcessBuilder.Redirect.DISCARD)
+        .start()
+    val finished = process.waitFor(5, TimeUnit.SECONDS)
+    if (!finished) {
+        process.destroyForcibly()
+        null
+    } else if (process.exitValue() == 0) {
+        process.inputStream.bufferedReader().use { it.readText() }
+            .trim()
+            .lineSequence()
+            .firstOrNull()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    } else {
+        null
+    }
+}.getOrNull()
+
+val isGitDirty: Boolean = if (gitHash != null) {
+    runCatching {
+        val process = ProcessBuilder("git", "status", "--porcelain", "--", ".")
+            .directory(rootProject.projectDir)
+            .redirectOutput(ProcessBuilder.Redirect.PIPE)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        val finished = process.waitFor(5, TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            false
+        } else if (process.exitValue() == 0) {
+            val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
+            output.isNotEmpty()
+        } else {
+            false
+        }
+    }.getOrDefault(false)
+} else {
+    false
+}
+
+val gitInfo = when {
+    gitHash != null && isGitDirty -> "$gitHash-dirty"
+    gitHash != null -> gitHash
+    else -> null
+}
 
 val kg22Fixture = rootProject.projectDir.resolve("../sync-canonical-vectors.json")
 require(kg22Fixture.isFile) { "KG-22 fixture not found: $kg22Fixture" }
@@ -64,7 +116,7 @@ android {
             // (com.secbytech.keygrain). The .dev applicationId avoids the
             // signature-mismatch conflict without uninstalling the Play app.
             applicationIdSuffix = ".dev"
-            versionNameSuffix = "-dev"
+            versionNameSuffix = if (gitInfo != null) "-dev+$gitInfo" else "-dev"
         }
     }
 
