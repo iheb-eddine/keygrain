@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -265,6 +266,44 @@ private fun WalletEntry.effectiveDisplayName(): String =
     if (label.isNotBlank()) label else effectiveId()
 
 @Composable
+fun WalletWordsBadge(
+    words: Int,
+    modifier: Modifier = Modifier
+) {
+    val isDark = isSystemInDarkTheme()
+    val is12 = words == 12
+    val wordsTextColor = if (is12) {
+        if (isDark) Color(0xFF2DD4BF) else Color(0xFF00897B)
+    } else {
+        if (isDark) Color(0xFF5B9CF6) else Color(0xFF1A73E8)
+    }
+    val wordsBgColor = if (is12) {
+        if (isDark) Color(0xFF2DD4BF).copy(alpha = 0.12f) else Color(0xFF00897B).copy(alpha = 0.08f)
+    } else {
+        if (isDark) Color(0xFF5B9CF6).copy(alpha = 0.12f) else Color(0xFF1A73E8).copy(alpha = 0.08f)
+    }
+    val wordsBorderColor = if (is12) {
+        if (isDark) Color(0xFF2DD4BF).copy(alpha = 0.4f) else Color(0xFF00897B).copy(alpha = 0.35f)
+    } else {
+        if (isDark) Color(0xFF5B9CF6).copy(alpha = 0.4f) else Color(0xFF1A73E8).copy(alpha = 0.35f)
+    }
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = wordsBgColor,
+        border = androidx.compose.foundation.BorderStroke(0.5.dp, wordsBorderColor),
+        modifier = modifier
+    ) {
+        Text(
+            "$words words",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            color = wordsTextColor,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
 private fun WalletItemCard(
     wallet: WalletEntry,
     onView: () -> Unit,
@@ -389,19 +428,7 @@ private fun WalletItemCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-                ) {
-                    Text(
-                        "${wallet.words} words",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
+                WalletWordsBadge(words = wallet.words)
                 Surface(
                     shape = RoundedCornerShape(6.dp),
                     color = MaterialTheme.colorScheme.tertiaryContainer
@@ -719,11 +746,17 @@ private fun WalletViewerDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text(
-                            wallet.effectiveDisplayName(),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                wallet.effectiveDisplayName(),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            WalletWordsBadge(words = wallet.words)
+                        }
                         Text(
                             "Auto-closing in ${clearSeconds}s",
                             style = MaterialTheme.typography.bodySmall,

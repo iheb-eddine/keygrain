@@ -32,6 +32,8 @@
         .hidden { display: none !important; }
         label { display: block; margin-top: 1rem; color: var(--text-secondary); font-size: 0.9rem; }
         input, select, textarea { width: 100%; padding: 8px 10px; margin-top: 4px; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; box-sizing: border-box; background: var(--surface); color: var(--text); }
+        select { cursor: pointer; }
+        select option { background: var(--surface); color: var(--text); }
         input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2); }
         button { padding: 10px 20px; font-size: 1rem; border: none; border-radius: 8px; cursor: pointer; transition: background 0.2s, opacity 0.2s; }
         .btn-primary { margin-top: 1.5rem; background: var(--accent); color: #fff; width: 100%; font-weight: 500; }
@@ -82,6 +84,125 @@
         /* Checkbox row */
         .checkbox-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 1rem; font-size: 0.85rem; color: var(--text-secondary); cursor: pointer; }
         .checkbox-row input[type="checkbox"] { width: auto; margin-top: 2px; }
+
+        /* HD Wallet Badge Option Selection */
+        .words-badge-group { display: flex; gap: 8px; margin-top: 6px; }
+        .words-badge-btn {
+            flex: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+            font-family: inherit;
+            transition: border-color 0.15s, background 0.15s, color 0.15s;
+            user-select: none;
+        }
+        .words-badge-btn:hover:not(.active) {
+            border-color: rgba(255, 255, 255, 0.2);
+            color: var(--text);
+            background: var(--surface-elevated);
+        }
+        .words-badge-btn .badge-chip {
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            border-radius: 4px;
+            padding: 2px 7px;
+            line-height: 1.2;
+            border: 1px solid transparent;
+        }
+        .words-badge-btn .badge-hint {
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+        }
+
+        .words-badge-btn.wallet-words-24 .badge-chip {
+            color: #5b9cf6;
+            background: rgba(91, 156, 246, 0.12);
+            border-color: rgba(91, 156, 246, 0.4);
+        }
+        .words-badge-btn.wallet-words-24.active {
+            background: rgba(91, 156, 246, 0.12);
+            border-color: #5b9cf6;
+            color: #5b9cf6;
+        }
+        .words-badge-btn.wallet-words-24.active .badge-chip {
+            background: #5b9cf6;
+            color: #0f1117;
+            border-color: #5b9cf6;
+        }
+        .words-badge-btn.wallet-words-24.active .badge-hint {
+            color: #93c5fd;
+        }
+
+        .words-badge-btn.wallet-words-12 .badge-chip {
+            color: #2dd4bf;
+            background: rgba(45, 212, 191, 0.12);
+            border-color: rgba(45, 212, 191, 0.4);
+        }
+        .words-badge-btn.wallet-words-12.active {
+            background: rgba(45, 212, 191, 0.12);
+            border-color: #2dd4bf;
+            color: #2dd4bf;
+        }
+        .words-badge-btn.wallet-words-12.active .badge-chip {
+            background: #2dd4bf;
+            color: #0f1117;
+            border-color: #2dd4bf;
+        }
+
+        /* HD Wallet Badge */
+        .wallet-chain-badge { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; border-radius: 4px; padding: 2px 6px; line-height: 1.2; display: inline-flex; align-items: center; white-space: nowrap; flex-shrink: 0; border: 1px solid transparent; }
+        .wallet-chain-badge.wallet-words-24 { color: #5b9cf6; background: rgba(91, 156, 246, 0.12); border-color: rgba(91, 156, 246, 0.4); }
+        .wallet-chain-badge.wallet-words-12 { color: #2dd4bf; background: rgba(45, 212, 191, 0.12); border-color: rgba(45, 212, 191, 0.4); }
+
+        @media (prefers-color-scheme: light) {
+            .words-badge-btn.wallet-words-24 .badge-chip {
+                color: #1a73e8;
+                background: rgba(26, 115, 232, 0.08);
+                border-color: rgba(26, 115, 232, 0.35);
+            }
+            .words-badge-btn.wallet-words-24.active {
+                background: rgba(26, 115, 232, 0.08);
+                border-color: #1a73e8;
+                color: #1a73e8;
+            }
+            .words-badge-btn.wallet-words-24.active .badge-chip {
+                background: #1a73e8;
+                color: #ffffff;
+                border-color: #1a73e8;
+            }
+            .words-badge-btn.wallet-words-24.active .badge-hint {
+                color: #1e40af;
+            }
+
+            .words-badge-btn.wallet-words-12 .badge-chip {
+                color: #00897b;
+                background: rgba(0, 137, 123, 0.08);
+                border-color: rgba(0, 137, 123, 0.35);
+            }
+            .words-badge-btn.wallet-words-12.active {
+                background: rgba(0, 137, 123, 0.08);
+                border-color: #00897b;
+                color: #00897b;
+            }
+            .words-badge-btn.wallet-words-12.active .badge-chip {
+                background: #00897b;
+                color: #ffffff;
+                border-color: #00897b;
+            }
+
+            .wallet-chain-badge.wallet-words-24 { color: #1a73e8; background: rgba(26, 115, 232, 0.08); border-color: rgba(26, 115, 232, 0.35); }
+            .wallet-chain-badge.wallet-words-12 { color: #00897b; background: rgba(0, 137, 123, 0.08); border-color: rgba(0, 137, 123, 0.35); }
+        }
 
         /* Output textareas */
         textarea.code-box { font-family: monospace; font-size: 0.8rem; background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 8px; resize: vertical; min-height: 120px; }
@@ -204,7 +325,7 @@
     <section id="panel-wallets" role="tabpanel" aria-labelledby="tab-wallets" class="hidden">
         <div class="warning-banner" role="alert">
             <strong>⚠️ BIP-39 Seed Generation Only (Disaster Recovery)</strong>
-            Keygrain derives deterministic 24-word BIP-39 mnemonic phrases directly from your master secret and wallet ID. This generates a standard BIP-39 seed phrase for disaster recovery — it does <em>not</em> implement BIP-32/BIP-44 multi-account wallet hierarchies, key derivation trees, or address generation. Deriving mnemonics in web browsers carries inherent host and clipboard exposure risks. Never share your mnemonic phrase.
+            Keygrain derives deterministic BIP-39 mnemonic phrases (12 or 24 words) directly from your master secret and wallet ID. This generates a standard BIP-39 seed phrase for disaster recovery — it does <em>not</em> implement BIP-32/BIP-44 multi-account wallet hierarchies, key derivation trees, or address generation. Deriving mnemonics in web browsers carries inherent host and clipboard exposure risks. Never share your mnemonic phrase.
         </div>
 
         <form id="form-wallet">
@@ -213,6 +334,18 @@
             <small style="display: block; color: var(--text-secondary); font-size: 0.8rem;">
               Lowercase identifier with letters, numbers, or hyphens (e.g. <code>cold-storage</code>)
             </small>
+
+            <label style="margin-top: 1rem;">Words (Length)</label>
+            <div class="words-badge-group" role="radiogroup" aria-label="Recovery phrase length">
+                <button type="button" class="words-badge-btn wallet-words-24 active" id="btn-words-24" role="radio" aria-checked="true">
+                    <span class="badge-chip">24 words</span>
+                    <span class="badge-hint">Recommended</span>
+                </button>
+                <button type="button" class="words-badge-btn wallet-words-12" id="btn-words-12" role="radio" aria-checked="false">
+                    <span class="badge-chip">12 words</span>
+                </button>
+            </div>
+            <input type="hidden" id="wallet-words" value="24">
 
             <label for="wallet-counter">Counter (Version)</label>
             <input type="number" id="wallet-counter" min="1" value="1" required>
@@ -227,7 +360,10 @@
 
         <div id="wallet-result" class="hidden" style="margin-top: 1.5rem;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label style="margin: 0;">BIP-39 Mnemonic Phrase</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="margin: 0;">BIP-39 Mnemonic Phrase</label>
+                    <span id="wallet-result-badge" class="wallet-chain-badge wallet-words-24">24 words</span>
+                </div>
                 <span id="wallet-clear-timer" style="font-size: 0.8rem; color: var(--text-secondary);">Auto-clears in 60s</span>
             </div>
 
@@ -753,7 +889,11 @@
     const formWallet = document.getElementById("form-wallet");
     const walletConfirm = document.getElementById("wallet-confirm");
     const generateWalletBtn = document.getElementById("generate-wallet");
+    const walletWords = document.getElementById("wallet-words");
+    const btnWords24 = document.getElementById("btn-words-24");
+    const btnWords12 = document.getElementById("btn-words-12");
     const walletResult = document.getElementById("wallet-result");
+    const walletResultBadge = document.getElementById("wallet-result-badge");
     const mnemonicGrid = document.getElementById("mnemonic-grid");
     const walletClearTimer = document.getElementById("wallet-clear-timer");
     const statusWallet = document.getElementById("status-wallet");
@@ -763,6 +903,20 @@
     walletConfirm.addEventListener("change", () => {
       generateWalletBtn.disabled = !walletConfirm.checked;
     });
+
+    function setWordsCount(count) {
+      const words = count === 12 ? 12 : 24;
+      walletWords.value = String(words);
+      btnWords24.classList.toggle("active", words === 24);
+      btnWords24.setAttribute("aria-checked", words === 24 ? "true" : "false");
+      btnWords12.classList.toggle("active", words === 12);
+      btnWords12.setAttribute("aria-checked", words === 12 ? "true" : "false");
+      generateWalletBtn.textContent = `Derive Mnemonic (${words} Words)`;
+      clearWalletMnemonic();
+    }
+
+    btnWords24.addEventListener("click", () => setWordsCount(24));
+    btnWords12.addEventListener("click", () => setWordsCount(12));
 
     let walletCountdownInterval = null;
     let walletWordsCache = [];
@@ -781,6 +935,7 @@
       e.preventDefault();
       const secret = sharedSecret.value;
       const walletName = document.getElementById("wallet-name").value.trim().toLowerCase();
+      const wordsCount = parseInt(walletWords.value, 10) === 12 ? 12 : 24;
       const counter = parseInt(document.getElementById("wallet-counter").value, 10) || 1;
 
       if (!secret) { statusWallet.textContent = "Secret is required."; return; }
@@ -792,9 +947,14 @@
       generateWalletBtn.disabled = true;
       statusWallet.textContent = "Deriving HD wallet entropy…";
       try {
-        const entropy = await deriveWalletEntropy(secret, walletName, 24, counter);
+        const entropy = await deriveWalletEntropy(secret, walletName, wordsCount, counter);
         const words = await entropyToMnemonic(entropy);
         walletWordsCache = words;
+
+        if (walletResultBadge) {
+          walletResultBadge.textContent = `${wordsCount} words`;
+          walletResultBadge.className = `wallet-chain-badge wallet-words-${wordsCount}`;
+        }
 
         mnemonicGrid.innerHTML = "";
         words.forEach((w, i) => {
