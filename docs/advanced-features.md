@@ -76,34 +76,11 @@ Formula:
 - Message: `UTF-8(lowercase(wallet_name) + ":" + words + ":" + counter + ":keygrain-wallet")`
 - Raw Entropy: `HMAC-SHA256(strengthened, message)` (first 16 bytes if 12 words, 32 bytes if 24 words).
 
-### Supported Chains & BIP-44 Paths
-
-| Chain | BIP-44 Path |
-|-------|-------------|
-| bitcoin | `m/84'/0'/0'/0/0` |
-| ethereum | `m/44'/60'/0'/0/0` |
-| solana | `m/44'/501'/0'/0'` |
-| litecoin | `m/84'/2'/0'/0/0` |
-| dogecoin | `m/44'/3'/0'/0/0` |
-| bitcoin-testnet | `m/84'/1'/0'/0/0` |
-| polkadot | *(substrate derivation)* |
-| cosmos | `m/44'/118'/0'/0/0` |
-| avalanche | `m/44'/60'/0'/0/0` |
-
-> **NOTE:** Polkadot uses Substrate-specific derivation, not standard BIP-44.
-
-Query paths without deriving (no master secret needed):
-
-```bash
-keygrain wallet --name personal --chain bitcoin --path
-# m/84'/0'/0'/0/0
-```
-
 ### Mnemonic Output
 
 ```bash
 export KEYGRAIN_SECRET="my-master-secret"
-keygrain wallet --name personal --chain bitcoin --yes-i-understand-the-risks
+keygrain wallet --name personal --yes-i-understand-the-risks
 ```
 
 Output: 24-word BIP-39 mnemonic. Import into any compatible wallet software to verify addresses match.

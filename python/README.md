@@ -14,7 +14,7 @@ pip install keygrain
 export KEYGRAIN_SECRET="your-master-secret"
 keygrain me@example.com --site github.com
 keygrain ssh --name github
-keygrain wallet --name savings --chain bitcoin
+keygrain wallet --name savings
 ```
 
 ## Sync + Local Cache (read-only)

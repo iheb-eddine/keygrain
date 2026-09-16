@@ -52,7 +52,6 @@ function getFilteredWallets(wallets, filter) {
       fuzzyScore(filter, w.wallet_id || ""),
       fuzzyScore(filter, w.walletId || ""),
       fuzzyScore(filter, w.walletName || w.wallet_name || w.name || ""),
-      fuzzyScore(filter, w.chain || ""),
       fuzzyScore(filter, w.label || ""),
       fuzzyScore(filter, w.notes || ""),
       fuzzyScore(filter, w.email || "")

@@ -58,7 +58,6 @@ const CASES = [
     wallets: [
       {
         wallet_name: 'Z' + loneSurrogate,
-        chain: 'bitcoin',
         counter: 1,
         email: 'wallet@example.test',
         mode: 'keygrain',
@@ -68,23 +67,12 @@ const CASES = [
       },
       {
         wallet_name: 'a',
-        chain: 'ethereum',
         counter: 3,
         email: '',
         mode: 'keygrain',
         created_at: '',
         updated_at: '',
         notes: ''
-      }
-    ],
-    audit_log: [
-      {
-        action: 'create', wallet_name: 'Z', chain: 'bitcoin', counter: 1,
-        timestamp: '2026-01-03T00:00:00Z', verification: special
-      },
-      {
-        action: 'rotate', wallet_name: 'a', chain: 'ethereum', counter: 3,
-        timestamp: '2026-01-02T00:00:00Z', verification: 'ok'
       }
     ],
     sync_conflicts: [
@@ -105,10 +93,9 @@ function canonicalCase(testCase) {
   ctx._services = testCase.services.map(s => s.content);
   ctx._metadata = testCase.services.map(s => s.metadata);
   ctx._wallets = testCase.wallets;
-  ctx._audit = testCase.audit_log;
   ctx._conflicts = testCase.sync_conflicts;
   return runInContext(
-    'canonicalBlobPayload(_services, _metadata, _wallets, _audit, _conflicts)', ctx
+    'canonicalBlobPayload(_services, _metadata, _wallets, _conflicts)', ctx
   );
 }
 
@@ -119,7 +106,6 @@ const fixture = {
     name: testCase.name,
     services: testCase.services,
     wallets: testCase.wallets,
-    audit_log: testCase.audit_log,
     sync_conflicts: testCase.sync_conflicts,
     expected: canonicalCase(testCase)
   }))

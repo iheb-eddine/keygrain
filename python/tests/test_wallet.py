@@ -7,8 +7,6 @@ from pathlib import Path
 import pytest
 
 from keygrain.wallet import (
-    SUPPORTED_CHAINS,
-    BIP44_PATHS,
     derive_wallet_entropy,
     entropy_to_mnemonic,
     mnemonic_to_seed,
@@ -242,16 +240,21 @@ class TestSeedDerivation:
             assert seed.hex() == v["seed_hex"], f"Vector {v['id']} seed mismatch"
 
 
-# --- SUPPORTED_CHAINS and BIP44_PATHS ---
+# --- Wordlist and mnemonic structure tests ---
 
 
-class TestConstants:
-    def test_supported_chains_count(self):
-        assert len(SUPPORTED_CHAINS) == 9
+class TestWordlistAndMnemonic:
+    def test_wordlist_count(self):
+        from keygrain._wordlist import WORDLIST
+        assert len(WORDLIST) == 2048
 
-    def test_bip44_paths_covers_all_chains(self):
-        assert set(BIP44_PATHS.keys()) == SUPPORTED_CHAINS
+    def test_wordlist_all_lowercase(self):
+        from keygrain._wordlist import WORDLIST
+        for word in WORDLIST:
+            assert word == word.lower()
 
-    def test_all_chains_lowercase(self):
-        for chain in SUPPORTED_CHAINS:
-            assert chain == chain.lower()
+    def test_supported_word_counts(self):
+        for words in (12, 24):
+            entropy = bytes(16 if words == 12 else 32)
+            mnemonic = entropy_to_mnemonic(entropy)
+            assert len(mnemonic.split()) == words

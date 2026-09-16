@@ -70,14 +70,12 @@ def _canonical_payload(payload):
     ordered["services"] = sorted(payload["services"], key=lambda item: _codepoint_key(item.get("id") or ""))
     ordered["wallets"] = sorted(
         payload["wallets"],
-        key=lambda item: _codepoint_key(
-            f'{(item.get("wallet_name") or "").lower()}:{(item.get("chain") or "").lower()}'
-        ),
+        key=lambda item: _codepoint_key((item.get("wallet_name") or "").lower()),
     )
     ordered["wallet_audit_log"] = sorted(
         payload["wallet_audit_log"],
         key=lambda item: _codepoint_key(
-            f'{item["timestamp"]}\x00{item["wallet_name"]}\x00{item["chain"]}\x00{item["action"]}'
+            f'{item["timestamp"]}\x00{item["wallet_name"]}\x00{item["action"]}'
         ),
     )
     ordered["sync_conflicts"] = sorted(

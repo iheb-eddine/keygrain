@@ -36,7 +36,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.secbytech.keygrain.data.SyncManager
 import com.secbytech.keygrain.data.SyncStore
-import com.secbytech.keygrain.data.WalletAuditEntry
 import com.secbytech.keygrain.data.WalletEngine
 import com.secbytech.keygrain.data.WalletEntry
 import com.secbytech.keygrain.ui.components.CryptoFieldLabel
@@ -164,7 +163,7 @@ fun WalletScreen(
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filteredWallets, key = { it.id.ifEmpty { it.walletName } }) { wallet ->
+                    items(filteredWallets, key = { "${it.id.ifEmpty { it.walletName }}_${it.effectiveId()}_${it.counter}" }) { wallet ->
                         WalletItemCard(
                             wallet = wallet,
                             onView = { viewingWallet = wallet },
@@ -654,8 +653,7 @@ private fun WalletEditorDialog(
                                 createdAt = now,
                                 updatedAt = now,
                                 notes = notes.trim(),
-                                walletName = cleanId,
-                                chain = "universal"
+                                walletName = cleanId
                             )
                             onSave(entry)
                         }

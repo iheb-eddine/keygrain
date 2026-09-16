@@ -85,7 +85,6 @@ from .derive import derive_password, normalize_site, DEFAULT_SYMBOLS
 from .ssh import derive_ssh_keypair, format_openssh_private_key, format_authorized_keys
 from .wallet import (
     derive_wallet_entropy, derive_wallet_mnemonic, mnemonic_to_seed,
-    SUPPORTED_CHAINS, BIP44_PATHS,
 )
 from .bip85 import bip85_derive_mnemonic
 from .totp import generate_totp, parse_totp_input, derive_totp_seed
@@ -147,15 +146,6 @@ def _cmd_ssh(args):
 
 
 def _cmd_wallet(args):
-    # --path doesn't need secret or confirmation
-    if args.path:
-        chain = args.chain.lower() if args.chain else "bitcoin"
-        if chain not in SUPPORTED_CHAINS:
-            print(f"Error: Unsupported chain {chain!r}.", file=sys.stderr)
-            sys.exit(1)
-        print(BIP44_PATHS[chain])
-        return
-
     secret = _get_secret(args.secret_env)
 
     # Interactive confirmation unless bypassed
@@ -208,13 +198,10 @@ def _cmd_wallet(args):
         if chosen_format == "seed":
             print(seed.hex())
         elif chosen_format == "json":
-            chain_lower = args.chain.lower() if args.chain else "bitcoin"
             payload = {
                 "version": "keygrain-bip39-v1",
                 "wallet_id": args.name.lower(),
                 "label": args.name,
-                "chain": chain_lower,
-                "path": BIP44_PATHS.get(chain_lower, ""),
                 "counter": args.counter,
                 "words": len(mnemonic.split()),
                 "mnemonic": mnemonic,
@@ -223,11 +210,9 @@ def _cmd_wallet(args):
             }
             print(json.dumps(payload, indent=2))
         elif chosen_format in ("sparrow", "electrum"):
-            chain_lower = args.chain.lower() if args.chain else "bitcoin"
             out = f"""# Keygrain Universal Wallet Export
 # App Format: Sparrow / Electrum Keystore
 # Wallet ID: {args.name.lower()}
-# Chain: {chain_lower}
 # Counter: {args.counter}
 
 keystore:
@@ -245,8 +230,7 @@ keystore:
 """
             print(out.strip())
         else:
-            chain_lower = args.chain.lower() if args.chain else "bitcoin"
-            _display_mnemonic(mnemonic, chain_lower, args.name.lower(), args.counter)
+            _display_mnemonic(mnemonic, args.name.lower(), args.counter)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -255,13 +239,11 @@ keystore:
         sys.exit(2)
 
 
-def _display_mnemonic(mnemonic: str, chain: str, wallet_name: str, counter: int):
+def _display_mnemonic(mnemonic: str, wallet_name: str, counter: int):
     words = mnemonic.split()
     print(f"\nVerification: \u2713 (double-derivation match)")
-    print(f"\nChain:        {chain}")
-    print(f"Wallet:       {wallet_name}")
+    print(f"\nWallet:       {wallet_name}")
     print(f"Counter:      {counter}")
-    print(f"BIP-44 Path:  {BIP44_PATHS.get(chain, '')}")
     print(f"\nMnemonic ({len(words)} words):")
     print("\u250c" + "\u2500" * 55 + "\u2510")
     num_rows = len(words) // 4
@@ -741,13 +723,11 @@ def main():
 
         wallet_parser = subparsers.add_parser("wallet", help="Derive a wallet mnemonic")
         wallet_parser.add_argument("--name", required=True, help="Wallet name (e.g. personal, savings)")
-        wallet_parser.add_argument("--chain", default="bitcoin", help=f"Chain ({', '.join(sorted(SUPPORTED_CHAINS))})")
         wallet_parser.add_argument("--words", type=int, default=24, choices=[12, 24], help="Word count (12 or 24, default: 24)")
         wallet_parser.add_argument("--counter", type=int, default=1, help="Rotation counter (default: 1)")
         wallet_parser.add_argument("--format", "--export", dest="export_format", choices=["mnemonic", "seed", "entropy", "raw", "json", "sparrow", "electrum", "metamask"], default=None, help="Output format (mnemonic, seed, entropy, json, sparrow, electrum, metamask)")
         wallet_parser.add_argument("--raw", action="store_true", help="Output raw 32-byte entropy as hex (same as --format entropy)")
         wallet_parser.add_argument("--seed", action="store_true", help="Output 64-byte BIP-32 seed as hex (same as --format seed)")
-        wallet_parser.add_argument("--path", action="store_true", help="Show BIP-44 derivation path")
         wallet_parser.add_argument("--yes-i-understand-the-risks", action="store_true", help="Skip interactive confirmation")
         wallet_parser.add_argument("--secret-env", default="KEYGRAIN_SECRET", help="Env var holding the master secret")
 

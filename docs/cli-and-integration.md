@@ -96,27 +96,22 @@ keygrain ssh --name work-servers --agent
 export KEYGRAIN_SECRET="my-master-secret"
 
 # 24-word mnemonic (interactive confirmation required)
-keygrain wallet --name personal --chain bitcoin
+keygrain wallet --name personal
 
 # Skip confirmation (scripts/CI)
-keygrain wallet --name personal --chain bitcoin --yes-i-understand-the-risks
+keygrain wallet --name personal --yes-i-understand-the-risks
 
 # Raw 32-byte entropy (hex)
-keygrain wallet --name personal --chain ethereum --raw --yes-i-understand-the-risks
-
-# BIP-44 path for a chain (no secret needed)
-keygrain wallet --name personal --chain solana --path
+keygrain wallet --name personal --raw --yes-i-understand-the-risks
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--name` | *(required)* | Wallet name (lowercase alphanumeric + hyphens) |
-| `--chain` | `bitcoin` | Chain: bitcoin, ethereum, solana, litecoin, dogecoin, bitcoin-testnet, polkadot, cosmos, avalanche |
 | `--words` | 24 | Word count (12 or 24) |
 | `--counter` | 1 | Rotation counter |
 | `--raw` | false | Output raw entropy as hex |
 | `--seed` | false | Output 64-byte BIP-32 seed as hex |
-| `--path` | false | Show BIP-44 derivation path only |
 | `--yes-i-understand-the-risks` | false | Skip interactive confirmation |
 | `--secret-env` | `KEYGRAIN_SECRET` | Env var holding the master secret |
 
@@ -172,7 +167,7 @@ Both import styles work:
 # Submodule imports
 from keygrain.derive import derive_password, normalize_site
 from keygrain.ssh import derive_ssh_keypair, format_authorized_keys
-from keygrain.wallet import derive_wallet_mnemonic, SUPPORTED_CHAINS, BIP44_PATHS
+from keygrain.wallet import derive_wallet_mnemonic
 from keygrain.totp import derive_totp_seed, generate_totp, parse_totp_input
 from keygrain.bip85 import bip85_derive_mnemonic
 
@@ -215,7 +210,7 @@ from keygrain.wallet import derive_wallet_mnemonic
 secret = os.environ["KEYGRAIN_SECRET"].encode()
 mnemonic = derive_wallet_mnemonic(
     secret,
-    wallet_id="personal", chain="bitcoin", counter=1,
+    wallet_id="personal", counter=1,
 )
 ```
 

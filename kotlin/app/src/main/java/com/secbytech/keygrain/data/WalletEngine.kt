@@ -7,11 +7,6 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
 object WalletEngine {
-    val SUPPORTED_CHAINS: Set<String> = setOf(
-        "bitcoin", "ethereum", "solana", "litecoin", "dogecoin",
-        "bitcoin-testnet", "polkadot", "cosmos", "avalanche"
-    )
-
     private val WALLET_NAME_RE = Regex("^[a-z0-9\\-]+$")
     private var wordlist: List<String>? = null
 

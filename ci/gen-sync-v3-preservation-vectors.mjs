@@ -70,11 +70,11 @@ function sortCasesPayload(payload) {
   const clone = {...payload};
   clone.services = [...payload.services].sort((a, b) => compareCodePoints(a.id ?? '', b.id ?? ''));
   clone.wallets = [...payload.wallets].sort((a, b) =>
-    compareCodePoints((a.wallet_name ?? '').toLowerCase() + ':' + (a.chain ?? '').toLowerCase(),
-      (b.wallet_name ?? '').toLowerCase() + ':' + (b.chain ?? '').toLowerCase()));
+    compareCodePoints((a.wallet_name ?? '').toLowerCase(),
+      (b.wallet_name ?? '').toLowerCase()));
   clone.wallet_audit_log = [...payload.wallet_audit_log].sort((a, b) =>
-    compareCodePoints(`${a.timestamp}\u0000${a.wallet_name}\u0000${a.chain}\u0000${a.action}`,
-      `${b.timestamp}\u0000${b.wallet_name}\u0000${b.chain}\u0000${b.action}`));
+    compareCodePoints(`${a.timestamp}\u0000${a.wallet_name}\u0000${a.action}`,
+      `${b.timestamp}\u0000${b.wallet_name}\u0000${b.action}`));
   clone.sync_conflicts = [...payload.sync_conflicts].sort((a, b) => compareCodePoints(a.conflict_id, b.conflict_id));
   return clone;
 }
@@ -123,12 +123,12 @@ const PRESENT_PAYLOAD = {
     resolved: null
   }],
   wallet_audit_log: [
-    {action: 'rotate', wallet_name: 'Main', chain: 'ethereum', counter: 2, timestamp: 20, verification: 'ok'},
-    {action: 'create', wallet_name: 'main', chain: 'Bitcoin', counter: 1, timestamp: 10, verification: SPECIAL}
+    {action: 'rotate', wallet_name: 'Main', counter: 2, timestamp: 20, verification: 'ok'},
+    {action: 'create', wallet_name: 'main', counter: 1, timestamp: 10, verification: SPECIAL}
   ],
   wallets: [
-    {notes: SPECIAL, updated_at: 4, wallet_name: 'Zed', chain: 'bitcoin', counter: 1, email: 'wallet@example.test', mode: 'keygrain', created_at: 3},
-    {notes: '', updated_at: 2, wallet_name: 'main', chain: 'Ethereum', counter: 2, email: '', mode: 'keygrain', created_at: 1}
+    {notes: SPECIAL, updated_at: 4, wallet_name: 'Zed', counter: 1, email: 'wallet@example.test', mode: 'keygrain', created_at: 3},
+    {notes: '', updated_at: 2, wallet_name: 'main', counter: 2, email: '', mode: 'keygrain', created_at: 1}
   ],
   services: [
     {ssh: null, name: 'B', site: 'b.example', id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@example.test', length: 24, symbols: '!@#$%', counter: 2, updated_at: 20, defaults_mode: 'snapshot', defaults_revision: 4, migrating: true, totp: {z: [true, null, 7], nested: {z: 'last', a: 'first'}, a: SPECIAL}},
@@ -151,7 +151,7 @@ const CASES = [
   {
     name: 'present-defaults-with-conflict-and-escaping',
     payload: PRESENT_PAYLOAD,
-    expected_canonical_utf8: String.raw`{"account_defaults":{"length":20,"policy":"ascii-printable-v1","schema":1,"symbols":"!@#$%&*-_=+?"},"services":[{"counter":1,"defaults_mode":"explicit","defaults_revision":null,"email":"a@example.test","id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","length":20,"migrating":null,"name":"A","site":"a.example","ssh":null,"symbols":"!@#$%","totp":null,"updated_at":19},{"counter":2,"defaults_mode":"snapshot","defaults_revision":4,"email":"b@example.test","id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","length":24,"migrating":true,"name":"B","site":"b.example","ssh":null,"symbols":"!@#$%","totp":{"a":"quote \" slash \\ backspace \b tab \t line\nfeed\f return\r U+2028   U+2029   😀 \ud800","nested":{"a":"first","z":"last"},"z":[true,null,7]},"updated_at":20}],"sync_conflicts":[{"base":{"length":20,"policy":"ascii-printable-v1","schema":1,"symbols":"!@#$%&*-_=+?"},"conflict_id":"0000000000000000000000000000000000000000000000000000000000000001","detected_at":123,"kind":"account_defaults","local":{"length":22,"policy":"ascii-printable-v1","schema":1,"symbols":"!@#$%&*-_=+?"},"remote":{"length":24,"policy":"ascii-printable-v1","schema":1,"symbols":"!@#$%&*-_=+?"},"resolution":null,"resolved":null,"status":"unresolved"}],"version":3,"wallet_audit_log":[{"action":"create","chain":"Bitcoin","counter":1,"timestamp":10,"verification":"quote \" slash \\ backspace \b tab \t line\nfeed\f return\r U+2028   U+2029   😀 \ud800","wallet_name":"main"},{"action":"rotate","chain":"ethereum","counter":2,"timestamp":20,"verification":"ok","wallet_name":"Main"}],"wallets":[{"chain":"Ethereum","counter":2,"created_at":1,"email":"","mode":"keygrain","notes":"","updated_at":2,"wallet_name":"main"},{"chain":"bitcoin","counter":1,"created_at":3,"email":"wallet@example.test","mode":"keygrain","notes":"quote \" slash \\ backspace \b tab \t line\nfeed\f return\r U+2028   U+2029   😀 \ud800","updated_at":4,"wallet_name":"Zed"}]}`,
+    expected_canonical_utf8: String.raw`{"account_defaults":{"length":20,"policy":"ascii-printable-v1","schema":1,"symbols":"!@#$%&*-_=+?"},"services":[{"counter":1,"defaults_mode":"explicit","defaults_revision":null,"email":"a@example.test","id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","length":20,"migrating":null,"name":"A","site":"a.example","ssh":null,"symbols":"!@#$%","totp":null,"updated_at":19},{"counter":2,"defaults_mode":"snapshot","defaults_revision":4,"email":"b@example.test","id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","length":24,"migrating":true,"name":"B","site":"b.example","ssh":null,"symbols":"!@#$%","totp":{"a":"quote \" slash \\ backspace \b tab \t line\nfeed\f return\r U+2028   U+2029   😀 \ud800","nested":{"a":"first","z":"last"},"z":[true,null,7]},"updated_at":20}],"sync_conflicts":[{"base":{"length":20,"policy":"ascii-printable-v1","schema":1,"symbols":"!@#$%&*-_=+?"},"conflict_id":"0000000000000000000000000000000000000000000000000000000000000001","detected_at":123,"kind":"account_defaults","local":{"length":22,"policy":"ascii-printable-v1","schema":1,"symbols":"!@#$%&*-_=+?"},"remote":{"length":24,"policy":"ascii-printable-v1","schema":1,"symbols":"!@#$%&*-_=+?"},"resolution":null,"resolved":null,"status":"unresolved"}],"version":3,"wallet_audit_log":[{"action":"create","counter":1,"timestamp":10,"verification":"quote \" slash \\ backspace \b tab \t line\nfeed\f return\r U+2028   U+2029   😀 \ud800","wallet_name":"main"},{"action":"rotate","counter":2,"timestamp":20,"verification":"ok","wallet_name":"Main"}],"wallets":[{"counter":2,"created_at":1,"email":"","mode":"keygrain","notes":"","updated_at":2,"wallet_name":"main"},{"counter":1,"created_at":3,"email":"wallet@example.test","mode":"keygrain","notes":"quote \" slash \\ backspace \b tab \t line\nfeed\f return\r U+2028   U+2029   😀 \ud800","updated_at":4,"wallet_name":"Zed"}]}`,
 
     envelope: {payload_version: 3, writer_protocol: 3, min_writer_protocol: 3, capabilities: ['account_defaults_immutable_v1'], defaults_state: 'PRESENT', defaults_commitment: COMMITMENT, generation: 7, lookup_id: LOOKUP_ID, blob_hex: '00010203040506070809', checksum: '__GENERATE__'},
     local_only: {tombstones: [{id: 'local-only'}], deletion_review: [{id: 'review-only', deleted_at: 99}], security_settings: {version: 1, fullLeaseSeconds: 60}}
@@ -204,7 +204,7 @@ const fixture = {
     objects: 'keys sorted by Unicode code point recursively',
     whitespace: 'none',
     numbers: 'finite safe integers in decimal',
-    arrays: 'services by id (null as empty); wallets by lowercase wallet_name:chain; audit by timestamp, wallet_name, chain, action; conflicts by conflict_id',
+    arrays: 'services by id (null as empty); wallets by lowercase wallet_name; audit by timestamp, wallet_name, action; conflicts by conflict_id',
     absent_defaults: 'account_defaults is required in the payload and is JSON null for ABSENT; omission is not equivalent'
   },
   cases: CASES.map(materializeCase)

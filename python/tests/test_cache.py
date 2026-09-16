@@ -15,7 +15,7 @@ CONTENT = {
     "services": [
         {"site": "github.com", "email": EMAIL, "length": 20, "id": "uuid-1", "updated_at": 111},
     ],
-    "wallets": [{"wallet_name": "w", "chain": "bitcoin"}],
+    "wallets": [{"wallet_name": "w"}],
     "wallet_audit_log": [{"action": "create"}],
 }
 

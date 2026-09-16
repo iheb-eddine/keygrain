@@ -44,19 +44,6 @@ RECOMMENDED USAGE:
     <label for="wallet-name">Wallet name <span class="crypto-indicator" title="Cryptographic derivation input: used as Argon2id salt & HMAC seed">🔑 Salt & Seed</span> <span class="field-hint">(lowercase, digits, hyphens only)</span></label>
     <input type="text" id="wallet-name" placeholder="e.g. personal, savings" pattern="[a-z0-9\-]+" autocomplete="off">
 
-    <label for="wallet-chain">Chain <span class="metadata-indicator">BIP-44 Path</span></label>
-    <select id="wallet-chain">
-      <option value="bitcoin">Bitcoin</option>
-      <option value="ethereum">Ethereum</option>
-      <option value="solana">Solana</option>
-      <option value="litecoin">Litecoin</option>
-      <option value="dogecoin">Dogecoin</option>
-      <option value="bitcoin-testnet">Bitcoin Testnet</option>
-      <option value="polkadot">Polkadot</option>
-      <option value="cosmos">Cosmos</option>
-      <option value="avalanche">Avalanche</option>
-    </select>
-
     <label for="wallet-counter">Counter <span class="crypto-indicator" title="Cryptographic derivation input: counter rotation">🔑 Counter</span></label>
     <input type="number" id="wallet-counter" min="1" value="1">
 
@@ -74,7 +61,6 @@ RECOMMENDED USAGE:
     <div id="error-msg" class="error hidden"></div>
 
     <div id="result" class="hidden">
-      <div class="path-display" id="path-display"></div>
       <div class="mnemonic-grid" id="mnemonic-grid"></div>
       <div class="auto-clear-notice">Mnemonic will auto-clear in <span id="clear-countdown">60</span>s</div>
     </div>
@@ -83,7 +69,7 @@ RECOMMENDED USAGE:
       <h2>Previously Derived Wallets</h2>
       <div id="wallet-list-empty" class="wallet-list-empty">No wallets derived yet.</div>
       <table id="wallet-list-table" class="wallet-list-table hidden">
-        <thead><tr><th>Name</th><th>Chain</th><th>Counter</th><th>Last Derived</th></tr></thead>
+        <thead><tr><th>Name</th><th>Words</th><th>Counter</th><th>Last Derived</th></tr></thead>
         <tbody id="wallet-list-body"></tbody>
       </table>
     </div>

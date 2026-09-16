@@ -20,8 +20,6 @@ from .wallet import (
     entropy_to_mnemonic,
     mnemonic_to_seed,
     derive_wallet_mnemonic,
-    SUPPORTED_CHAINS,
-    BIP44_PATHS,
 )
 from .bip85 import bip85_derive_mnemonic
 from .secret_input import resolve_secret, SecretResolutionError
@@ -59,8 +57,6 @@ __all__ = [
     "entropy_to_mnemonic",
     "mnemonic_to_seed",
     "derive_wallet_mnemonic",
-    "SUPPORTED_CHAINS",
-    "BIP44_PATHS",
     "bip85_derive_mnemonic",
     # Read-only sync + local cache (CLI-backing helpers, library-usable)
     "resolve_secret",

@@ -160,9 +160,9 @@
         }
 
         /* HD Wallet Badge */
-        .wallet-chain-badge { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; border-radius: 4px; padding: 2px 6px; line-height: 1.2; display: inline-flex; align-items: center; white-space: nowrap; flex-shrink: 0; border: 1px solid transparent; }
-        .wallet-chain-badge.wallet-words-24 { color: #5b9cf6; background: rgba(91, 156, 246, 0.12); border-color: rgba(91, 156, 246, 0.4); }
-        .wallet-chain-badge.wallet-words-12 { color: #2dd4bf; background: rgba(45, 212, 191, 0.12); border-color: rgba(45, 212, 191, 0.4); }
+        .wallet-words-badge { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; border-radius: 4px; padding: 2px 6px; line-height: 1.2; display: inline-flex; align-items: center; white-space: nowrap; flex-shrink: 0; border: 1px solid transparent; }
+        .wallet-words-badge.wallet-words-24 { color: #5b9cf6; background: rgba(91, 156, 246, 0.12); border-color: rgba(91, 156, 246, 0.4); }
+        .wallet-words-badge.wallet-words-12 { color: #2dd4bf; background: rgba(45, 212, 191, 0.12); border-color: rgba(45, 212, 191, 0.4); }
 
         @media (prefers-color-scheme: light) {
             .words-badge-btn.wallet-words-24 .badge-chip {
@@ -200,8 +200,8 @@
                 border-color: #00897b;
             }
 
-            .wallet-chain-badge.wallet-words-24 { color: #1a73e8; background: rgba(26, 115, 232, 0.08); border-color: rgba(26, 115, 232, 0.35); }
-            .wallet-chain-badge.wallet-words-12 { color: #00897b; background: rgba(0, 137, 123, 0.08); border-color: rgba(0, 137, 123, 0.35); }
+            .wallet-words-badge.wallet-words-24 { color: #1a73e8; background: rgba(26, 115, 232, 0.08); border-color: rgba(26, 115, 232, 0.35); }
+            .wallet-words-badge.wallet-words-12 { color: #00897b; background: rgba(0, 137, 123, 0.08); border-color: rgba(0, 137, 123, 0.35); }
         }
 
         /* Output textareas */
@@ -362,7 +362,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <label style="margin: 0;">BIP-39 Mnemonic Phrase</label>
-                    <span id="wallet-result-badge" class="wallet-chain-badge wallet-words-24">24 words</span>
+                    <span id="wallet-result-badge" class="wallet-words-badge wallet-words-24">24 words</span>
                 </div>
                 <span id="wallet-clear-timer" style="font-size: 0.8rem; color: var(--text-secondary);">Auto-clears in 60s</span>
             </div>
@@ -953,7 +953,7 @@
 
         if (walletResultBadge) {
           walletResultBadge.textContent = `${wordsCount} words`;
-          walletResultBadge.className = `wallet-chain-badge wallet-words-${wordsCount}`;
+          walletResultBadge.className = `wallet-words-badge wallet-words-${wordsCount}`;
         }
 
         mnemonicGrid.innerHTML = "";

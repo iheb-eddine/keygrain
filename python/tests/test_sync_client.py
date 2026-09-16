@@ -559,7 +559,7 @@ def test_download_enriches_id_and_updated_at(monkeypatch):
             {"site": "github.com", "email": EMAIL, "id": uuid1, "updated_at": 111},
             {"site": "gitlab.com", "email": EMAIL, "id": uuid2, "updated_at": 222},
         ],
-        "wallets": [{"wallet_name": "w", "chain": "bitcoin"}],
+        "wallets": [{"wallet_name": "w"}],
     }
     body = _server_payload(content)
     monkeypatch.setattr(sc, "_urlopen", lambda req, timeout=None: _FakeResponse(body))
@@ -568,7 +568,7 @@ def test_download_enriches_id_and_updated_at(monkeypatch):
     assert out["services"][0]["updated_at"] == 111
     assert out["services"][1]["id"] == uuid2
     assert out["services"][0]["site"] == "github.com"
-    assert out["wallets"] == [{"wallet_name": "w", "chain": "bitcoin"}]
+    assert out["wallets"] == [{"wallet_name": "w"}]
 
 
 def test_download_uses_get_and_basic_auth(monkeypatch):

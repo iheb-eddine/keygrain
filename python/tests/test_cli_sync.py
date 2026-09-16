@@ -459,36 +459,38 @@ def test_wallet_multi_format_export(monkeypatch, capsys):
     monkeypatch.setenv("KEYGRAIN_SECRET", SECRET)
 
     # 1) Entropy format
-    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--chain", "bitcoin", "--format", "entropy", "--yes-i-understand-the-risks"])
+    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--format", "entropy", "--yes-i-understand-the-risks"])
     assert code == 0
     entropy = derive_wallet_entropy(SECRET.encode(), wallet_id="test", words=24, counter=1)
     assert out.strip() == entropy.hex()
 
     # 2) Seed format
-    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--chain", "bitcoin", "--format", "seed", "--yes-i-understand-the-risks"])
+    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--format", "seed", "--yes-i-understand-the-risks"])
     assert code == 0
     mnemonic = derive_wallet_mnemonic(SECRET.encode(), wallet_id="test", words=24, counter=1)
     seed = mnemonic_to_seed(mnemonic)
     assert out.strip() == seed.hex()
 
     # 3) JSON format
-    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--chain", "bitcoin", "--format", "json", "--yes-i-understand-the-risks"])
+    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--format", "json", "--yes-i-understand-the-risks"])
     assert code == 0
     parsed = json.loads(out)
     assert parsed["version"] == "keygrain-bip39-v1"
     assert parsed["wallet_id"] == "test"
-    assert parsed["chain"] == "bitcoin"
+    assert "chain" not in parsed
+    assert "path" not in parsed
     assert parsed["mnemonic"] == mnemonic
     assert parsed["seed_hex"] == seed.hex()
     assert parsed["entropy_hex"] == entropy.hex()
 
     # 4) Sparrow / Electrum format
-    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--chain", "bitcoin", "--format", "sparrow", "--yes-i-understand-the-risks"])
+    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--format", "sparrow", "--yes-i-understand-the-risks"])
     assert code == 0
     assert "Sparrow / Electrum Keystore" in out
+    assert "Chain:" not in out
     assert f"mnemonic: {mnemonic}" in out
 
     # 5) MetaMask format
-    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--chain", "ethereum", "--format", "metamask", "--yes-i-understand-the-risks"])
+    code, out, _ = run(monkeypatch, capsys, ["wallet", "--name", "test", "--format", "metamask", "--yes-i-understand-the-risks"])
     assert code == 0
     assert "Secret Recovery Phrase" in out

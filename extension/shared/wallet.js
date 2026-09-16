@@ -3,11 +3,6 @@
 let _bip39WordlistVerified = false;
 const _bip39VerifyPromise = verifyBip39Wordlist().then(() => { _bip39WordlistVerified = true; });
 
-const SUPPORTED_CHAINS = new Set([
-  "bitcoin", "ethereum", "solana", "litecoin", "dogecoin",
-  "bitcoin-testnet", "polkadot", "cosmos", "avalanche",
-]);
-
 const _WALLET_NAME_RE = /^[a-z0-9\-]+$/;
 
 async function deriveWalletEntropy(secret, { walletId, words = 24, counter = 1 }) {

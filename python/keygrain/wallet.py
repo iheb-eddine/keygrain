@@ -7,23 +7,6 @@ import re
 from argon2.low_level import hash_secret_raw, Type
 from ._wordlist import WORDLIST, WORDLIST_SHA256
 
-SUPPORTED_CHAINS: set[str] = {
-    "bitcoin", "ethereum", "solana", "litecoin", "dogecoin",
-    "bitcoin-testnet", "polkadot", "cosmos", "avalanche",
-}
-
-BIP44_PATHS: dict[str, str] = {
-    "bitcoin": "m/84'/0'/0'/0/0",
-    "ethereum": "m/44'/60'/0'/0/0",
-    "solana": "m/44'/501'/0'/0'",
-    "litecoin": "m/84'/2'/0'/0/0",
-    "dogecoin": "m/44'/3'/0'/0/0",
-    "bitcoin-testnet": "m/84'/1'/0'/0/0",
-    "polkadot": "(substrate derivation)",
-    "cosmos": "m/44'/118'/0'/0/0",
-    "avalanche": "m/44'/60'/0'/0/0",
-}
-
 _WALLET_ID_RE = re.compile(r"^[a-z0-9\-]+$")
 
 

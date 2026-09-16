@@ -1,16 +1,4 @@
 (async function() {
-  const BIP44_PATHS = {
-    "bitcoin": "m/84'/0'/0'/0/0",
-    "ethereum": "m/44'/60'/0'/0/0",
-    "solana": "m/44'/501'/0'/0'",
-    "litecoin": "m/84'/2'/0'/0/0",
-    "dogecoin": "m/44'/3'/0'/0/0",
-    "bitcoin-testnet": "m/84'/1'/0'/0/0",
-    "polkadot": "(substrate derivation — no BIP-44 path)",
-    "cosmos": "m/44'/118'/0'/0/0",
-    "avalanche": "m/44'/60'/0'/0/0"
-  };
-
   async function sendMsg(msg) {
     try { return await chrome.runtime.sendMessage(msg); }
     catch { await new Promise(r => setTimeout(r, 100)); return chrome.runtime.sendMessage(msg); }
@@ -107,13 +95,12 @@
             const tr = document.createElement("tr");
             tr.title = "Click to load parameters";
             const td1 = document.createElement("td"); td1.textContent = w.wallet_name || w.wallet_id || w.label || "";
-            const td2 = document.createElement("td"); td2.textContent = w.chain || (w.words ? w.words + " words" : "universal");
+            const td2 = document.createElement("td"); td2.textContent = (w.words || 24) + " words";
             const td3 = document.createElement("td"); td3.textContent = w.counter || 1;
             const td4 = document.createElement("td"); td4.textContent = w.created_at ? new Date(w.created_at).toLocaleDateString() : "\u2014";
             tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
             tr.addEventListener("click", () => {
               if (nameInput) nameInput.value = w.wallet_name || w.wallet_id || "";
-              if (chainSelect) chainSelect.value = w.chain || "bitcoin";
               if (counterInput) counterInput.value = w.counter || 1;
               if (w.email && emailInput) emailInput.value = w.email;
               window.scrollTo({ top: 0, behavior: "smooth" });
@@ -130,13 +117,11 @@
   loadWalletList();
 
   const nameInput = document.getElementById("wallet-name");
-  const chainSelect = document.getElementById("wallet-chain");
   const counterInput = document.getElementById("wallet-counter");
   const confirmCheck = document.getElementById("wallet-confirm");
   const deriveBtn = document.getElementById("derive-btn");
   const clearBtn = document.getElementById("clear-btn");
   const resultDiv = document.getElementById("result");
-  const pathDisplay = document.getElementById("path-display");
   const mnemonicGrid = document.getElementById("mnemonic-grid");
   const errorMsg = document.getElementById("error-msg");
   const countdownMsg = document.getElementById("countdown-msg");
@@ -179,7 +164,6 @@
       secret = sessionSecret;
     }
     const walletName = nameInput.value.trim().toLowerCase();
-    const chain = chainSelect.value;
     const counter = parseInt(counterInput.value, 10);
     const em = emailInput ? emailInput.value.trim() : "";
 
@@ -217,7 +201,6 @@
         div.append(" " + w);
         mnemonicGrid.appendChild(div);
       });
-      pathDisplay.textContent = "BIP-44 Path: " + (BIP44_PATHS[chain] || "");
       resultDiv.classList.remove("hidden");
       clearBtn.classList.remove("hidden");
       startAutoClear();
@@ -227,7 +210,6 @@
         await sendMsg({
           action: "saveWallet",
           walletName,
-          chain,
           counter,
           email: em,
         });
@@ -268,7 +250,7 @@
 
   clearBtn?.addEventListener("click", clearMnemonic);
 
-  [emailInput, secretInput, nameInput, chainSelect, counterInput].forEach((input) => {
+  [emailInput, secretInput, nameInput, counterInput].forEach((input) => {
     input?.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
