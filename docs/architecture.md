@@ -205,8 +205,8 @@ On 409 Conflict: the client re-fetches the current state, re-merges, and retries
 │  • Master secret and strengthened key in memory          │
 │    during an unlocked session                           │
 │  • Cleared from memory on lock or timeout                │
-│  • Optional encrypted local copy for PIN/biometric      │
-│    unlock, where the client supports it                 │
+│  • Optional encrypted local copy for biometric          │
+│    unlock (Android Keystore)                            │
 │  • Plaintext service/configuration data and local        │
 │    account/device state                                  │
 │  • All cryptographic operations, merge, and conflict     │
@@ -284,7 +284,7 @@ For the public protocol contract, see [API.md](../API.md). Security guidance is 
 
 ### 5.1 Browser Extension
 
-The extension stores service configuration and related local account/device state locally; service data is encrypted with the **local storage key** (AES-256-GCM) in `chrome.storage.local`. Generated passwords are derived when needed and are not stored. The master secret and strengthened key are held in memory during an unlocked session and cleared on lock or timeout (configurable auto-lock via `chrome.alarms`). Ephemeral session leases are cached in `chrome.storage.session` for worker restoration across suspensions. If PIN unlock is enabled, an encrypted local copy of the master secret may be retained for that unlock flow.
+The extension stores service configuration and related local account/device state locally; service data is encrypted with the **local storage key** (AES-256-GCM) in `chrome.storage.local`. Generated passwords are derived when needed and are not stored. The master secret and strengthened key are held strictly in memory during an unlocked session and cleared on lock or timeout (configurable auto-lock via `chrome.alarms`). Ephemeral session leases are cached in `chrome.storage.session` for worker restoration across suspensions. The master secret is never stored on disk.
 
 ### 5.2 Android App
 

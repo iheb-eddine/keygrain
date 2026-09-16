@@ -15,7 +15,7 @@
   <!-- Lock Screen -->
   <div id="lock-screen" class="hidden">
     <h1><img src="icons/icon-16.png" alt="" width="16" height="16" style="vertical-align:middle"> Keygrain</h1>
-    <p class="lock-explanation">Keygrain derives unique passwords from your secret rather than storing generated passwords. The extension stores service configuration and other local account/device state, including an encrypted service payload locally. Optional PIN unlock stores an encrypted copy of your secret locally.</p>
+    <p class="lock-explanation">Keygrain derives unique passwords from your secret rather than storing generated passwords. The extension stores service configuration and other local account/device state, including an encrypted service payload locally.</p>
 
     <div class="auth-mode-toggle" role="tablist" aria-label="Account mode">
       <button type="button" id="auth-mode-unlock" class="auth-tab active" role="tab" aria-selected="true">Unlock Account</button>
@@ -277,7 +277,7 @@
   <!-- Switch Account Confirmation Dialog -->
   <div id="switch-account-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="switch-account-title">
     <h2 id="switch-account-title">Switch account?</h2>
-    <p>This clears all data on this device — your services, wallets, PIN, and sync state — and returns to the unlock screen so you can enter a different email and master secret.</p>
+    <p>This clears all data on this device — your services, wallets, and sync state — and returns to the unlock screen so you can enter a different email and master secret.</p>
     <p>Your data on the sync server is <strong>not</strong> affected by this action.</p>
     <div class="dialog-actions">
       <button id="switch-account-cancel">Cancel</button>
@@ -421,7 +421,7 @@
   <!-- Reset Confirmation Dialog -->
   <div id="reset-dialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="reset-dialog-title">
     <h2 id="reset-dialog-title">Reset Keygrain</h2>
-    <p class="reset-warning">This will permanently delete all local data including your services, PIN, and sync state. This cannot be undone.</p>
+    <p class="reset-warning">This will permanently delete all local data including your services, wallets, and sync state. This cannot be undone.</p>
     <label for="reset-input">Type RESET to confirm</label>
     <input type="text" id="reset-input" placeholder="Type RESET to confirm" autocomplete="off">
     <div class="dialog-actions">
@@ -461,7 +461,7 @@
       </div>
       <div class="onboarding-step hidden" id="onboarding-step-3">
         <h2>3. What is stored</h2>
-        <p>Generated passwords are derived, not stored. The extension stores service configuration and encrypted local service data. Optional PIN unlock stores an encrypted copy of your secret locally; optional sync uploads encrypted service data, never your secret or generated passwords.</p>
+        <p>Generated passwords are derived, not stored. The extension stores service configuration and encrypted local service data. Optional sync uploads encrypted service data, never your secret or generated passwords.</p>
       </div>
       <p class="onboarding-hint">Click anywhere to continue</p>
     </div>

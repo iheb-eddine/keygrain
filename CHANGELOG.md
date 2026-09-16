@@ -6,19 +6,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Components are 
 
 ## Chrome extension
 
-### [1.4.0] - 2026-09-09
-
-- Enhanced security & PIN removal: Removed local PIN unlock to eliminate storing encrypted master secrets on disk. All cryptographic operations and session secrets now live strictly in volatile memory.
-- Two-tier auto-lock UX: Fast, seamless access without sacrificing security. Keep service names and usernames visible for quick search and navigation while the master secret expires on a shorter timeout, prompting for quick re-authentication only when copying or filling credentials.
-- Session resilience across hibernation: Extension sessions safely survive Manifest V3 service worker sleep using secure in-memory session persistence, eliminating frustrating mid-session lockouts while idle.
-- Multi-asset interface: Top-level tabs for Logins, SSH Keys, and HD Wallets directly inside the popup.
-- SSH keypair management: Generate, view, and export Ed25519 public keys (.pub) and OpenSSH private keys (PEM) with on-screen reveal protection.
-- HD wallets (12 & 24 words): Derive standard BIP-39 disaster recovery phrases directly from your master secret.
-- Decoupled keys and wallets (Spec v5): SSH keys and crypto wallets derive independently of your account email, ensuring email updates never alter your keys or phrases. Password and TOTP derivations remain byte-identical.
-- Offline mode and server controls: Easily toggle offline mode to isolate from sync networks, or delete server data while retaining your local vault.
-- Autofill enhancements: Default shortcut updated to Ctrl+Shift+L (Command+Shift+L on Mac) to prevent browser conflicts, with improved fill reliability on reactive web apps.
-- Migration notice: Vault migration from other password managers is temporarily paused while being rebuilt for the new security architecture, returning in an upcoming release.
-
 ### [1.3.0] - 2026-08-11
 
 - You can now stop a password migration part-way through. Services you have not rotated are removed from the migration batch and that decision syncs to your other devices; their old site passwords remain unchanged, so change them if needed.
@@ -86,19 +73,6 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 (SPEC v4).
 
 ## Firefox extension
-
-### [1.4.0] - 2026-09-09
-
-- Enhanced security architecture & PIN removal: Removed local PIN unlock to eliminate disk-bound secret storage. All cryptographic operations, keys, and session secrets now live strictly in volatile memory, ensuring zero persistent disk exposure of your credentials.
-- Two-tier auto-lock UX: Retains fast everyday access without compromising security. You can now configure independent timeouts for the master secret and cached service metadata. Service names remain visible for fast searching and browsing, while deriving, copying, or autofilling credentials prompts for quick master secret re-authentication.
-- Manifest V3 & session resilience: Upgraded Firefox background architecture to Manifest V3. Unlocked sessions safely persist across background page hibernation using secure in-memory storage, eliminating unexpected lockouts while idle.
-- Multi-asset interface: Access Logins, SSH Keys, and HD Wallets directly from dedicated top-level tabs inside the popup without digging through auxiliary menus.
-- SSH keypair management: Generate, view, copy, and download Ed25519 public keys (.pub) and OpenSSH PEM private keys with on-screen reveal protection.
-- HD wallets (12 & 24 words): Derive standard BIP-39 disaster recovery phrases directly from your master secret with dedicated labels and counter rotation.
-- Email-decoupled keys and wallets (Spec v5): Derivation of SSH keys and HD wallet seeds is now completely decoupled from your account email. Changing your email address will never alter your SSH keypairs or wallet recovery phrases. Password and TOTP derivations remain 100% byte-identical.
-- Offline mode and server controls: Added an Offline Mode toggle to use Keygrain completely decoupled from network requests. A new Server Data Deletion option allows erasing remote sync data while keeping your local vault intact.
-- Autofill enhancements: Default keyboard shortcut updated to Ctrl+Shift+L (Command+Shift+L on Mac) to avoid browser conflicts, with improved input event triggering on modern reactive websites (React, Vue, Angular).
-- Migration notice: Vault migration from other password managers is temporarily paused while being re-architected for the new security model, returning in an upcoming release.
 
 ### [1.3.0] - 2026-08-11
 
@@ -168,13 +142,6 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ## Android app
 
-### [1.4.0] - 2026-09-09
-
-- Added dedicated tabs for Logins, SSH Keys, and Wallets, plus live sync status in the top bar.
-- Derive OpenSSH Ed25519 keypairs and BIP-39 recovery phrases (12 or 24 words), decoupled from email.
-- Autofill now detects and fills TOTP codes, with improved form heuristics and setup shortcuts.
-- More reliable biometric unlock handling across device manufacturers.
-
 ### [1.3.0] - 2026-08-11
 
 - Autofill now chooses the most-specific saved service for a site, reducing ambiguous matches on subdomains.
@@ -221,15 +188,6 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 (SPEC v4).
 
 ## Python CLI
-
-### [1.1.0] - 2026-09-09
-
-- Decoupled SSH keypair derivation from account email (`keygrain ssh --name <name>`); authorized_keys comments now default to the key name.
-- Decoupled wallet derivation from account email and chain identifiers (`keygrain wallet --name <id>`); `--chain` now defaults to bitcoin for derivation path display.
-- Added 12-word mnemonic support alongside 24-word phrases via `--words 12` (or `--words 24`).
-- Added wallet export formats via `--format` (`json`, `sparrow`, `electrum`, `metamask`, `seed`, `entropy`).
-- `keygrain --version` now reports git commit metadata and dirty state when run from source or a development repository.
-- Gracefully aborts `keygrain sync` when server capability requirements necessitate an upgrade, protecting the local cache.
 
 ### [1.0.1] - 2026-08-11
 

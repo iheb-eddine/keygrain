@@ -106,7 +106,6 @@ fun SshScreen(
             val q = searchQuery.trim().lowercase()
             sshKeys.filter {
                 it.keyName.lowercase().contains(q) ||
-                it.email.lowercase().contains(q) ||
                 it.comment.lowercase().contains(q)
             }
         }
@@ -171,7 +170,7 @@ fun SshScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp)
                 ) {
-                    items(filteredItems, key = { it.id.ifEmpty { "${it.email}_${it.keyName}" } }) { item ->
+                    items(filteredItems, key = { it.id.ifEmpty { "${it.keyName}_${it.counter}" } }) { item ->
                         SshItemCard(
                             item = item,
                             masterSecret = masterSecret,
@@ -188,19 +187,17 @@ fun SshScreen(
     if (isAdding) {
         SshEditorDialog(
             initialItem = null,
-            defaultEmail = defaultEmail.ifEmpty { SyncStore.getSyncEmail(context) ?: "" },
             onDismiss = {
                 showAddDialog = false
                 onDismissAddDialog?.invoke()
             },
-            onSave = { keyName, email, counter ->
+            onSave = { keyName, comment, counter ->
                 val cleanKeyName = keyName.trim()
-                val commentVal = if (email.isNotBlank()) email.trim() else cleanKeyName
+                val commentVal = comment.trim().ifEmpty { cleanKeyName }
                 val newKey = SshKeyEntry(
                     id = UUID.randomUUID().toString(),
                     keyName = cleanKeyName,
                     counter = counter,
-                    email = email.trim(),
                     comment = commentVal,
                     createdAt = System.currentTimeMillis(),
                     updatedAt = System.currentTimeMillis()
@@ -217,16 +214,14 @@ fun SshScreen(
     if (editingItem != null) {
         SshEditorDialog(
             initialItem = editingItem,
-            defaultEmail = editingItem!!.email,
             onDismiss = { editingItem = null },
-            onSave = { keyName, email, counter ->
+            onSave = { keyName, comment, counter ->
                 val current = editingItem!!
                 val cleanKeyName = keyName.trim()
-                val commentVal = if (email.isNotBlank()) email.trim() else cleanKeyName
+                val commentVal = comment.trim().ifEmpty { cleanKeyName }
                 val updatedKey = current.copy(
                     keyName = cleanKeyName,
                     counter = counter,
-                    email = email.trim(),
                     comment = commentVal,
                     updatedAt = System.currentTimeMillis()
                 )
@@ -329,7 +324,7 @@ private fun SshItemCard(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
-                        val commentDisplay = if (item.comment.isNotBlank()) item.comment else item.email
+                        val commentDisplay = item.comment.trim()
                         if (commentDisplay.isNotBlank()) {
                             Text(
                                 commentDisplay,
@@ -768,19 +763,19 @@ private fun SshViewerDialog(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Keygrain derives deterministic Ed25519 SSH keys from your Master Secret and email.",
+                        "Keygrain derives deterministic Ed25519 SSH keys from your Master Secret and Key Name.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        "1. Argon2id stretches your secret using email as salt (64 MiB RAM, 3 passes).",
+                        "1. Argon2id stretches your secret using salt 'keygrain-ssh:<key_name>' (64 MiB RAM, 3 passes).",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "2. HMAC-SHA256 with domain ':keygrain-ssh' produces a 32-byte Ed25519 seed.",
+                        "2. HMAC-SHA256 with domain '<key_name>:<counter>:keygrain-ssh' produces a 32-byte Ed25519 seed.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "3. Standard RFC 8032 curve points generate the public key and OpenSSH PEM bundle.",
+                        "3. Standard RFC 8032 curve points generate the public key and OpenSSH PEM bundle. Comment is metadata only.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -797,12 +792,11 @@ private fun SshViewerDialog(
 @Composable
 private fun SshEditorDialog(
     initialItem: SshKeyEntry?,
-    defaultEmail: String,
     onDismiss: () -> Unit,
-    onSave: (keyName: String, email: String, counter: Int) -> Unit
+    onSave: (keyName: String, comment: String, counter: Int) -> Unit
 ) {
     var keyName by remember { mutableStateOf(initialItem?.keyName ?: "") }
-    var email by remember { mutableStateOf(initialItem?.email ?: initialItem?.comment ?: "") }
+    var comment by remember { mutableStateOf(initialItem?.comment ?: "") }
     var counter by remember { mutableIntStateOf(initialItem?.counter ?: 1) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
@@ -826,10 +820,10 @@ private fun SshEditorDialog(
                 )
 
                 OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it; errorMsg = null },
+                    value = comment,
+                    onValueChange = { comment = it; errorMsg = null },
                     label = { CryptoFieldLabel("Comment", isCrypto = false) },
-                    placeholder = { Text("Optional comment (e.g. machine or purpose)") },
+                    placeholder = { Text("Optional comment (e.g. user@hostname)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -863,7 +857,7 @@ private fun SshEditorDialog(
                         errorMsg = "Key name cannot be empty"
                         return@Button
                     }
-                    onSave(keyName.trim(), email.trim(), counter)
+                    onSave(keyName.trim(), comment.trim(), counter)
                 }
             ) {
                 Text("Save")

@@ -137,12 +137,12 @@ await test('S14: Filter SSH keys by keyName or comment', async () => {
   assert.equal(r2.length, 1);
   assert.equal(r2[0].keyName, 'office');
 });
-await test('S15: Filter wallets by walletName or chain', async () => {
-  ctx._wallets = [{walletName: 'savings', chain: 'ethereum'}, {walletName: 'cold', chain: 'bitcoin'}];
+await test('S15: Filter wallets by walletName or label', async () => {
+  ctx._wallets = [{walletName: 'savings', label: 'Vault'}, {walletName: 'cold', label: 'Primary'}];
   const r1 = runInContext(`getFilteredWallets(_wallets, "sav")`, ctx);
   assert.equal(r1.length, 1);
   assert.equal(r1[0].walletName, 'savings');
-  const r2 = runInContext(`getFilteredWallets(_wallets, "bit")`, ctx);
+  const r2 = runInContext(`getFilteredWallets(_wallets, "prim")`, ctx);
   assert.equal(r2.length, 1);
   assert.equal(r2[0].walletName, 'cold');
 });

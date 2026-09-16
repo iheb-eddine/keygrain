@@ -332,7 +332,7 @@ function sshPopupHarness(options = {}) {
       }
       if (message.action === 'keygrain.ssh.options') return {ok: true, result: {items: [{selectionToken: 'ssh-token', id: 'svc', site: 'example.com', name: null, email: 'user@example.com', keyName: 'github', counter: 1}]}};
       if (message.action === 'keygrain.ssh.generate') return {ok: true, result: {authorizedKeys: 'ssh-ed25519 AAAA user@example.com:github', privateKeyPem: '-----BEGIN OPENSSH PRIVATE KEY-----\nYWJj\n-----END OPENSSH PRIVATE KEY-----\n'}};
-      if (message.action === 'keygrain.wallet.options') return {ok: true, result: {items: [{selectionToken: 'wallet-token', walletName: 'personal', chain: 'bitcoin', email: 'user@example.com'}]}};
+      if (message.action === 'keygrain.wallet.options') return {ok: true, result: {items: [{selectionToken: 'wallet-token', walletName: 'personal', words: 24, email: 'user@example.com'}]}};
       if (message.action === 'keygrain.wallet.generate') return {ok: true, result: {mnemonic: Array.from({length: 24}, () => 'word').join(' ')}};
       if (message.action === 'saveSshKey') return {ok: true, ssh_keys: []};
       if (message.action === 'deleteSshKey') return {ok: true, ssh_keys: []};
@@ -492,7 +492,7 @@ function sshPopupHarness(options = {}) {
   const walletTitle = walletTop.children[0];
   assert.equal(walletTitle.textContent, 'personal');
   const wordsBadge = walletTop.children[1].children[0];
-  assert.equal(wordsBadge.textContent, 'bitcoin');
+  assert.equal(wordsBadge.textContent, '24 words');
 
   // Test search scoping in wallets tab
   searchInput.value = 'nonexistent';

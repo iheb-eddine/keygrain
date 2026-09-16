@@ -204,25 +204,25 @@ for (const browserName of ['chrome', 'firefox']) {
     const result = await runOwnerPrepare(browserName, {
       syncResult: {
         services: [{id: 'svc', unknown: {kept: true}}],
-        wallets: [], wallet_audit_log: [], tombstones: [], review: [],
+        wallets: [], tombstones: [], review: [],
       },
     });
     assert.equal(result.error, undefined);
     assert.deepEqual(result.prepared.fullData.services, [{id: 'svc', unknown: {kept: true}}]);
-    assert.deepEqual(result.log, ['read', 'sync:[[],[],[],[],0,null]', 'deriveStorageKey', 'encryptServices', 'set:services', 'clearKey']);
+    assert.deepEqual(result.log, ['read', 'sync:[[],[],[],0,null]', 'deriveStorageKey', 'encryptServices', 'set:services', 'clearKey']);
   });
 
   await test(`${browserName}: clean bootstrap rejects null sync collections without owner write`, async () => {
     const result = await runOwnerPrepare(browserName, {
-      syncResult: {services: null, wallets: [], wallet_audit_log: [], tombstones: [], review: []},
+      syncResult: {services: null, wallets: [], tombstones: [], review: []},
     });
     assert(result.error);
-    assert.deepEqual(result.log, ['read', 'sync:[[],[],[],[],0,null]']);
+    assert.deepEqual(result.log, ['read', 'sync:[[],[],[],0,null]']);
   });
 
   await test(`${browserName}: explicit null local services is not clean bootstrap`, async () => {
     const result = await runOwnerPrepare(browserName, {stored: null, syncResult: {
-      services: [], wallets: [], wallet_audit_log: [], tombstones: [], review: [],
+      services: [], wallets: [], tombstones: [], review: [],
     }});
     assert(result.error);
     assert.deepEqual(result.log, ['read']);
@@ -277,7 +277,7 @@ for (const browserName of ['chrome', 'firefox']) {
   await test(`${browserName}: sync error and persistence failure do not run cleanup`, async () => {
     const syncFailure = await runOwnerPrepare(browserName, {syncError: true});
     assert(syncFailure.error);
-    assert.deepEqual(syncFailure.log, ['read', 'sync:[[],[],[],[],0,null]']);
+    assert.deepEqual(syncFailure.log, ['read', 'sync:[[],[],[],0,null]']);
     const writeFailure = await runOwnerPrepare(browserName, {
       stored: {version: 1, services: [{id: 'legacy'}]}, failSet: true,
     });
@@ -918,4 +918,198 @@ for (const browserName of ['chrome', 'firefox']) {
 
   console.log(`  ✓ ${browserName}: worker hibernation, process death, and re-hydration lifecycle verified`);
 }
+
+await test('executeCollectionMutation handles put and delete for wallets and ssh keys without error', async () => {
+  for (const browserName of ['chrome', 'firefox']) {
+    const source = ownerSource(browserName);
+    assert.match(source, /let currentWalletTombstones/, `${browserName}: currentWalletTombstones must be reassignable let`);
+    assert.match(source, /let currentSshTombstones/, `${browserName}: currentSshTombstones must be reassignable let`);
+    assert.match(source, /const normId = String\(rawName\)/, `${browserName}: normId must be defined`);
+
+    let currentFullData = {
+      secret: 'test-secret',
+      email: 'user@example.com',
+      services: [],
+      ssh_keys: [],
+      wallets: [],
+      walletAuditLog: [],
+      tombstones: [],
+      deletionReview: [],
+      walletTombstones: [],
+      sshTombstones: [],
+    };
+    const mockOwner = {
+      snapshot: () => ({state: 'full'}),
+      manager: {
+        beginSensitiveOperation: ({capture}) => {
+          return {op: 1, captured: capture(currentFullData)};
+        },
+        getSensitiveOperationInput: (handle) => handle.captured,
+        installFullPayloadReplacement: ({fullData}) => {
+          currentFullData = fullData;
+        },
+        cancelSensitiveOperation: () => {},
+      }
+    };
+
+    const ctx = createContext({
+      Array, ArrayBuffer, Date, Error, JSON, Map, Math, Number, Object, Promise, RegExp, Set, String,
+      TextEncoder, TextDecoder, Uint8Array, console,
+      KeygrainBrowserOwner: {
+        safeFailure: (code) => ({code}),
+      },
+      generateUuid: () => 'uuid-' + Math.random().toString(36).slice(2),
+      persistV2: async () => {},
+      updateSession: async () => {},
+      syncWithServer: async () => ({}),
+      reconcileSyncResult: async () => {},
+      extractMetadata: () => [],
+    });
+
+    const mutationFnSource = source.slice(
+      source.indexOf('async function executeCollectionMutation'),
+      source.indexOf('async function ' + browserName + 'CommitPopupEdit')
+    );
+    runInContext(mutationFnSource, ctx);
+
+    // 1. Put wallet 1
+    const putWallet1 = await runInContext(`executeCollectionMutation({
+      collectionKey: "wallets",
+      mutationType: "put",
+      message: {wallet_id: "savings", words: 24, counter: 1},
+      owner: _owner
+    })`, Object.assign(ctx, {_owner: mockOwner}));
+    assert.ok(putWallet1.ok, `${browserName}: put wallet 1 must succeed`);
+    assert.equal(putWallet1.data.length, 1);
+    assert.equal(putWallet1.data[0].wallet_id, 'savings');
+
+    // 2. Put wallet 2
+    const putWallet2 = await runInContext(`executeCollectionMutation({
+      collectionKey: "wallets",
+      mutationType: "put",
+      message: {wallet_id: "trading", counter: 1},
+      owner: _owner
+    })`, ctx);
+    assert.ok(putWallet2.ok, `${browserName}: put wallet 2 must succeed`);
+    assert.equal(putWallet2.data.length, 2);
+
+    // 3. Delete wallet 2
+    const delWallet2 = await runInContext(`executeCollectionMutation({
+      collectionKey: "wallets",
+      mutationType: "delete",
+      message: {wallet_id: "trading"},
+      owner: _owner
+    })`, ctx);
+    assert.ok(delWallet2.ok, `${browserName}: delete wallet 2 must succeed`);
+    assert.equal(delWallet2.data.length, 1);
+    assert.equal(currentFullData.walletTombstones.length, 1);
+    assert.equal(currentFullData.walletTombstones[0].id, 'trading');
+
+    // 4. Put wallet 2 again - verifies tombstone is pruned!
+    const rePutWallet2 = await runInContext(`executeCollectionMutation({
+      collectionKey: "wallets",
+      mutationType: "put",
+      message: {wallet_id: "trading", counter: 1},
+      owner: _owner
+    })`, ctx);
+    assert.ok(rePutWallet2.ok, `${browserName}: re-put wallet 2 must succeed`);
+    assert.equal(rePutWallet2.data.length, 2);
+    assert.equal(currentFullData.walletTombstones.length, 0, `${browserName}: tombstone must be pruned on put`);
+
+    // 5. Put SSH key
+    const putSsh = await runInContext(`executeCollectionMutation({
+      collectionKey: "ssh_keys",
+      mutationType: "put",
+      message: {key_name: "deploy-key", counter: 1},
+      owner: _owner
+    })`, ctx);
+    assert.ok(putSsh.ok, `${browserName}: put ssh key must succeed`);
+    assert.equal(putSsh.data.length, 1);
+
+    // 6. Delete SSH key
+    const delSsh = await runInContext(`executeCollectionMutation({
+      collectionKey: "ssh_keys",
+      mutationType: "delete",
+      message: {key_name: "deploy-key"},
+      owner: _owner
+    })`, ctx);
+    assert.ok(delSsh.ok, `${browserName}: delete ssh key must succeed`);
+    assert.equal(delSsh.data.length, 0);
+    assert.equal(currentFullData.sshTombstones.length, 1);
+
+    // 7. Put SSH key again - verifies tombstone is pruned!
+    const rePutSsh = await runInContext(`executeCollectionMutation({
+      collectionKey: "ssh_keys",
+      mutationType: "put",
+      message: {key_name: "deploy-key", counter: 1},
+      owner: _owner
+    })`, ctx);
+    assert.ok(rePutSsh.ok, `${browserName}: re-put ssh key must succeed`);
+    assert.equal(rePutSsh.data.length, 1);
+    assert.equal(currentFullData.sshTombstones.length, 0, `${browserName}: ssh tombstone must be pruned on put`);
+
+    console.log(`  ✓ ${browserName}: executeCollectionMutation put/delete lifecycle verified`);
+  }
+});
+
+await test('extension sync concurrency serialization in chrome and firefox background', async () => {
+  for (const browserName of ['chrome', 'firefox']) {
+    const source = readFileSync(resolve(__dirname, '..', browserName, 'background.js'), 'utf8');
+    assert.match(source, /activeSyncQueue\s*=\s*Promise\.resolve\(\)/, `${browserName}: must declare activeSyncQueue`);
+    assert.match(source, /function serializeSyncOperation\s*\(/, `${browserName}: must define serializeSyncOperation`);
+    assert.match(source, /serializeSyncOperation\(async\s*\(\)\s*=>/, `${browserName}: action === "sync" must use serializeSyncOperation`);
+
+    // Verify serializeSyncOperation functionality
+    const ctx = createContext({
+      Promise,
+      setTimeout,
+      clearTimeout,
+      console,
+    });
+    const queueSource = source.slice(
+      source.indexOf('let activeSyncQueue = Promise.resolve();'),
+      source.indexOf('function extractMetadata()')
+    );
+    runInContext(queueSource, ctx);
+
+    // Test concurrency serialization: task 1 and task 2 run sequentially
+    const executionOrder = [];
+    ctx.executionOrder = executionOrder;
+    const p1 = runInContext(`serializeSyncOperation(async () => {
+      executionOrder.push('start-1');
+      await new Promise(r => setTimeout(r, 20));
+      executionOrder.push('end-1');
+      return 'res-1';
+    })`, ctx);
+    const p2 = runInContext(`serializeSyncOperation(async () => {
+      executionOrder.push('start-2');
+      await new Promise(r => setTimeout(r, 10));
+      executionOrder.push('end-2');
+      return 'res-2';
+    })`, ctx);
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    assert.equal(r1, 'res-1');
+    assert.equal(r2, 'res-2');
+    assert.deepEqual(executionOrder, ['start-1', 'end-1', 'start-2', 'end-2'], `${browserName}: tasks must execute sequentially`);
+
+    // Test error resilience: failed task does not block next task
+    const pFail = runInContext(`serializeSyncOperation(async () => {
+      throw new Error('sync failed');
+    })`, ctx);
+    const pSuccess = runInContext(`serializeSyncOperation(async () => {
+      return 'recovered';
+    })`, ctx);
+
+    let err;
+    try { await pFail; } catch (e) { err = e; }
+    assert.ok(err, `${browserName}: failing task must reject`);
+    assert.equal(err.message, 'sync failed');
+    const rSuccess = await pSuccess;
+    assert.equal(rSuccess, 'recovered', `${browserName}: subsequent task must succeed after previous failure`);
+
+    console.log(`  ✓ ${browserName}: sync concurrency serialization and error resilience verified`);
+  }
+});
+
 

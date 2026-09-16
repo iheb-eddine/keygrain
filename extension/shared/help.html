@@ -13,7 +13,7 @@
     <summary>What is Keygrain?</summary>
     <div class="faq-content">
       <p>Keygrain is a deterministic password manager. It derives unique passwords from your master secret rather than storing generated passwords.</p>
-      <p>The extension also stores service configuration and other local account/device state, including an encrypted service payload stored locally. If you enable PIN unlock, an encrypted copy of the master secret is stored locally for PIN unlock. Optional sync uploads encrypted service data; the sync server does not receive your master secret or generated passwords.</p>
+      <p>The extension also stores service configuration and other local account/device state, including an encrypted service payload stored locally. Optional sync uploads encrypted service data; the sync server does not receive your master secret or generated passwords.</p>
     </div>
   </details>
 
@@ -29,7 +29,7 @@
   <details role="region" aria-label="What is my master secret?">
     <summary>What is my master secret?</summary>
     <div class="faq-content">
-      <p>Your master secret is the single passphrase that generates all your passwords. It is used locally; if you enable PIN unlock, an encrypted copy is stored locally for PIN unlock. It is not sent to the sync server.</p>
+      <p>Your master secret is the single passphrase that generates all your passwords. It is used locally in memory during active sessions and is not sent to the sync server.</p>
       <div class="warning">
         <p><strong>⚠️ If you lose your master secret, all your passwords are lost.</strong> There is no recovery mechanism. This is by design.</p>
       </div>
@@ -61,11 +61,11 @@
     </div>
   </details>
 
-  <details role="region" aria-label="What is the PIN for?">
-    <summary>What is the PIN for?</summary>
+  <details role="region" aria-label="How does session auto-lock work?">
+    <summary>How does session auto-lock work?</summary>
     <div class="faq-content">
-      <p>The PIN provides quick unlock without retyping your full master secret. It encrypts your secret locally on the device.</p>
-      <p>The PIN does <strong>not</strong> replace your master secret. If you clear browser data, you'll need your master secret again.</p>
+      <p>Keygrain keeps your master secret in memory during an active session based on your configured lock timeout. Once expired, the secret is purged from memory.</p>
+      <p>You can re-enter your master secret to unlock again, while metadata can optionally remain available for quick lookup.</p>
     </div>
   </details>
 

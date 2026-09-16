@@ -41,7 +41,6 @@ internal fun ServiceCard(
             }
             PasswordRow(service, masterSecret, clipboardScope, context, onCopy)
             TotpRow(service, masterSecret, clipboardScope, context, onCopy)
-            SshRow(service, masterSecret, clipboardScope, context)
         }
     }
 }

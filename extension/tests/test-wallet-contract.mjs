@@ -52,7 +52,7 @@ function unlock(wallets) {
   })`, context);
 }
 function validWallet(overrides = {}) {
-  return {wallet_name: 'Personal', chain: 'BITCOIN', counter: 1, email: ' User@Example.COM ', ...overrides};
+  return {wallet_name: 'Personal', counter: 1, email: ' User@Example.COM ', ...overrides};
 }
 function unlockFullData(fullData) {
   context._fullDataFixture = fullData;
@@ -95,16 +95,16 @@ async function test(name, fn) { await fn(); passed++; console.log(`  ✓ ${name}
 console.log('\nKeygrain B3 Wallet Contract Tests:');
 
 await test('fixed wallet actions and exact options projection preserve source order and duplicates', async () => {
-  unlock([validWallet(), validWallet({wallet_name: 'SECOND', chain: 'Ethereum', counter: 2, email: 'second@example.com', mode: 'keygrain', notes: 'not emitted'}), validWallet()]);
+  unlock([validWallet(), validWallet({wallet_name: 'SECOND', counter: 2, email: 'second@example.com', mode: 'keygrain', notes: 'not emitted'}), validWallet()]);
   const result = await invoke(trusted, {action: 'keygrain.wallet.options'});
   assert.deepEqual(Object.keys(result), ['ok', 'result']);
   assert.deepEqual(Object.keys(result.result), ['items']);
   assert.equal(result.result.items.length, 3);
-  for (const item of result.result.items) assert.deepEqual(Object.keys(item), ['selectionToken', 'walletName', 'chain', 'email']);
-  assert.deepEqual(result.result.items.map(({walletName, chain, email}) => ({walletName, chain, email})), [
-    {walletName: 'personal', chain: 'bitcoin', email: 'user@example.com'},
-    {walletName: 'second', chain: 'ethereum', email: 'second@example.com'},
-    {walletName: 'personal', chain: 'bitcoin', email: 'user@example.com'},
+  for (const item of result.result.items) assert.deepEqual(Object.keys(item), ['selectionToken', 'walletName', 'email']);
+  assert.deepEqual(result.result.items.map(({walletName, email}) => ({walletName, email})), [
+    {walletName: 'personal', email: 'user@example.com'},
+    {walletName: 'second', email: 'second@example.com'},
+    {walletName: 'personal', email: 'user@example.com'},
   ]);
   assert.notEqual(result.result.items[0].selectionToken, result.result.items[2].selectionToken);
   assert.equal(JSON.stringify(result).includes('notes'), false);
@@ -112,7 +112,7 @@ await test('fixed wallet actions and exact options projection preserve source or
 
 await test('generate consumes one token and calls unchanged deriveWalletMnemonic exactly once', async () => {
   resetDerive();
-  unlock([validWallet({wallet_name: 'Vault', chain: 'Solana', counter: 7})]);
+  unlock([validWallet({wallet_name: 'Vault', counter: 7})]);
   const options = await invoke(trusted, {action: 'keygrain.wallet.options'});
   const token = options.result.items[0].selectionToken;
   const result = await invoke(trusted, {action: 'keygrain.wallet.generate', selectionToken: token});
@@ -142,7 +142,7 @@ await test('proxied collection and proxied entry are rejected at the owner opera
       globalThis._proxyObserved = false;
       globalThis._originalWalletBegin = owner.manager.beginSensitiveOperation;
       owner.manager.beginSensitiveOperation = function (options) {
-        const entry = {wallet_name: 'Personal', chain: 'BITCOIN', counter: 1, email: 'user@example.com'};
+        const entry = {wallet_name: 'Personal', counter: 1, email: 'user@example.com'};
         const wallets = _proxyKind === 'collection' ? new Proxy([entry], {}) : [new Proxy(entry, {})];
         const captured = options.capture({wallets});
         _proxyObserved = captured && captured.invalid === true;
@@ -166,11 +166,11 @@ await test('strict wallet schema rejects malformed collections, descriptors, fie
   const malformed = [
     null, {}, [],
     {...validWallet(), unknown: true},
-    {chain: 'bitcoin', counter: 1, email: 'user@example.com'},
+    {counter: 1, email: 'user@example.com'},
     {...validWallet(), wallet_name: ' Personal'},
     {...validWallet(), wallet_name: 'bad_name'},
     {...validWallet(), wallet_name: 'a'.repeat(65)},
-    {...validWallet(), chain: 'unsupported'},
+    {...validWallet(), legacy_network: 'bitcoin'},
     {...validWallet(), counter: 0}, {...validWallet(), counter: 1.5}, {...validWallet(), counter: 0x80000000},
     {...validWallet(), email: 'user:evil@example.com'}, {...validWallet(), email: 'user\u0000@example.com'},
     {...validWallet(), mode: null}, {...validWallet(), mode: 'raw'}, {...validWallet(), notes: null},
@@ -184,19 +184,19 @@ await test('strict wallet schema rejects malformed collections, descriptors, fie
   await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: [hidden]});
   const symbol = validWallet(); symbol[Symbol('unknown')] = true;
   await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: [symbol]});
-  const wrongOrder = {chain: 'bitcoin', wallet_name: 'personal', counter: 1, email: 'user@example.com'};
+  const wrongOrder = {counter: 1, wallet_name: 'personal', email: 'user@example.com'};
   await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: [wrongOrder]});
   await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: null});
   await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: {0: validWallet(), length: 1}});
   await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: Array.from({length: 257}, () => validWallet())});
 });
 
-await test('all supported chains and valid empty collection succeed', async () => {
-  const chains = ['bitcoin', 'ethereum', 'solana', 'litecoin', 'dogecoin', 'bitcoin-testnet', 'polkadot', 'cosmos', 'avalanche'];
-  unlock(chains.map((chain, index) => validWallet({wallet_name: `wallet-${index}`, chain, counter: index + 1})));
+await test('valid multiple wallets and valid empty collection succeed', async () => {
+  const names = ['wallet-0', 'wallet-1', 'wallet-2'];
+  unlock(names.map((name, index) => validWallet({wallet_name: name, counter: index + 1})));
   const result = await invoke(trusted, {action: 'keygrain.wallet.options'});
   assert.equal(result.ok, true);
-  assert.deepEqual(result.result.items.map(item => item.chain), chains);
+  assert.deepEqual(result.result.items.map(item => item.walletName), names);
   unlock([]);
   assert.deepEqual((await invoke(trusted, {action: 'keygrain.wallet.options'})).result, {items: []});
 });
@@ -241,7 +241,7 @@ await test('just-before TTL succeeds while tuple mutation, lock, and rollback in
   context.now = 63000;
   unlock([validWallet({wallet_name: 'Mutable'})]);
   const changed = await invoke(trusted, {action: 'keygrain.wallet.options'});
-  runInContext("owner.manager._fullData.wallets[0].chain = 'ethereum'", context);
+  runInContext("owner.manager._fullData.wallets[0].counter = 99", context);
   const changedResult = await invoke(trusted, {action: 'keygrain.wallet.generate', selectionToken: changed.result.items[0].selectionToken});
   assert.equal(changedResult.code, 'KEYGRAIN_STALE_OPERATION');
 
@@ -297,7 +297,7 @@ await test('malformed mnemonic shapes never reach the popup result', async () =>
   }
 });
 
-await test('standalone wallet options projection preserves id, label, notes, chain, and allows metadata fields', async () => {
+await test('standalone wallet options projection preserves id, label, notes, and allows metadata fields', async () => {
   validDerive();
   context.now = 80000;
   const standalone = {
@@ -307,7 +307,6 @@ await test('standalone wallet options projection preserves id, label, notes, cha
     words: 24,
     counter: 3,
     notes: 'stored securely',
-    chain: 'universal',
     created_at: '2026-09-01T00:00:00.000Z',
     updated_at: '2026-09-02T00:00:00.000Z',
   };
@@ -322,7 +321,6 @@ await test('standalone wallet options projection preserves id, label, notes, cha
   assert.equal(item.counter, 3);
   assert.equal(item.id, 'wallet-uuid-1');
   assert.equal(item.notes, 'stored securely');
-  assert.equal(item.chain, 'universal');
   const generated = await invoke(trusted, {action: 'keygrain.wallet.generate', selectionToken: item.selectionToken});
   assert.equal(generated.ok, true);
 });

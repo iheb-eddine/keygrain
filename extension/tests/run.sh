@@ -17,3 +17,4 @@ node test-ssh-contract.mjs
 node test-password-fill-contract.mjs
 node test-sync-v3-preservation.mjs
 node test-hibernation-lifecycle.mjs
+node test-common-entity.mjs

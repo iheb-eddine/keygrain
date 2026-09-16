@@ -20,7 +20,7 @@ Use these terms exactly. Do not invent synonyms.
 | **derived password** | The deterministic password output for a given set of inputs | Never "generated password" (implies randomness) |
 | **visual fingerprint** | The 4-color indicator derived from the raw secret for verification | Uses Wong colorblind-safe palette |
 | **encrypted blob** | The AES-256-GCM ciphertext containing all service configurations | What the sync server stores |
-| **PIN** | A short numeric secret (4–8 digits) used for quick unlock on trusted devices | NOT the master secret — distinct security tier |
+| **PIN** | (Deprecated) Legacy unlock method; retired in favor of in-memory session lease and elevation | Distinct security tier |
 | **migration wizard** | The UI flow that guides users from another password manager to Keygrain | Import from LastPass, Bitwarden, 1Password, Chrome, Firefox |
 | **counter** | Per-site integer (≥1) that enables password rotation without changing other inputs | Incrementing produces an uncorrelated new password |
 | **lookup ID** | Hex-encoded HMAC output used as the user's pseudonymous server identity | Not linkable to email without the strengthened key |

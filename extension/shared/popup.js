@@ -1841,8 +1841,8 @@
 
       const wordsCount = item.words === 12 ? 12 : 24;
       const wordsBadge = document.createElement("span");
-      wordsBadge.className = "wallet-chain-badge wallet-words-" + wordsCount;
-      wordsBadge.textContent = item.chain || (wordsCount + " words");
+      wordsBadge.className = "wallet-words-badge wallet-words-" + wordsCount;
+      wordsBadge.textContent = wordsCount + " words";
 
       const counterBadge = document.createElement("span");
       counterBadge.className = "counter-badge";
@@ -2981,7 +2981,6 @@
         action: "deleteWallet",
         id: currentEditWalletItem.id,
         wallet_id: currentEditWalletItem.wallet_id || currentEditWalletItem.walletId || currentEditWalletItem.walletName,
-        chain: currentEditWalletItem.chain,
       });
       if (res?.ok === false) {
         showStatus(statusEl, res.message || "Failed to delete wallet.");

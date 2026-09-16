@@ -104,6 +104,8 @@ async function reconcileSyncResult(syncRes, secret, email) {
           walletAuditLog: Array.isArray(fullData.walletAuditLog) ? [...fullData.walletAuditLog] : [],
           tombstones: Array.isArray(fullData.tombstones) ? [...fullData.tombstones] : [],
           deletionReview: Array.isArray(fullData.deletionReview) ? [...fullData.deletionReview] : [],
+          walletTombstones: Array.isArray(fullData.walletTombstones) ? [...fullData.walletTombstones] : [],
+          sshTombstones: Array.isArray(fullData.sshTombstones) ? [...fullData.sshTombstones] : [],
         };
       }
     });
@@ -123,6 +125,8 @@ async function reconcileSyncResult(syncRes, secret, email) {
       ssh_keys: accepted.sshKeys || captured.ssh_keys,
       walletAuditLog: accepted.walletAuditLog || [],
       tombstones: accepted.tombstones || [],
+      walletTombstones: (syncRes && Array.isArray(syncRes.walletTombstones)) ? syncRes.walletTombstones : (syncRes && Array.isArray(syncRes.wallet_tombstones) ? syncRes.wallet_tombstones : (captured.walletTombstones || [])),
+      sshTombstones: (syncRes && Array.isArray(syncRes.sshTombstones)) ? syncRes.sshTombstones : (syncRes && Array.isArray(syncRes.ssh_tombstones) ? syncRes.ssh_tombstones : (captured.sshTombstones || [])),
       deletionReview: accepted.deletionReview || [],
     };
     firefoxOwner.manager.installFullPayloadReplacement({
@@ -133,7 +137,12 @@ async function reconcileSyncResult(syncRes, secret, email) {
     await persistV2(nextFullData.email, nextFullData.secret, nextFullData);
     await updateSession(async (session) => {
       if (!session) return session;
-      return { ...session, metadata: extractMetadata() };
+      return {
+        ...session,
+        metadata: extractMetadata(),
+        walletTombstones: nextFullData.walletTombstones,
+        sshTombstones: nextFullData.sshTombstones,
+      };
     });
   } catch (err) {
     try { firefoxOwner.manager.cancelSensitiveOperation(opHandle, "sync_reconcile_failed"); } catch (_) {}
@@ -160,6 +169,8 @@ async function executeCollectionMutation({ collectionKey, mutationType, message,
           walletAuditLog: Array.isArray(fullData.walletAuditLog) ? [...fullData.walletAuditLog] : [],
           tombstones: Array.isArray(fullData.tombstones) ? [...fullData.tombstones] : [],
           deletionReview: Array.isArray(fullData.deletionReview) ? [...fullData.deletionReview] : [],
+          walletTombstones: Array.isArray(fullData.walletTombstones) ? [...fullData.walletTombstones] : [],
+          sshTombstones: Array.isArray(fullData.sshTombstones) ? [...fullData.sshTombstones] : [],
         };
       }
     });
@@ -175,87 +186,63 @@ async function executeCollectionMutation({ collectionKey, mutationType, message,
 
   const nowIso = new Date().toISOString();
   let updatedCollection;
+  let currentWalletTombstones = Array.isArray(captured.walletTombstones) ? [...captured.walletTombstones] : [];
+  let currentSshTombstones = Array.isArray(captured.sshTombstones) ? [...captured.sshTombstones] : [];
 
   if (collectionKey === "wallets") {
     const current = captured.wallets;
     if (mutationType === "put") {
-      const { wallet_name, walletName, wallet_id, walletId, chain, counter: rawCounter } = message;
-      if (!walletName && !walletId && !wallet_id) {
+      const { wallet_name, walletName, wallet_id, walletId, counter: rawCounter } = message;
+      const rawName = walletName || walletId || wallet_id || wallet_name;
+      if (!rawName) {
         try { owner.manager.cancelSensitiveOperation(opHandle, "save_wallet_invalid"); } catch (_) {}
         return { ok: false, error: KeygrainBrowserOwner.safeFailure("INVALID_PARAMS") };
       }
+      const normId = String(rawName).trim().replace(/\s+/g, "-").toLowerCase();
       const counter = Number(rawCounter) || 1;
-      if (chain) {
-        const normName = String(walletName || walletId || wallet_id).trim();
-        const normChain = String(chain).toLowerCase().trim();
-        const normEmail = (message.email || captured.email || "").trim().toLowerCase();
-        const existingIdx = current.findIndex(w => (message.id && w.id === message.id) || ((w.wallet_name || "").toLowerCase() === normName && (w.chain || "").toLowerCase() === normChain) || (w.wallet_id && w.wallet_id.toLowerCase() === normName.toLowerCase()));
-        if (existingIdx >= 0) {
-          current[existingIdx] = {
-            ...current[existingIdx],
-            wallet_id: normName.replace(/\s+/g, "-").toLowerCase(),
-            label: current[existingIdx].label || normName,
-            counter,
-            email: normEmail,
-            updated_at: nowIso,
-            notes: message.notes !== undefined ? message.notes : (current[existingIdx].notes || ""),
-          };
-        } else {
-          current.push({
-            id: message.id || generateUuid(),
-            wallet_id: normName.replace(/\s+/g, "-").toLowerCase(),
-            label: normName,
-            wallet_name: normName,
-            chain: normChain,
-            counter,
-            email: normEmail,
-            mode: "keygrain",
-            created_at: nowIso,
-            updated_at: nowIso,
-            notes: message.notes || "",
-          });
-        }
+      const id = message.id || generateUuid();
+      const words = message.words === 12 ? 12 : 24;
+      const label = message.label !== undefined ? String(message.label) : normId;
+      const notes = message.notes !== undefined ? String(message.notes) : "";
+      const existingIdx = current.findIndex(w => (message.id && w.id === message.id) || (w.wallet_id && w.wallet_id.toLowerCase() === normId) || (w.wallet_name && w.wallet_name.toLowerCase() === normId));
+      if (existingIdx >= 0) {
+        current[existingIdx] = {
+          ...current[existingIdx],
+          wallet_id: normId,
+          label,
+          words,
+          counter,
+          notes,
+          updated_at: nowIso,
+        };
       } else {
-        const normId = String(walletId || wallet_id || walletName || wallet_name).trim().replace(/\s+/g, "-").toLowerCase();
-        const id = message.id || generateUuid();
-        const words = message.words === 12 ? 12 : 24;
-        const label = message.label !== undefined ? String(message.label) : normId;
-        const notes = message.notes !== undefined ? String(message.notes) : "";
-        const existingIdx = current.findIndex(w => (message.id && w.id === message.id) || (w.wallet_id && w.wallet_id.toLowerCase() === normId) || (w.wallet_name && w.wallet_name.toLowerCase() === normId));
-        if (existingIdx >= 0) {
-          current[existingIdx] = {
-            ...current[existingIdx],
-            wallet_id: normId,
-            label,
-            words,
-            counter,
-            notes,
-            updated_at: nowIso,
-          };
-        } else {
-          current.push({
-            id,
-            wallet_id: normId,
-            label,
-            words,
-            counter,
-            notes,
-            created_at: nowIso,
-            updated_at: nowIso,
-          });
-        }
+        current.push({
+          id,
+          wallet_id: normId,
+          label,
+          words,
+          counter,
+          notes,
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
       }
+      currentWalletTombstones = currentWalletTombstones.filter(t => {
+        const tid = String(t.id).toLowerCase().trim();
+        return tid !== (message.id ? String(message.id).toLowerCase().trim() : null) && tid !== normId;
+      });
       updatedCollection = current;
     } else if (mutationType === "delete") {
       const targetId = message.id;
       const targetWalletId = (message.wallet_id || message.walletId || message.walletName || message.wallet_name || "").toLowerCase().trim();
-      const targetChain = (message.chain || "").toLowerCase().trim();
       updatedCollection = current.filter(w => {
         if (targetId && w.id === targetId) return false;
-        if (targetChain && (w.chain || "").toLowerCase() === targetChain && ((w.wallet_name || "").toLowerCase() === targetWalletId || (w.wallet_id || "").toLowerCase() === targetWalletId)) return false;
-        if (!targetChain && !targetId && ((w.wallet_id || "").toLowerCase() === targetWalletId || (w.wallet_name || "").toLowerCase() === targetWalletId)) return false;
+        if (!targetId && ((w.wallet_id || "").toLowerCase() === targetWalletId || (w.wallet_name || "").toLowerCase() === targetWalletId)) return false;
         return true;
       });
+      const tombId = targetId || targetWalletId;
+      currentWalletTombstones = currentWalletTombstones.filter(t => String(t.id).toLowerCase().trim() !== String(tombId).toLowerCase().trim());
+      currentWalletTombstones.push({ id: tombId, deleted_at: Date.now() });
     }
   } else if (collectionKey === "ssh_keys") {
     const current = captured.ssh_keys;
@@ -288,6 +275,10 @@ async function executeCollectionMutation({ collectionKey, mutationType, message,
           updated_at: nowIso,
         });
       }
+      currentSshTombstones = currentSshTombstones.filter(t => {
+        const tid = String(t.id).toLowerCase().trim();
+        return tid !== (message.id ? String(message.id).toLowerCase().trim() : null) && tid !== cleanKeyName;
+      });
       updatedCollection = current;
     } else if (mutationType === "delete") {
       const targetId = message.id;
@@ -297,6 +288,9 @@ async function executeCollectionMutation({ collectionKey, mutationType, message,
         if (!targetId && targetKeyName && (k.key_name || "").toLowerCase() === targetKeyName) return false;
         return true;
       });
+      const tombId = targetId || targetKeyName;
+      currentSshTombstones = currentSshTombstones.filter(t => String(t.id).toLowerCase().trim() !== String(tombId).toLowerCase().trim());
+      currentSshTombstones.push({ id: tombId, deleted_at: Date.now() });
     }
   }
 
@@ -309,6 +303,8 @@ async function executeCollectionMutation({ collectionKey, mutationType, message,
     walletAuditLog: captured.walletAuditLog,
     tombstones: captured.tombstones,
     deletionReview: captured.deletionReview,
+    walletTombstones: currentWalletTombstones,
+    sshTombstones: currentSshTombstones,
   };
 
   try {
@@ -326,13 +322,22 @@ async function executeCollectionMutation({ collectionKey, mutationType, message,
     await persistV2(nextFullData.email, nextFullData.secret, nextFullData);
     await updateSession(async (session) => {
       if (!session) return session;
-      return { ...session, metadata: extractMetadata() };
+      return {
+        ...session,
+        metadata: extractMetadata(),
+        walletTombstones: nextFullData.walletTombstones,
+        sshTombstones: nextFullData.sshTombstones,
+      };
     });
     const storageArea = (typeof browser !== "undefined" && browser.storage?.local) ? browser.storage.local : (typeof chrome !== "undefined" && chrome.storage?.local ? chrome.storage.local : null);
     if (storageArea) {
+      await storageArea.set({
+        wallet_tombstones: nextFullData.walletTombstones,
+        ssh_tombstones: nextFullData.sshTombstones,
+      });
       const { offline_mode } = await storageArea.get("offline_mode");
       if (!offline_mode) {
-        syncWithServer(nextFullData.secret, nextFullData.email, nextFullData.services, nextFullData.wallets, nextFullData.walletAuditLog, nextFullData.tombstones, 0, false, nextFullData.ssh_keys)
+        syncWithServer(nextFullData.secret, nextFullData.email, nextFullData.services, nextFullData.wallets, nextFullData.tombstones, 0, false, nextFullData.ssh_keys, nextFullData.walletTombstones, nextFullData.sshTombstones)
           .then(res => reconcileSyncResult(res, nextFullData.secret, nextFullData.email))
           .catch(() => {});
       }
@@ -349,7 +354,7 @@ async function firefoxCommitPopupEdit(payload) {
   await persistV2(payload.email, payload.secret, payload.fullData);
   const { offline_mode } = await browser.storage.local.get("offline_mode");
   if (!offline_mode) {
-    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || [], 0, false, payload.fullData.ssh_keys || []).then(res => reconcileSyncResult(res, payload.secret, payload.email)).catch(() => {});
+    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.tombstones || [], 0, false, payload.fullData.ssh_keys || [], payload.fullData.walletTombstones || [], payload.fullData.sshTombstones || []).then(res => reconcileSyncResult(res, payload.secret, payload.email)).catch(() => {});
   }
   return {ok: true};
 }
@@ -361,7 +366,7 @@ async function firefoxCommitPopupAdd(payload) {
   await persistV2(payload.email, payload.secret, payload.fullData);
   const { offline_mode } = await browser.storage.local.get("offline_mode");
   if (!offline_mode) {
-    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || [], 0, false, payload.fullData.ssh_keys || []).then(res => reconcileSyncResult(res, payload.secret, payload.email)).catch(() => {});
+    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.tombstones || [], 0, false, payload.fullData.ssh_keys || [], payload.fullData.walletTombstones || [], payload.fullData.sshTombstones || []).then(res => reconcileSyncResult(res, payload.secret, payload.email)).catch(() => {});
   }
   return {ok: true};
 }
@@ -373,7 +378,7 @@ async function firefoxCommitPopupDelete(payload) {
   await persistV2(payload.email, payload.secret, payload.fullData);
   const { offline_mode } = await browser.storage.local.get("offline_mode");
   if (!offline_mode) {
-    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.walletAuditLog || [], payload.fullData.tombstones || [], 0, false, payload.fullData.ssh_keys || []).then(res => reconcileSyncResult(res, payload.secret, payload.email)).catch(() => {});
+    syncWithServer(payload.secret, payload.email, payload.fullData.services, payload.fullData.wallets, payload.fullData.tombstones || [], 0, false, payload.fullData.ssh_keys || [], payload.fullData.walletTombstones || [], payload.fullData.sshTombstones || []).then(res => reconcileSyncResult(res, payload.secret, payload.email)).catch(() => {});
   }
   return {ok: true};
 }
@@ -951,7 +956,8 @@ const firefoxOwnerAdapter = Object.freeze({
     await browser.storage.local.remove([
       "services", "syncKnownUUIDs", "lastSyncTime", "lastSuccessfulSyncAt",
       "pinHash", "pinSalt", "pinIterations", "pinLength",
-      "autofillRules", "lastSyncETag", "account_email", "offline_mode"
+      "autofillRules", "lastSyncETag", "account_email", "offline_mode",
+      "wallet_tombstones", "ssh_tombstones"
     ]);
     await clearMemorySession();
     try {
@@ -992,6 +998,8 @@ function preparedPayload(payload) {
       walletAuditLog: payload.walletAuditLog,
       tombstones: payload.tombstones,
       deletionReview: payload.deletionReview,
+      walletTombstones: payload.walletTombstones || [],
+      sshTombstones: payload.sshTombstones || [],
     },
     records: payload.services,
   };
@@ -1059,7 +1067,7 @@ function syncLocalV2(result) {
     version: 2,
     services: requiredArray(result, "services"),
     wallets: requiredArray(result, "wallets"),
-    wallet_audit_log: requiredArray(result, "wallet_audit_log"),
+    wallet_audit_log: (result && Array.isArray(result.wallet_audit_log)) ? result.wallet_audit_log : [],
     tombstones: requiredArray(result, "tombstones"),
     deletion_review: requiredArray(result, "review"),
   };
@@ -1077,7 +1085,7 @@ function knownUUIDs(data) {
 }
 
 async function readAndPrepare({email, secret, isCreate}) {
-  const data = await browser.storage.local.get(["services", "syncKnownUUIDs", "lastSyncTime", "account_email", "offline_mode"]);
+  const data = await browser.storage.local.get(["services", "syncKnownUUIDs", "lastSyncTime", "account_email", "offline_mode", "wallet_tombstones", "ssh_tombstones"]);
   const stored = data.services;
   const storedAccountEmail = data.account_email;
   const isDifferentAccount = Boolean(
@@ -1089,14 +1097,20 @@ async function readAndPrepare({email, secret, isCreate}) {
   let prepared;
   let migrateMarkers = false;
 
+  if (isDifferentAccount) {
+    await browser.storage.local.remove(["wallet_tombstones", "ssh_tombstones"]);
+    data.wallet_tombstones = [];
+    data.ssh_tombstones = [];
+  }
+
   if (stored === undefined || isDifferentAccount) {
     if (data.offline_mode) {
-      accepted = acceptedV2({ version: 2, services: [], wallets: [], wallet_audit_log: [], tombstones: [], deletion_review: null });
+      accepted = acceptedV2({ version: 2, services: [], wallets: [], tombstones: [], deletion_review: null });
       prepared = preparedFromAccepted(accepted, email, secret);
     } else {
       let result;
       try {
-        result = await syncWithServer(secret, email, [], [], [], [], 0, isCreate);
+        result = await syncWithServer(secret, email, [], [], [], 0, isCreate);
       } catch (err) {
         if (err?.code === "NETWORK_ERROR" || err?.message === "network_error") {
           throw Object.assign(new Error("offline_unverified"), {
@@ -1226,6 +1240,14 @@ async function readAndPrepare({email, secret, isCreate}) {
   } else if (stored === undefined || isDifferentAccount) {
     await persistV2(email, secret, prepared.fullData);
   }
+  if (prepared && prepared.fullData) {
+    if (Array.isArray(data.wallet_tombstones)) {
+      prepared.fullData.walletTombstones = [...data.wallet_tombstones];
+    }
+    if (Array.isArray(data.ssh_tombstones)) {
+      prepared.fullData.sshTombstones = [...data.ssh_tombstones];
+    }
+  }
   return prepared;
 }
 
@@ -1260,6 +1282,23 @@ function getFirefoxSessionStorage() {
     if (typeof chrome !== "undefined" && chrome?.storage?.session) return chrome.storage.session;
   } catch (_) {}
   return null;
+}
+
+let activeSyncQueue = Promise.resolve();
+
+function serializeSyncOperation(fn) {
+  let release;
+  const nextLock = new Promise(resolve => { release = resolve; });
+  const previousQueue = activeSyncQueue;
+  activeSyncQueue = nextLock;
+  return (async () => {
+    try {
+      await previousQueue;
+      return await fn();
+    } finally {
+      release();
+    }
+  })();
 }
 
 function extractMetadata() {
@@ -1450,7 +1489,7 @@ const startupPromise = (async () => {
         } catch (error) {
           if (error.code === "ACCOUNT_NOT_FOUND") {
             prepared = {
-              fullData: { services: [], wallets: [], walletAuditLog: [], tombstones: [], deletionReview: [], email: session.email, secret: session.secret },
+              fullData: { services: [], wallets: [], walletAuditLog: [], tombstones: [], deletionReview: [], walletTombstones: [], sshTombstones: [], email: session.email, secret: session.secret },
               records: [],
             };
           } else {
@@ -1458,6 +1497,14 @@ const startupPromise = (async () => {
           }
         }
         const payload = firefoxOwner.preparedUnlock ? firefoxOwner.preparedUnlock(prepared) : prepared;
+        if (payload?.fullData) {
+          if (Array.isArray(session.walletTombstones)) {
+            payload.fullData.walletTombstones = [...session.walletTombstones];
+          }
+          if (Array.isArray(session.sshTombstones)) {
+            payload.fullData.sshTombstones = [...session.sshTombstones];
+          }
+        }
         firefoxOwner.restoreSession({
           email: session.email,
           fullData: payload.fullData,
@@ -2131,24 +2178,32 @@ browser.runtime.onMessage.addListener((message, sender) => {
     } catch (error) { return Promise.resolve(safeMessageError(error)); }
   }
   if (action === "sync") {
-    return startupPromise.then(async () => {
+    return serializeSyncOperation(async () => {
+      await startupPromise;
       const snap = firefoxOwner.snapshot();
       if (snap.state === "locked") return KeygrainBrowserOwner.safeFailure("LOCKED");
-      const opHandle = firefoxOwner.manager.beginSensitiveOperation({
-        capture: fullData => {
-          if (!fullData) return null;
-          return {
-            secret: fullData.secret,
-            email: fullData.email,
-            services: Array.isArray(fullData.services) ? fullData.services.map(s => ({...s})) : [],
-            ssh_keys: Array.isArray(fullData.ssh_keys) ? fullData.ssh_keys.map(k => ({...k})) : [],
-            wallets: Array.isArray(fullData.wallets) ? fullData.wallets.map(w => ({...w})) : [],
-            walletAuditLog: Array.isArray(fullData.walletAuditLog) ? [...fullData.walletAuditLog] : [],
-            tombstones: Array.isArray(fullData.tombstones) ? [...fullData.tombstones] : [],
-            deletionReview: Array.isArray(fullData.deletionReview) ? [...fullData.deletionReview] : [],
-          };
-        }
-      });
+      let opHandle;
+      try {
+        opHandle = firefoxOwner.manager.beginSensitiveOperation({
+          capture: fullData => {
+            if (!fullData) return null;
+            return {
+              secret: fullData.secret,
+              email: fullData.email,
+              services: Array.isArray(fullData.services) ? fullData.services.map(s => ({...s})) : [],
+              ssh_keys: Array.isArray(fullData.ssh_keys) ? fullData.ssh_keys.map(k => ({...k})) : [],
+              wallets: Array.isArray(fullData.wallets) ? fullData.wallets.map(w => ({...w})) : [],
+              walletAuditLog: Array.isArray(fullData.walletAuditLog) ? [...fullData.walletAuditLog] : [],
+              tombstones: Array.isArray(fullData.tombstones) ? [...fullData.tombstones] : [],
+              deletionReview: Array.isArray(fullData.deletionReview) ? [...fullData.deletionReview] : [],
+              walletTombstones: Array.isArray(fullData.walletTombstones) ? [...fullData.walletTombstones] : [],
+              sshTombstones: Array.isArray(fullData.sshTombstones) ? [...fullData.sshTombstones] : [],
+            };
+          }
+        });
+      } catch (_) {
+        return KeygrainBrowserOwner.safeFailure("OPERATION_ERROR");
+      }
       const captured = firefoxOwner.manager.getSensitiveOperationInput(opHandle);
       if (!captured || !captured.secret || !captured.email) {
         try { firefoxOwner.manager.cancelSensitiveOperation(opHandle, "sync_read_failed"); } catch (_) {}
@@ -2160,11 +2215,12 @@ browser.runtime.onMessage.addListener((message, sender) => {
           captured.email,
           captured.services,
           captured.wallets,
-          captured.walletAuditLog,
           captured.tombstones,
           0,
           false,
-          captured.ssh_keys
+          captured.ssh_keys,
+          captured.walletTombstones || [],
+          captured.sshTombstones || []
         );
         const accepted = syncLocalV2(syncRes);
         const nextFullData = {
@@ -2175,6 +2231,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
           ssh_keys: accepted.sshKeys || captured.ssh_keys,
           walletAuditLog: accepted.walletAuditLog || [],
           tombstones: accepted.tombstones || [],
+          walletTombstones: (syncRes && Array.isArray(syncRes.walletTombstones)) ? syncRes.walletTombstones : (syncRes && Array.isArray(syncRes.wallet_tombstones) ? syncRes.wallet_tombstones : (captured.walletTombstones || [])),
+          sshTombstones: (syncRes && Array.isArray(syncRes.sshTombstones)) ? syncRes.sshTombstones : (syncRes && Array.isArray(syncRes.ssh_tombstones) ? syncRes.ssh_tombstones : (captured.sshTombstones || [])),
           deletionReview: accepted.deletionReview || [],
         };
         firefoxOwner.manager.installFullPayloadReplacement({
@@ -2183,9 +2241,21 @@ browser.runtime.onMessage.addListener((message, sender) => {
           records: nextFullData.services,
         });
         await persistV2(nextFullData.email, nextFullData.secret, nextFullData);
+        const storageArea = (typeof browser !== "undefined" && browser.storage?.local) ? browser.storage.local : (typeof chrome !== "undefined" && chrome.storage?.local ? chrome.storage.local : null);
+        if (storageArea) {
+          await storageArea.set({
+            wallet_tombstones: nextFullData.walletTombstones,
+            ssh_tombstones: nextFullData.sshTombstones,
+          });
+        }
         await updateSession(async (session) => {
           if (!session) return session;
-          return { ...session, metadata: extractMetadata() };
+          return {
+            ...session,
+            metadata: extractMetadata(),
+            walletTombstones: nextFullData.walletTombstones,
+            sshTombstones: nextFullData.sshTombstones,
+          };
         });
         return KeygrainBrowserOwner.success({ syncResult: syncRes });
       } catch (err) {

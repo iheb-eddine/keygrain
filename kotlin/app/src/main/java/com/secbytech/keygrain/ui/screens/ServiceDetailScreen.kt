@@ -17,7 +17,6 @@ import androidx.compose.ui.unit.dp
 import com.secbytech.keygrain.data.ServiceEntry
 import com.secbytech.keygrain.ui.components.CopyableRow
 import com.secbytech.keygrain.ui.components.PasswordRow
-import com.secbytech.keygrain.ui.components.SshRow
 import com.secbytech.keygrain.ui.components.TotpRow
 import kotlinx.coroutines.CoroutineScope
 
@@ -96,15 +95,6 @@ internal fun ServiceDetailScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 TotpRow(service, masterSecret, clipboardScope, context, onCopy)
-            }
-
-            if (service.ssh?.optString("key_name", "").orEmpty().isNotEmpty()) {
-                Text(
-                    "SSH key",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                SshRow(service, masterSecret, clipboardScope, context)
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))

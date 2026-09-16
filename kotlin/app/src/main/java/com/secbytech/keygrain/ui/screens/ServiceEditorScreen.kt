@@ -71,7 +71,6 @@ internal fun ServiceEditorScreen(
     val initLength = initialEntry?.length?.toString() ?: "20"
     val initSymbols = initialEntry?.symbols ?: Keygrain.DEFAULT_SYMBOLS
     val initCounter = initialEntry?.counter?.toString() ?: "1"
-    val initSshKeyName: String = initialEntry?.ssh?.optString("key_name", "") ?: ""
 
     // rememberSaveable so input survives config changes not covered by
     // android:configChanges (and any future narrowing of it). NOTE: the reported
@@ -105,9 +104,6 @@ internal fun ServiceEditorScreen(
     // See decision driver-d-001.
     var totpSeed by remember { mutableStateOf(originalTotpSeed) }
 
-    // SSH state
-    var sshKeyName by rememberSaveable { mutableStateOf(initSshKeyName) }
-
     // QR Scanner state
     var showQrScanner by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -127,8 +123,7 @@ internal fun ServiceEditorScreen(
 
     val isDirty = name != initName || site != initSite || email != initEmail ||
         length != initLength || symbols != initSymbols || counter != initCounter ||
-        sshKeyName != initSshKeyName || totpModeIndex != initialTotpMode ||
-        totpSeed != originalTotpSeed
+        totpModeIndex != initialTotpMode || totpSeed != originalTotpSeed
 
     var showDiscardDialog by remember { mutableStateOf(false) }
     val handleExit: () -> Unit = {
@@ -220,13 +215,6 @@ internal fun ServiceEditorScreen(
                                 }
                                 else -> null
                             }
-                            val sshJson = if (sshKeyName.isNotBlank()) {
-                                val sshCounter = initialEntry?.ssh?.optInt("counter", 1) ?: 1
-                                JSONObject().apply {
-                                    put("key_name", sshKeyName.trim())
-                                    put("counter", sshCounter)
-                                }
-                            } else null
                             val ok = onSave(ServiceEntry(
                                 name = name.trim(),
                                 site = site.trim().ifEmpty { name.trim().lowercase() },
@@ -235,7 +223,7 @@ internal fun ServiceEditorScreen(
                                 symbols = symbols,
                                 counter = (counter.toIntOrNull() ?: 1).coerceAtLeast(1),
                                 totp = totpJson,
-                                ssh = sshJson
+                                ssh = initialEntry?.ssh
                             ))
                             if (!ok) {
                                 scope.launch {
@@ -374,17 +362,6 @@ internal fun ServiceEditorScreen(
                             Text("Scan QR")
                         }
                     }
-                    // SSH section
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Text("🔐 SSH Key", style = MaterialTheme.typography.labelLarge)
-                    OutlinedTextField(
-                        value = sshKeyName,
-                        onValueChange = { sshKeyName = it.filter { c -> !c.isWhitespace() }; onInteraction() },
-                        label = { CryptoFieldLabel("Key name (optional)", isCrypto = true, cryptoType = "SSH Derivation") },
-                        placeholder = { Text("e.g. github, work-servers") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
             }
         }

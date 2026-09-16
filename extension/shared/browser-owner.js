@@ -1860,13 +1860,9 @@
     });
 
     const walletCapabilities = new Map();
-    const WALLET_KEYS = Object.freeze(["wallet_name", "chain", "counter", "email", "mode", "created_at", "updated_at", "notes"]);
-    const WALLET_REQUIRED_KEYS = Object.freeze(["wallet_name", "chain", "counter", "email"]);
+    const WALLET_KEYS = Object.freeze(["wallet_name", "counter", "email", "mode", "created_at", "updated_at", "notes"]);
+    const WALLET_REQUIRED_KEYS = Object.freeze(["wallet_name", "counter", "email"]);
     const WALLET_METADATA_KEYS = new Set(["created_at", "updated_at", "notes"]);
-    const WALLET_SUPPORTED_CHAINS = new Set([
-      "bitcoin", "ethereum", "solana", "litecoin", "dogecoin",
-      "bitcoin-testnet", "polkadot", "cosmos", "avalanche",
-    ]);
 
     function walletClearCapabilities() { walletCapabilities.clear(); }
     function walletRejectProxy(value) {
@@ -1909,7 +1905,7 @@
         try { keys = Reflect.ownKeys(value); } catch (_) { walletError(); }
         const STANDALONE_ALLOWED = [
           "id", "wallet_id", "walletId", "label", "words", "counter", "notes",
-          "created_at", "updated_at", "wallet_name", "walletName", "chain", "email", "mode"
+          "created_at", "updated_at", "wallet_name", "walletName", "email", "mode"
         ];
         if (keys.some(key => typeof key !== "string" || !STANDALONE_ALLOWED.includes(key))) walletError();
         for (const key of keys) {
@@ -1942,24 +1938,16 @@
         if (Object.prototype.hasOwnProperty.call(value, "notes") && value.notes !== null && value.notes !== undefined) {
           notes = walletFieldUtf8(walletOwn(value, "notes"));
         }
-        let chain = "";
-        if (Object.prototype.hasOwnProperty.call(value, "chain") && value.chain !== null && value.chain !== undefined) {
-          chain = String(value.chain);
-        }
-        return Object.freeze({isStandalone: true, walletId, walletName: walletId, chain, email: "", counter, words, id, label, notes});
+        return Object.freeze({isStandalone: true, walletId, walletName: walletId, email: "", counter, words, id, label, notes});
       }
       walletExactEntryKeys(value);
       const walletNameRaw = walletOwn(value, "wallet_name");
-      const chainRaw = walletOwn(value, "chain");
       const counter = walletOwn(value, "counter");
       const emailRaw = walletOwn(value, "email");
       if (typeof walletNameRaw !== "string" || !walletNameRaw) walletError();
       const walletName = walletNameRaw.toLowerCase();
       if (!walletName || !/^[a-z0-9-]+$/.test(walletName)) walletError();
       walletFieldUtf8(walletName, KEYGRAIN_WALLET_MAX_NAME_UTF8);
-      if (typeof chainRaw !== "string" || !chainRaw) walletError();
-      const chain = chainRaw.toLowerCase();
-      if (!WALLET_SUPPORTED_CHAINS.has(chain)) walletError();
       if (!Number.isSafeInteger(counter) || counter < 1 || counter > 0x7fffffff) walletError();
       if (typeof emailRaw !== "string") walletError();
       const email = emailRaw.trim().toLowerCase();
@@ -1969,7 +1957,7 @@
       for (const key of WALLET_METADATA_KEYS) {
         if (Object.prototype.hasOwnProperty.call(value, key)) walletFieldUtf8(walletOwn(value, key));
       }
-      return Object.freeze({isStandalone: false, walletId: walletName, walletName, chain, counter, email, words: 24});
+      return Object.freeze({isStandalone: false, walletId: walletName, walletName, counter, email, words: 24});
     }
     function walletRecordCandidates(fullData) {
       if (!b3PlainData(fullData)) walletError();
@@ -1990,7 +1978,7 @@
           left.counter === right.counter &&
           (left.words || 24) === (right.words || 24);
       }
-      return ["walletName", "chain", "counter", "email"].every(key => left[key] === right[key]);
+      return ["walletName", "counter", "email"].every(key => left[key] === right[key]);
     }
     function walletCapabilityTuple(tuple) {
       if (tuple.isStandalone) {
@@ -1999,7 +1987,6 @@
           isStandalone: true,
           walletId: tuple.walletId,
           walletName: tuple.walletName,
-          chain: "",
           email: "",
           counter: tuple.counter,
           words: tuple.words || 24,
@@ -2012,7 +1999,6 @@
         isStandalone: false,
         walletId: tuple.walletName,
         walletName: tuple.walletName,
-        chain: tuple.chain,
         counter: tuple.counter,
         email: tuple.email,
         words: 24,
@@ -2085,7 +2071,6 @@
               id: tuple.id || null,
               label: tuple.label || null,
               notes: tuple.notes || "",
-              chain: tuple.chain || "",
             };
             walletFieldUtf8(item.selectionToken, KEYGRAIN_B3_MAX_TOKEN_UTF8);
             walletFieldUtf8(item.walletId, KEYGRAIN_WALLET_MAX_NAME_UTF8);
@@ -2093,7 +2078,7 @@
             if (item.notes) walletFieldUtf8(item.notes, KEYGRAIN_B3_MAX_FIELD_UTF8);
             items.push(item);
           } else {
-            const item = {selectionToken: token, walletName: tuple.walletName, chain: tuple.chain, email: tuple.email};
+            const item = {selectionToken: token, walletName: tuple.walletName, email: tuple.email};
             walletFieldUtf8(item.selectionToken, KEYGRAIN_B3_MAX_TOKEN_UTF8);
             walletFieldUtf8(item.walletName, KEYGRAIN_WALLET_MAX_NAME_UTF8);
             walletFieldUtf8(item.email, KEYGRAIN_B3_MAX_EMAIL_UTF8);
@@ -2131,7 +2116,6 @@
         isStandalone: !!tuple.isStandalone,
         walletId: tuple.walletId || tuple.walletName,
         walletName: tuple.walletName,
-        chain: tuple.chain,
         email: tuple.email,
         counter: tuple.counter,
         words: tuple.words || 24,
@@ -3511,7 +3495,7 @@
       return result;
     }
 
-    async function deriveCustomWalletMnemonic({walletName, chain, counter, email}) {
+    async function deriveCustomWalletMnemonic({walletName, counter, email}) {
       const snap = manager.snapshot();
       if (snap.state !== "full") return null;
       let result = null;

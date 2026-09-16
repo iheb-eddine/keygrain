@@ -7,10 +7,11 @@ import kotlinx.coroutines.withContext
 
 internal sealed interface AccountVerificationResult {
     data class ExistsValid(
-        val services: List<Pair<String?, Long>>,
+        val version: Int = 1,
         val encryptedBlob: String,
         val checksum: String,
-        val etag: String
+        val etag: String,
+        val services: List<Pair<String?, Long>> = emptyList()
     ) : AccountVerificationResult
     data object NotFound : AccountVerificationResult
     data class WrongSecret(val code: Int) : AccountVerificationResult
@@ -70,7 +71,7 @@ internal class AccountVerifier(
         when (val result = transport.doGet(lookupId, authHeader)) {
             is GetResult.Success -> {
                 AccountVerificationResult.ExistsValid(
-                    services = result.services,
+                    version = result.version,
                     encryptedBlob = result.encryptedBlob,
                     checksum = result.checksum,
                     etag = result.etag

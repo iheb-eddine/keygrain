@@ -1,6 +1,6 @@
 # Keygrain Browser Extension — User Guide
 
-Keygrain derives unique passwords from your master secret rather than storing generated passwords. The extension also stores service configuration and other local account/device state, including an encrypted service payload stored locally. If you enable PIN unlock, an encrypted copy of the master secret is stored locally for PIN unlock. Optional sync uploads encrypted service data; the sync server does not receive your master secret or generated passwords.
+Keygrain derives unique passwords from your master secret rather than storing generated passwords. The extension also stores service configuration and other local account/device state, including an encrypted service payload stored locally. Optional sync uploads encrypted service data; the sync server does not receive your master secret or generated passwords.
 
 ---
 
@@ -29,19 +29,13 @@ The first time you use Keygrain:
 4. **Check the visual fingerprint** — the colored dots below the secret field are a visual pattern unique to your secret + email combination. If the dots match between the two fields, you typed the same thing both times.
 5. Click **Unlock**.
 
-After unlocking, Keygrain will offer to set up a PIN for quick access next time.
+After unlocking, Keygrain holds your master secret strictly in memory for the duration of your session lease (configurable in Settings).
 
-### Setting a PIN
+### Session Auto-Lock & Lease Management
 
-A PIN lets you unlock quickly without typing your full secret every time:
-
-1. Choose a 4–6 digit PIN
-2. Click **Set PIN**
-3. Next time you open Keygrain, you'll only need your PIN
-
-> **Note:** If you enter the wrong PIN 5 times in a row, the PIN is cleared for security. You'll need to enter your full master secret and set a new PIN.
-
-You can skip the PIN setup and use your master secret every time if you prefer.
+Keygrain uses an in-memory session lease model with two configurable timeouts:
+- **Master secret timeout:** Controls how long sensitive credentials can be derived or copied before your master secret must be re-entered (default: 1 minute).
+- **Metadata cache timeout:** Optionally keeps your service names and usernames visible for quick searching even after the master secret expires (default: 4 hours).
 
 ---
 
@@ -163,15 +157,11 @@ Some sites block autofill. If it doesn't work, use the copy button instead and p
 
 ---
 
-## PIN Unlock
+## Session Unlock & Elevation
 
-After your first login, if you set a PIN:
-
-1. Open Keygrain — the PIN screen appears
-2. Enter your 4–6 digit PIN
-3. Click **Unlock**
-
-If you need to use your master secret instead, click **Use master secret instead** below the PIN field.
+When the master secret timeout expires, Keygrain transitions to metadata-only mode (if configured) or locks completely:
+- In **metadata-only mode**, you can search your saved services. Performing a sensitive action (copying a password, revealing keys) prompts for your master secret to elevate back to an active session without losing context.
+- When **fully locked**, enter your master secret on the lock screen to begin a new session.
 
 ---
 
@@ -343,8 +333,7 @@ After rotating, remember to visit each affected site and update your password th
 
 ### Locked out
 
-- If your PIN was cleared (5 wrong attempts), enter your master secret on the lock screen
-- If you forgot your master secret, there is no recovery. When PIN unlock is enabled, Keygrain keeps an encrypted local copy so the PIN can unlock the extension, but that is not a separate recovery method; clearing browser data or PIN data removes it. This is by design for security.
+- If you forgot your master secret, there is no recovery. Keygrain holds your master secret strictly in memory during an unlocked session; locking or clearing browser data removes it. This is by design for security.
 
 ### Sync not working
 

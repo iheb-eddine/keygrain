@@ -318,7 +318,7 @@ fun MainScreen() {
                                                     is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
                                                     is SyncResult.ServerError -> UserMessages.SERVER_ERROR
                                                     is SyncResult.IntegrityError -> UserMessages.INTEGRITY_ERROR
-                                                    is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
+                                                    is SyncResult.Conflict, is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
                                                     is SyncResult.UpgradeRequired -> UserMessages.SYNC_UPGRADE_REQUIRED
                                                 }
                                             } catch (e: Exception) {

@@ -79,7 +79,7 @@ Keygrain derives unique, strong passwords from your master secret and site infor
 **Browser Extension**
 - Autofill username + password into login forms
 - Zero-click fill via `Ctrl+Shift+Y`
-- PIN unlock (no need to re-enter master secret every time)
+- In-memory session auto-lock with configurable lease and on-demand elevation
 - Fuzzy search with frecency ranking
 - Breach warnings for compromised sites
 - Site rules (auto-detect length/symbol constraints)
