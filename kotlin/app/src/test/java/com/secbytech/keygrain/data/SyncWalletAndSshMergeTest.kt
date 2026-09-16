@@ -22,13 +22,13 @@ class SyncWalletAndSshMergeTest {
 
     @Test
     fun walletEntryMergeKeyAlignsWithExtensionProtocol() {
-        val standalone = WalletEntry(id = "w1", walletId = "primary-btc", chain = "universal")
-        val legacy = WalletEntry(id = "w2", walletName = "primary-btc", chain = "universal")
-        val idOnly = WalletEntry(id = "w3", walletId = "", walletName = "", chain = "")
+        val standalone = WalletEntry(id = "w1", walletId = "primary-btc")
+        val legacy = WalletEntry(id = "w2", walletName = "primary-btc")
+        val idOnly = WalletEntry(id = "w3", walletId = "", walletName = "")
 
-        assertEquals("primary-btc:universal", WalletEntry.mergeKey(standalone))
-        assertEquals("primary-btc:universal", WalletEntry.mergeKey(legacy))
-        assertEquals("w3:universal", WalletEntry.mergeKey(idOnly))
+        assertEquals("primary-btc", WalletEntry.mergeKey(standalone))
+        assertEquals("primary-btc", WalletEntry.mergeKey(legacy))
+        assertEquals("w3", WalletEntry.mergeKey(idOnly))
     }
 
     @Test
@@ -55,44 +55,61 @@ class SyncWalletAndSshMergeTest {
     }
 
     @Test
-    fun mergeWalletsPreservesRemoteWhenNotKnown() {
+    fun mergeWalletsPreservesRemoteWhenNoTombstone() {
         val remote = listOf(
-            WalletEntry(walletId = "vault", chain = "universal", updatedAt = "2026-01-01T00:00:00Z")
+            WalletEntry(walletId = "vault", updatedAt = "2026-01-01T00:00:00Z")
         )
-        val (merged, newKeys) = SyncMerge.mergeWallets(emptyList(), remote, emptySet())
+        val (merged, tombstones) = SyncMerge.mergeWallets(emptyList(), remote, emptyList())
         assertEquals(1, merged.size)
         assertEquals("vault", merged[0].walletId)
-        assertTrue(newKeys.contains("vault:universal"))
+        assertTrue(tombstones.isEmpty())
     }
 
     @Test
-    fun mergeWalletsDeletesRemoteWhenKnownLocallyDeleted() {
+    fun mergeWalletsDeletesRemoteWhenTombstoneNewer() {
         val remote = listOf(
-            WalletEntry(walletId = "vault", chain = "universal", updatedAt = "2026-01-01T00:00:00Z")
+            WalletEntry(walletId = "vault", updatedAt = "2026-01-01T00:00:00Z")
         )
-        val (merged, newKeys) = SyncMerge.mergeWallets(emptyList(), remote, setOf("vault:universal"))
+        val tomb = Tombstone("vault", deletedAt = java.time.Instant.parse("2026-01-02T00:00:00Z").toEpochMilli())
+        val (merged, tombstones) = SyncMerge.mergeWallets(emptyList(), remote, listOf(tomb))
         assertEquals(0, merged.size)
-        assertTrue(newKeys.isEmpty())
+        assertEquals(1, tombstones.size)
     }
 
     @Test
-    fun mergeSshKeysPreservesRemoteWhenNotKnown() {
+    fun mergeSshKeysPreservesRemoteWhenNoTombstone() {
         val remote = listOf(
             SshKeyEntry(keyName = "deploy-key", updatedAt = 2000L)
         )
-        val (merged, newKeys) = SyncMerge.mergeSshKeys(emptyList(), remote, emptySet())
+        val (merged, tombstones) = SyncMerge.mergeSshKeys(emptyList(), remote, emptyList())
         assertEquals(1, merged.size)
         assertEquals("deploy-key", merged[0].keyName)
-        assertTrue(newKeys.contains("deploy-key"))
+        assertTrue(tombstones.isEmpty())
     }
 
     @Test
-    fun mergeSshKeysDeletesRemoteWhenKnownLocallyDeleted() {
+    fun mergeSshKeysDeletesRemoteWhenTombstoneNewer() {
         val remote = listOf(
             SshKeyEntry(keyName = "deploy-key", updatedAt = 2000L)
         )
-        val (merged, newKeys) = SyncMerge.mergeSshKeys(emptyList(), remote, setOf("deploy-key"))
+        val tomb = Tombstone("deploy-key", deletedAt = 3000L)
+        val (merged, tombstones) = SyncMerge.mergeSshKeys(emptyList(), remote, listOf(tomb))
         assertEquals(0, merged.size)
-        assertTrue(newKeys.isEmpty())
+        assertEquals(1, tombstones.size)
+    }
+
+    @Test
+    fun sshKeyFromJsonFallbackAndEmailExclusion() {
+        val legacy = JSONObject().apply {
+            put("key_name", "bastion")
+            put("email", "legacy@corp.internal")
+        }
+        val entry = SshKeyEntry.fromJson(legacy)
+        assertEquals("legacy@corp.internal", entry.comment)
+        assertEquals("", entry.email)
+
+        val serialized = entry.toJson()
+        org.junit.Assert.assertFalse(serialized.has("email"))
+        assertEquals("legacy@corp.internal", serialized.getString("comment"))
     }
 }

@@ -19,21 +19,18 @@ internal object SyncBlob {
     internal fun canonicalBlobPayload(
         services: List<ServiceEntry>,
         wallets: List<WalletEntry>,
-        auditLog: List<WalletAuditEntry>,
         syncConflicts: List<SyncConflict>
-    ): String = canonicalBlobPayload(services, emptyList(), wallets, auditLog, syncConflicts)
+    ): String = canonicalBlobPayload(services, emptyList(), wallets, syncConflicts)
 
     internal fun canonicalBlobPayload(
         services: List<ServiceEntry>,
         sshKeys: List<SshKeyEntry> = emptyList(),
         wallets: List<WalletEntry>,
-        auditLog: List<WalletAuditEntry>,
         syncConflicts: List<SyncConflict>
     ): String {
         val orderedServices = services.sortedBy { it.id ?: "" }
         val orderedSshKeys = sshKeys.sortedBy { SshKeyEntry.mergeKey(it) }
-        val orderedWallets = wallets.sortedBy { it.walletName.lowercase() + ":" + it.chain.lowercase() }
-        val orderedAudit = auditLog.sortedBy { "${it.timestamp}\u0000${it.walletName}\u0000${it.chain}\u0000${it.action}" }
+        val orderedWallets = wallets.sortedBy { (it.walletId.ifEmpty { it.walletName }).lowercase() }
         val orderedConflicts = syncConflicts.sortedBy { it.dedupeKey() }
 
         // Top-level and service field order are an existing comparison contract. All nested
@@ -48,8 +45,6 @@ internal object SyncBlob {
                 .append(canonicalJson(orderedSshKeys.map { it.toJson() }))
             append(",\"wallets\":")
                 .append(canonicalJson(orderedWallets.map { it.toJson() }))
-            append(",\"wallet_audit_log\":")
-                .append(canonicalJson(orderedAudit.map { it.toJson() }))
             append(",\"sync_conflicts\":")
                 .append(canonicalJson(orderedConflicts.map { it.toJson() }))
             append("}")
@@ -173,22 +168,27 @@ internal object SyncBlob {
         val services: List<ServiceEntry>,
         val sshKeys: List<SshKeyEntry> = emptyList(),
         val wallets: List<WalletEntry>,
-        val auditLog: List<WalletAuditEntry>,
+        val auditLog: List<WalletAuditEntry> = emptyList(),
         val syncConflicts: List<SyncConflict>
     )
 
-    fun parseBlobContent(json: String, serviceManager: ServiceManager): BlobContent {
+    fun parseBlobContent(json: String, serviceManager: ServiceManager): BlobContent =
+        parseBlobContent(json) { serviceManager.parseJson(it) }
+
+    fun parseBlobContent(
+        json: String,
+        parseServices: (String) -> List<ServiceEntry> = { ServiceManager.parseServicesJson(it) }
+    ): BlobContent {
         val trimmed = json.trim()
         if (trimmed.startsWith("[")) {
-            val services = serviceManager.parseJson(trimmed)
+            val services = parseServices(trimmed)
             val extractedSsh = extractSshKeysFromServices(services)
             return BlobContent(services, extractedSsh, emptyList(), emptyList(), emptyList())
         }
         val obj = JSONObject(trimmed)
         val servicesArr = obj.optJSONArray("services") ?: JSONArray()
-        val services = serviceManager.parseJson(servicesArr.toString())
+        val services = parseServices(servicesArr.toString())
         val walletsArr = obj.optJSONArray("wallets") ?: JSONArray()
-        val auditArr = obj.optJSONArray("wallet_audit_log") ?: JSONArray()
         val conflictsArr = obj.optJSONArray("sync_conflicts") ?: JSONArray()
         val sshArr = obj.optJSONArray("ssh_keys") ?: JSONArray()
 
@@ -201,13 +201,10 @@ internal object SyncBlob {
         val wallets = (0 until walletsArr.length()).mapNotNull { i ->
             try { WalletEntry.fromJson(walletsArr.getJSONObject(i)) } catch (_: Exception) { null }
         }
-        val auditLog = (0 until auditArr.length()).mapNotNull { i ->
-            try { WalletAuditEntry.fromJson(auditArr.getJSONObject(i)) } catch (_: Exception) { null }
-        }
         val conflicts = (0 until conflictsArr.length()).mapNotNull { i ->
             try { SyncConflict.fromJson(conflictsArr.getJSONObject(i)) } catch (_: Exception) { null }
         }
-        return BlobContent(services, combinedSshKeys, wallets, auditLog, conflicts)
+        return BlobContent(services, combinedSshKeys, wallets, emptyList(), conflicts)
     }
 
     private fun extractSshKeysFromServices(services: List<ServiceEntry>): List<SshKeyEntry> {

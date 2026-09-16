@@ -34,20 +34,28 @@ internal class SyncTransport(private val baseUrl: String) : SyncTransportApi {
                 200 -> {
                     val body = conn.inputStream.bufferedReader().readText()
                     val json = JSONObject(body)
-                    val capabilityClass = CapabilityMetadataClassifier.classify(json)
-                    if (capabilityClass != CapabilityMetadataClassification.LegacyAbsent) {
-                        return GetResult.UpgradeRequired(
-                            CapabilityMetadataClassifier.reasonFor(capabilityClass)
-                        )
+                    if (json.has("capabilities") || json.has("payload_version") || json.has("min_writer_protocol")) {
+                        val capabilityClass = CapabilityMetadataClassifier.classify(json)
+                        if (capabilityClass != CapabilityMetadataClassification.LegacyAbsent) {
+                            return GetResult.UpgradeRequired(
+                                CapabilityMetadataClassifier.reasonFor(capabilityClass)
+                            )
+                        }
                     }
-                    val svcs = json.getJSONArray("services")
-                    val services = (0 until svcs.length()).map { i ->
-                        val obj = svcs.getJSONObject(i)
-                        val id = if (obj.isNull("id")) null else obj.getString("id")
-                        Pair(id, obj.getLong("updated_at"))
+                    val version = if (json.has("version")) {
+                        json.getInt("version")
+                    } else {
+                        conn.getHeaderField("X-Keygrain-Version")?.toIntOrNull() ?: 1
                     }
-                    val etag = conn.getHeaderField("ETag")?.trim('"') ?: ""
-                    GetResult.Success(services, json.getString("encrypted_blob"), json.getString("checksum"), etag)
+                    val encryptedBlob = json.getString("encrypted_blob")
+                    val checksum = json.getString("checksum")
+                    val headerEtag = conn.getHeaderField("ETag")?.trim('"') ?: ""
+                    val etag = if (json.has("etag") && headerEtag.isEmpty()) {
+                        json.getString("etag")
+                    } else {
+                        headerEtag
+                    }
+                    GetResult.Success(version, encryptedBlob, checksum, etag)
                 }
                 404 -> GetResult.NotFound("not found")
                 401, 403 -> GetResult.AuthError(code)
@@ -70,28 +78,40 @@ internal class SyncTransport(private val baseUrl: String) : SyncTransportApi {
                 instanceFollowRedirects = false
                 setRequestProperty("Authorization", authHeader)
                 setRequestProperty("Content-Type", "application/json")
-                if (etag != null) setRequestProperty("If-Match", "\"$etag\"")
+                if (etag != null && etag.isNotEmpty()) setRequestProperty("If-Match", "\"$etag\"")
                 doOutput = true
                 connectTimeout = 15000
                 readTimeout = 15000
             }
-            conn.outputStream.use { it.write(body.toByteArray()) }
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             when (val code = conn.responseCode) {
                 200, 201 -> {
                     val respBody = conn.inputStream.bufferedReader().readText()
-                    val json = JSONObject(respBody)
-                    val svcs = json.getJSONArray("services")
-                    val services = (0 until svcs.length()).map { i ->
-                        val obj = svcs.getJSONObject(i)
-                        val id = if (obj.isNull("id")) null else obj.getString("id")
-                        Pair(id, obj.getLong("updated_at"))
+                    val json = if (respBody.isNotEmpty()) JSONObject(respBody) else JSONObject()
+                    val version = if (json.has("version")) {
+                        json.getInt("version")
+                    } else {
+                        conn.getHeaderField("X-Keygrain-Version")?.toIntOrNull() ?: 1
                     }
-                    PutResult.Success(services, json.getString("etag"))
+                    val headerEtag = conn.getHeaderField("ETag")?.trim('"') ?: ""
+                    val newEtag = if (json.has("etag")) json.getString("etag") else headerEtag
+                    PutResult.Success(version, newEtag)
                 }
                 409 -> {
                     val errBody = conn.errorStream?.bufferedReader()?.readText() ?: ""
-                    val currentEtag = try { JSONObject(errBody).getString("current_etag") } catch (_: Exception) { "" }
-                    PutResult.Conflict(currentEtag)
+                    var currentEtag = ""
+                    var currentVersion: Int? = null
+                    try {
+                        val errJson = JSONObject(errBody)
+                        val details = errJson.optJSONObject("details")
+                        currentEtag = errJson.optString("current_etag", details?.optString("current_etag", "") ?: "")
+                        currentVersion = if (errJson.has("current_version")) {
+                            errJson.getInt("current_version")
+                        } else if (details != null && details.has("current_version")) {
+                            details.getInt("current_version")
+                        } else null
+                    } catch (_: Exception) { }
+                    PutResult.Conflict(currentEtag, currentVersion)
                 }
                 401, 403 -> PutResult.AuthError(code)
                 426 -> PutResult.UpgradeRequired()
@@ -138,7 +158,7 @@ internal class SyncTransport(private val baseUrl: String) : SyncTransportApi {
 
 internal sealed class GetResult {
     data class Success(
-        val services: List<Pair<String?, Long>>,
+        val version: Int,
         val encryptedBlob: String,
         val checksum: String,
         val etag: String
@@ -152,8 +172,8 @@ internal sealed class GetResult {
 
 
 internal sealed class PutResult {
-    data class Success(val services: List<Pair<String?, Long>>, val etag: String) : PutResult()
-    data class Conflict(val currentEtag: String) : PutResult()
+    data class Success(val version: Int, val etag: String) : PutResult()
+    data class Conflict(val currentEtag: String = "", val currentVersion: Int? = null) : PutResult()
     data class UpgradeRequired(val reason: UpgradeRequiredReason = UpgradeRequiredReason.Http426) : PutResult()
     data class AuthError(val code: Int) : PutResult()
     data class Error(val code: Int, val body: String) : PutResult()

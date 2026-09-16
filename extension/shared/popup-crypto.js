@@ -164,11 +164,13 @@ function validateLocalPayload(data) {
     return {services, wallets, walletAuditLog, tombstones: [], deletionReview: [], pendingSync: null, payloadVersion: 1};
   }
   if (version === 2) {
-    localExactKeys(data, ["version", "services", "wallets", "wallet_audit_log", "tombstones", "deletion_review"]);
+    localAllowedKeys(data, ["version", "services", "wallets", "wallet_audit_log", "tombstones", "deletion_review"], ["version", "services", "wallets", "tombstones", "deletion_review"]);
+    const walletAuditLog = Object.prototype.hasOwnProperty.call(data, "wallet_audit_log")
+      ? localCollection(localOwnValue(data, "wallet_audit_log")) : [];
     return {
       services: localCollection(localOwnValue(data, "services")),
       wallets: localCollection(localOwnValue(data, "wallets")),
-      walletAuditLog: localCollection(localOwnValue(data, "wallet_audit_log")),
+      walletAuditLog,
       tombstones: localCollection(localOwnValue(data, "tombstones")),
       deletionReview: localCollection(localOwnValue(data, "deletion_review")),
       pendingSync: null,
@@ -176,12 +178,18 @@ function validateLocalPayload(data) {
     };
   }
   if (version === LOCAL_PAYLOAD_V3_VERSION) {
-    localOrderedKeys(data, ["version", "services", "ssh_keys", "wallets", "wallet_audit_log", "tombstones", "deletion_review", "pending_sync"]);
+    const hasAudit = Object.prototype.hasOwnProperty.call(data, "wallet_audit_log");
+    const expectedKeys = hasAudit
+      ? ["version", "services", "ssh_keys", "wallets", "wallet_audit_log", "tombstones", "deletion_review", "pending_sync"]
+      : ["version", "services", "ssh_keys", "wallets", "tombstones", "deletion_review", "pending_sync"];
+    localOrderedKeys(data, expectedKeys);
+    const walletAuditLog = hasAudit
+      ? localCollection(localOwnValue(data, "wallet_audit_log")) : [];
     return {
       services: localCollection(localOwnValue(data, "services")),
       sshKeys: localCollection(localOwnValue(data, "ssh_keys")),
       wallets: localCollection(localOwnValue(data, "wallets")),
-      walletAuditLog: localCollection(localOwnValue(data, "wallet_audit_log")),
+      walletAuditLog,
       tombstones: localCollection(localOwnValue(data, "tombstones")),
       deletionReview: localCollection(localOwnValue(data, "deletion_review")),
       pendingSync: localPendingSync(localOwnValue(data, "pending_sync")),
@@ -191,7 +199,7 @@ function validateLocalPayload(data) {
   throw new Error("invalid_local_payload");
 }
 
-async function encryptServices(storageKey, email, services, wallets, walletAuditLog, tombstones = [], deletionReview = []) {
+async function encryptServices(storageKey, email, services, wallets, walletAuditLog = [], tombstones = [], deletionReview = []) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const aad = new TextEncoder().encode(email.toLowerCase());
   const plaintext = new TextEncoder().encode(JSON.stringify({
@@ -285,19 +293,27 @@ function localCanonicalJson(value, seen = new Set()) {
 
 function canonicalLocalPayloadJson(payload) {
   if (!localPlainObject(payload)) throw new Error("invalid_local_payload");
-  localOrderedKeys(payload, ["version", "services", "ssh_keys", "wallets", "wallet_audit_log", "tombstones", "deletion_review", "pending_sync"]);
+  const hasAudit = Object.prototype.hasOwnProperty.call(payload, "wallet_audit_log");
+  const expectedKeys = hasAudit
+    ? ["version", "services", "ssh_keys", "wallets", "wallet_audit_log", "tombstones", "deletion_review", "pending_sync"]
+    : ["version", "services", "ssh_keys", "wallets", "tombstones", "deletion_review", "pending_sync"];
+  localOrderedKeys(payload, expectedKeys);
   const normalized = validateLocalPayload(payload);
   if (normalized.payloadVersion !== LOCAL_PAYLOAD_V3_VERSION) throw new Error("invalid_local_payload");
   const fields = [
     ["version", LOCAL_PAYLOAD_V3_VERSION],
     ["services", normalized.services],
     ["ssh_keys", normalized.sshKeys],
-    ["wallets", normalized.wallets],
-    ["wallet_audit_log", normalized.walletAuditLog],
+    ["wallets", normalized.wallets]
+  ];
+  if (hasAudit) {
+    fields.push(["wallet_audit_log", normalized.walletAuditLog]);
+  }
+  fields.push(
     ["tombstones", normalized.tombstones],
     ["deletion_review", normalized.deletionReview],
     ["pending_sync", normalized.pendingSync]
-  ];
+  );
   return "{" + fields.map(([key, value]) => JSON.stringify(key) + ":" + localCanonicalJson(value)).join(",") + "}";
 }
 

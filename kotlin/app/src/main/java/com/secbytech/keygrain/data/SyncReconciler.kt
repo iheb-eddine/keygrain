@@ -25,14 +25,22 @@ internal object SyncReconciler {
         local: List<ServiceEntry>,
         localTombstones: List<Tombstone>,
         remote: List<ServiceEntry>,
-        remoteMeta: List<Pair<String?, Long>>,
+        remoteMeta: List<Pair<String?, Long>> = emptyList(),
         lastSyncAt: Long,
         remoteExists: Boolean
     ): ReconcileResult {
         val remoteByID = mutableMapOf<String, ServiceEntry>()
-        for (i in remoteMeta.indices) {
-            val id = remoteMeta[i].first ?: continue
-            remoteByID[id] = remote[i].copy(id = id, updatedAt = remoteMeta[i].second)
+        if (remoteMeta.isNotEmpty()) {
+            for (i in remoteMeta.indices) {
+                val id = remoteMeta[i].first ?: continue
+                val base = if (i < remote.size) remote[i] else ServiceEntry(name = id, site = id, email = "")
+                remoteByID[id] = base.copy(id = id, updatedAt = remoteMeta[i].second)
+            }
+        } else {
+            for (svc in remote) {
+                val id = svc.id ?: continue
+                remoteByID[id] = svc
+            }
         }
 
         val localByID = mutableMapOf<String, ServiceEntry>()

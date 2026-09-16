@@ -336,7 +336,7 @@ class SyncReconcileTest {
             name = "A", site = "a.com", email = "e@x", id = "i1", updatedAt = 1,
             totp = nested
         )
-        SyncBlob.canonicalBlobPayload(listOf(service), emptyList(), emptyList(), emptyList())
+        SyncBlob.canonicalBlobPayload(listOf(service), emptyList(), emptyList())
     }
 
     // === Frozen Req 9: canonical form drives the no-op PUT skip ===
@@ -345,11 +345,11 @@ class SyncReconcileTest {
     fun canonical_isOrderIndependentForServices() {
         val a = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 1, synced = true), svc("i2", site = "b.com", updatedAt = 2, synced = true)),
-            emptyList(), emptyList(), emptyList()
+            emptyList(), emptyList()
         )
         val b = SyncBlob.canonicalBlobPayload(
             listOf(svc("i2", site = "b.com", updatedAt = 2, synced = true), svc("i1", updatedAt = 1, synced = true)),
-            emptyList(), emptyList(), emptyList()
+            emptyList(), emptyList()
         )
         assertEquals(a, b)
     }
@@ -357,11 +357,11 @@ class SyncReconcileTest {
     @Test
     fun canonical_differsWhenAFieldChanges() {
         val a = SyncBlob.canonicalBlobPayload(
-            listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList(), emptyList()
+            listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList()
         )
         val b = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 1, synced = true).copy(counter = 2)),
-            emptyList(), emptyList(), emptyList()
+            emptyList(), emptyList()
         )
         assertFalse(a == b)
     }
@@ -371,10 +371,10 @@ class SyncReconcileTest {
     @Test
     fun canonical_excludesLocalOnlySyncedFlag() {
         val a = SyncBlob.canonicalBlobPayload(
-            listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList(), emptyList()
+            listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList()
         )
         val b = SyncBlob.canonicalBlobPayload(
-            listOf(svc("i1", updatedAt = 1, synced = false)), emptyList(), emptyList(), emptyList()
+            listOf(svc("i1", updatedAt = 1, synced = false)), emptyList(), emptyList()
         )
         assertEquals(a, b)
     }
@@ -405,8 +405,8 @@ class SyncReconcileTest {
                 "{\"id\":\"i2\",\"updated_at\":2,\"name\":\"B\",\"site\":\"b.com\"," +
                 "\"email\":\"e@x\",\"length\":20,\"symbols\":\"!@\",\"counter\":1," +
                 "\"migrating\":null,\"totp\":null,\"ssh\":null}]," +
-                "\"ssh_keys\":[],\"wallets\":[],\"wallet_audit_log\":[],\"sync_conflicts\":[]}",
-            SyncBlob.canonicalBlobPayload(listOf(a, b), emptyList(), emptyList(), emptyList())
+                "\"ssh_keys\":[],\"wallets\":[],\"sync_conflicts\":[]}",
+            SyncBlob.canonicalBlobPayload(listOf(a, b), emptyList(), emptyList())
         )
     }
 
@@ -414,10 +414,10 @@ class SyncReconcileTest {
     fun canonical_differsWhenOnlyMigratingDiffers() {
         val a = SyncBlob.canonicalBlobPayload(
             listOf(svc("i1", updatedAt = 1, synced = true).copy(migrating = true)),
-            emptyList(), emptyList(), emptyList()
+            emptyList(), emptyList()
         )
         val b = SyncBlob.canonicalBlobPayload(
-            listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList(), emptyList()
+            listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList()
         )
         assertFalse(a == b)
     }
@@ -462,10 +462,10 @@ class SyncReconcileTest {
     @Test
     fun canonical_differsWhenUpdatedAtChanges() {
         val a = SyncBlob.canonicalBlobPayload(
-            listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList(), emptyList()
+            listOf(svc("i1", updatedAt = 1, synced = true)), emptyList(), emptyList()
         )
         val b = SyncBlob.canonicalBlobPayload(
-            listOf(svc("i1", updatedAt = 2, synced = true)), emptyList(), emptyList(), emptyList()
+            listOf(svc("i1", updatedAt = 2, synced = true)), emptyList(), emptyList()
         )
         assertFalse(a == b)
     }

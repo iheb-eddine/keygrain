@@ -1,7 +1,6 @@
 package com.secbytech.keygrain.data
 
 import android.content.Context
-import android.util.Base64 as AndroidBase64
 import java.util.Base64
 import java.io.IOException
 import javax.crypto.AEADBadTagException
@@ -10,6 +9,74 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+
+/** Seam representing local persistence for sync orchestration. */
+internal interface SyncLocalState {
+    fun getServices(): List<ServiceEntry>
+    fun replaceServices(services: List<ServiceEntry>)
+    fun getServiceTombstones(): List<Tombstone>
+    fun setServiceTombstones(tombstones: List<Tombstone>)
+    fun getDeletionReview(): List<DeletionReviewEntry>
+    fun setDeletionReview(review: List<DeletionReviewEntry>)
+    fun parseServicesJson(json: String): List<ServiceEntry>
+
+    fun getSshKeys(): List<SshKeyEntry>
+    fun saveSshKeys(keys: List<SshKeyEntry>)
+    fun getSshTombstones(): List<Tombstone>
+    fun setSshTombstones(tombstones: List<Tombstone>)
+
+    fun getWallets(): List<WalletEntry>
+    fun saveWallets(wallets: List<WalletEntry>)
+    fun getWalletTombstones(): List<Tombstone>
+    fun setWalletTombstones(tombstones: List<Tombstone>)
+
+    fun getLastSuccessfulSyncAt(): Long
+    fun setLastSuccessfulSyncAt(ts: Long)
+
+    fun getSyncVersion(): Int
+    fun setSyncVersion(version: Int)
+
+    fun isAadEnabled(): Boolean
+    fun setAadEnabled(enabled: Boolean)
+
+    fun areConflictsDismissed(): Boolean
+    fun setConflictsDismissed(dismissed: Boolean)
+}
+
+internal class AndroidSyncLocalState(
+    private val serviceManager: ServiceManager,
+    private val context: Context
+) : SyncLocalState {
+    override fun getServices(): List<ServiceEntry> = serviceManager.getServices()
+    override fun replaceServices(services: List<ServiceEntry>) = serviceManager.replaceAll(services)
+    override fun getServiceTombstones(): List<Tombstone> = serviceManager.getTombstones()
+    override fun setServiceTombstones(tombstones: List<Tombstone>) = serviceManager.setTombstones(tombstones)
+    override fun getDeletionReview(): List<DeletionReviewEntry> = serviceManager.getDeletionReview()
+    override fun setDeletionReview(review: List<DeletionReviewEntry>) = serviceManager.setDeletionReview(review)
+    override fun parseServicesJson(json: String): List<ServiceEntry> = serviceManager.parseJson(json)
+
+    override fun getSshKeys(): List<SshKeyEntry> = SyncStore.getSshKeys(context)
+    override fun saveSshKeys(keys: List<SshKeyEntry>) = SyncStore.saveSshKeys(context, keys)
+    override fun getSshTombstones(): List<Tombstone> = SyncStore.getSshTombstones(context)
+    override fun setSshTombstones(tombstones: List<Tombstone>) = SyncStore.setSshTombstones(context, tombstones)
+
+    override fun getWallets(): List<WalletEntry> = SyncStore.getWallets(context)
+    override fun saveWallets(wallets: List<WalletEntry>) = SyncStore.saveWallets(context, wallets)
+    override fun getWalletTombstones(): List<Tombstone> = SyncStore.getWalletTombstones(context)
+    override fun setWalletTombstones(tombstones: List<Tombstone>) = SyncStore.setWalletTombstones(context, tombstones)
+
+    override fun getLastSuccessfulSyncAt(): Long = SyncStore.getLastSuccessfulSyncAt(context)
+    override fun setLastSuccessfulSyncAt(ts: Long) = SyncStore.setLastSuccessfulSyncAt(context, ts)
+
+    override fun getSyncVersion(): Int = SyncStore.getSyncVersion(context)
+    override fun setSyncVersion(version: Int) = SyncStore.setSyncVersion(context, version)
+
+    override fun isAadEnabled(): Boolean = SyncStore.isAadEnabled(context)
+    override fun setAadEnabled(enabled: Boolean) = SyncStore.setAadEnabled(context, enabled)
+
+    override fun areConflictsDismissed(): Boolean = SyncStore.areConflictsDismissed(context)
+    override fun setConflictsDismissed(dismissed: Boolean) = SyncStore.setConflictsDismissed(context, dismissed)
+}
 
 class SyncManager(
     private val baseUrl: String = "https://keygrain.com"
@@ -67,26 +134,26 @@ class SyncManager(
             else -> 3000L
         }
 
+    internal fun conflictBackoffWithJitterMs(retryCount: Int): Long {
+        val base = conflictBackoffMs(retryCount)
+        val jitter = 0.75 + Math.random() * 0.5
+        return (base * jitter).toLong()
+    }
+
 
     /**
      * Remote state as of the GET, after every integrity check has passed.
-     *
-     * [knownWalletKeys] is part of this snapshot rather than read separately because the
-     * NotFound branch deliberately resets it -- local wallets must not be read as
-     * "deleted remotely" when the server simply holds no record.
      */
     private data class RemoteState(
         val services: List<ServiceEntry>,
         val sshKeys: List<SshKeyEntry>,
         val wallets: List<WalletEntry>,
-        val auditLog: List<WalletAuditEntry>,
+        val auditLog: List<WalletAuditEntry> = emptyList(),
         val conflicts: List<SyncConflict>,
-        val metadata: List<Pair<String?, Long>>,
+        val version: Int,
         val etag: String?,
         val status: String,
-        val exists: Boolean,
-        val knownSshKeys: Set<String>,
-        val knownWalletKeys: Set<String>
+        val exists: Boolean
     )
 
     /**
@@ -105,9 +172,9 @@ class SyncManager(
         val services: List<ServiceEntry>,
         val sshKeys: List<SshKeyEntry>,
         val wallets: List<WalletEntry>,
-        val auditLog: List<WalletAuditEntry>,
-        val newSshKeys: Set<String>,
-        val newWalletKeys: Set<String>
+        val auditLog: List<WalletAuditEntry> = emptyList(),
+        val remainingSshTombstones: List<Tombstone>,
+        val remainingWalletTombstones: List<Tombstone>
     )
 
     suspend fun sync(
@@ -116,7 +183,14 @@ class SyncManager(
         serviceManager: ServiceManager,
         context: Context,
         retryCount: Int = 0
-    ): SyncResult = syncInternal(secret, email, serviceManager, context, retryCount)
+    ): SyncResult = syncInternal(secret, email, AndroidSyncLocalState(serviceManager, context), retryCount)
+
+    internal suspend fun sync(
+        secret: ByteArray,
+        email: String,
+        localState: SyncLocalState,
+        retryCount: Int = 0
+    ): SyncResult = syncInternal(secret, email, localState, retryCount)
 
     /**
      * Exercises the same fetch/terminal-result path without constructing Android storage.
@@ -128,13 +202,12 @@ class SyncManager(
     internal suspend fun syncWithoutLocalStateForTesting(
         secret: ByteArray,
         email: String
-    ): SyncResult = syncInternal(secret, email, null, null, 0)
+    ): SyncResult = syncInternal(secret, email, null, 0)
 
     private suspend fun syncInternal(
         secret: ByteArray,
         email: String,
-        serviceManager: ServiceManager?,
-        context: Context?,
+        localState: SyncLocalState?,
         retryCount: Int
     ): SyncResult = withContext(Dispatchers.IO) {
         val lookupId = Keygrain.deriveLookupId(secret, email)
@@ -147,57 +220,65 @@ class SyncManager(
         try {
             // Step 1: GET remote state
             val remote = when (
-                val outcome = fetchRemote(lookupId, authHeader, encryptionKey, serviceManager, context)
+                val outcome = fetchRemote(lookupId, authHeader, encryptionKey, localState)
             ) {
                 is FetchOutcome.Failed -> return@withContext outcome.result
                 is FetchOutcome.Fetched -> outcome.remote
             }
 
-            // No incompatible GET can reach this point. The test-only no-state seam relies
-            // on that ordering; compatible responses still require real local dependencies.
-            val localServiceManager = requireNotNull(serviceManager)
-            val appContext = requireNotNull(context)
+            // Compatible GETs require non-null local storage
+            val currentLocalState = requireNotNull(localState)
 
             // Step 2: Reconcile
-            val m = reconcile(remote, localServiceManager, appContext)
+            val m = reconcile(remote, currentLocalState)
 
             // Empty-push protection: an empty push is legitimate only when every remote
-            // id it drops is explicitly declared as deleted.
-            if (m.services.isEmpty() && remote.metadata.isNotEmpty()) {
+            // service it drops is explicitly declared as deleted.
+            if (m.services.isEmpty() && remote.services.isNotEmpty()) {
                 val declared = m.rec.deletedIds.toSet()
-                val allDeclared = remote.metadata.all { it.first != null && declared.contains(it.first) }
+                val allDeclared = remote.services.all { it.id != null && declared.contains(it.id) }
                 if (!allDeclared) {
-                    return@withContext SyncResult.IntegrityError("empty push blocked: merge produced no services but remote had ${remote.metadata.size}")
+                    return@withContext SyncResult.IntegrityError(
+                        "empty push blocked: merge produced no services but remote had ${remote.services.size}"
+                    )
                 }
             }
 
             // Merge conflicts: remote + new, dedup by key, cap at 50
-            val syncConflicts = mergeConflicts(appContext, remote.conflicts, m.rec.syncConflicts)
+            val syncConflicts = mergeConflicts(currentLocalState, remote.conflicts, m.rec.syncConflicts)
 
-            // Step 3b: no-op skip (Frozen Req 9).
-            trySkipPush(remote, m, syncConflicts, localServiceManager, appContext)
+            // Step 3b: Client Dirty-Checking (Zero-Write on No-Op)
+            trySkipPush(remote, m, syncConflicts, currentLocalState)
                 ?.let { return@withContext it }
 
             // Step 3: Build push payload
-            val putBody = encodePushBody(lookupId, encryptionKey, m, syncConflicts)
+            val nextVersion = if (remote.exists) (remote.version + 1) else 1
+            val putBody = encodePushBody(lookupId, encryptionKey, m, syncConflicts, nextVersion)
 
             // Step 4: PUT
             val putResult = transport.doPut(lookupId, authHeader, putBody, remote.etag)
 
             when (putResult) {
                 is PutResult.Success -> {
-                    val confirmed = persistPushed(putResult, remote, m, localServiceManager, appContext)
-                    SyncResult.Success(confirmed, m.sshKeys, m.wallets, m.auditLog, syncConflicts, remote.status)
+                    val confirmedVersion = if (putResult.version > 0) putResult.version else nextVersion
+                    val confirmed = persistPushed(confirmedVersion, m, currentLocalState)
+                    SyncResult.Success(
+                        services = confirmed,
+                        sshKeys = m.sshKeys,
+                        wallets = m.wallets,
+                        walletAuditLog = emptyList(),
+                        syncConflicts = syncConflicts,
+                        status = if (remote.exists) "synced" else "created",
+                        version = confirmedVersion
+                    )
                 }
                 is PutResult.Conflict -> {
                     if (retryCount < 3) {
-                        // Bounded jittered backoff: immediate recursion could burn 8
-                        // requests in milliseconds against the per-lookup bucket and
-                        // self-inflict a 429.
-                        delay(conflictBackoffMs(retryCount))
-                        sync(secret, email, localServiceManager, appContext, retryCount + 1)
+                        // Bounded jittered backoff: [250, 1000, 3000][retryCount] * (0.75 + Math.random() * 0.5)
+                        delay(conflictBackoffWithJitterMs(retryCount))
+                        syncInternal(secret, email, currentLocalState, retryCount + 1)
                     } else {
-                        SyncResult.ConflictError
+                        SyncResult.Conflict
                     }
                 }
                 is PutResult.AuthError -> SyncResult.AuthError(putResult.code)
@@ -215,25 +296,19 @@ class SyncManager(
     }
 
     /**
-     * Step 1: GET, verify checksum, decrypt, then verify metadata length and that the
-     * metadata has not been tampered with against the local cache.
-     *
-     * Does NOT zero [encryptionKey] -- the push phase still needs it; [sync] owns its
-     * lifetime and wipes it in a `finally`.
+     * Step 1: GET, verify checksum, decrypt payload.
      */
     private fun fetchRemote(
         lookupId: String,
         authHeader: String,
         encryptionKey: ByteArray,
-        serviceManager: ServiceManager?,
-        context: Context?
+        localState: SyncLocalState?
     ): FetchOutcome {
         when (val getResult = transport.doGet(lookupId, authHeader)) {
             is GetResult.Success -> {
-                val localServiceManager = requireNotNull(serviceManager)
-                val appContext = requireNotNull(context)
+                val currentLocalState = requireNotNull(localState)
                 // Validate checksum
-                val blobBytes = AndroidBase64.decode(getResult.encryptedBlob, AndroidBase64.DEFAULT)
+                val blobBytes = Base64.getDecoder().decode(getResult.encryptedBlob.trim())
                 val checksum = SyncIntegrity.sha256Hex(blobBytes)
                 if (checksum != getResult.checksum) {
                     return FetchOutcome.Failed(SyncResult.IntegrityError("checksum mismatch"))
@@ -243,53 +318,30 @@ class SyncManager(
                 val aad = lookupId.toByteArray(Charsets.UTF_8)
                 val plaintext = try {
                     SyncCrypto.decrypt(encryptionKey, blobBytes, aad).also {
-                        SyncStore.setAadEnabled(appContext, true)
+                        currentLocalState.setAadEnabled(true)
                     }
                 } catch (e: AEADBadTagException) {
-                    if (SyncStore.isAadEnabled(appContext)) throw e
+                    if (currentLocalState.isAadEnabled()) throw e
                     SyncCrypto.decrypt(encryptionKey, blobBytes)
                 }
                 val json = String(plaintext, Charsets.UTF_8)
-                val blobContent = SyncBlob.parseBlobContent(json, localServiceManager)
-                val remoteMetadata = getResult.services
-
-                // Validate length
-                if (remoteMetadata.size != blobContent.services.size) {
-                    return FetchOutcome.Failed(SyncResult.IntegrityError("metadata length mismatch"))
-                }
-
-                // Validate metadata integrity
-                val cachedMeta = SyncStore.getMetadataCache(appContext)
-                if (cachedMeta != null) {
-                    val violation = SyncIntegrity.validateMetadataIntegrity(remoteMetadata, cachedMeta)
-                    if (violation != null) {
-                        return FetchOutcome.Failed(SyncResult.IntegrityError("metadata tamper: $violation"))
-                    }
-                }
+                val blobContent = SyncBlob.parseBlobContent(json) { currentLocalState.parseServicesJson(it) }
 
                 return FetchOutcome.Fetched(
                     RemoteState(
                         services = blobContent.services,
                         sshKeys = blobContent.sshKeys,
                         wallets = blobContent.wallets,
-                        auditLog = blobContent.auditLog,
+                        auditLog = emptyList(),
                         conflicts = blobContent.syncConflicts,
-                        metadata = remoteMetadata,
+                        version = getResult.version,
                         etag = getResult.etag,
                         status = "synced",
-                        exists = true,
-                        knownSshKeys = SyncStore.getKnownSshKeys(appContext),
-                        knownWalletKeys = SyncStore.getKnownWalletKeys(appContext)
+                        exists = true
                     )
                 )
             }
             is GetResult.NotFound -> {
-                val appContext = requireNotNull(context)
-                // Frozen Req 11: no remote record. NEVER inferred as deletions — see
-                // SyncReconciler.reconcileServices(remoteExists=false). Wallet known-keys are also
-                // reset so local wallets are not read as "deleted remotely".
-                SyncStore.setKnownSshKeys(appContext, emptySet())
-                SyncStore.setKnownWalletKeys(appContext, emptySet())
                 return FetchOutcome.Fetched(
                     RemoteState(
                         services = emptyList(),
@@ -297,12 +349,10 @@ class SyncManager(
                         wallets = emptyList(),
                         auditLog = emptyList(),
                         conflicts = emptyList(),
-                        metadata = emptyList(),
+                        version = 0,
                         etag = null,
                         status = "created",
-                        exists = false,
-                        knownSshKeys = emptySet(),
-                        knownWalletKeys = emptySet()
+                        exists = false
                     )
                 )
             }
@@ -315,37 +365,55 @@ class SyncManager(
         }
     }
 
-    /** Step 2: reconcile services, then merge wallets and the wallet audit log. */
+    /** Step 2: reconcile services, then merge wallets and ssh keys. */
     private fun reconcile(
         remote: RemoteState,
-        serviceManager: ServiceManager,
-        context: Context
+        localState: SyncLocalState
     ): MergedState {
+        val lastSyncAt = localState.getLastSuccessfulSyncAt()
         val rec = SyncReconciler.reconcileServices(
-            serviceManager.getServices(),
-            serviceManager.getTombstones(),
-            remote.services,
-            remote.metadata,
-            SyncStore.getLastSuccessfulSyncAt(context),
-            remote.exists
+            local = localState.getServices(),
+            localTombstones = localState.getServiceTombstones(),
+            remote = remote.services,
+            remoteMeta = emptyList(),
+            lastSyncAt = lastSyncAt,
+            remoteExists = remote.exists
         )
-        val (mergedSshKeys, newSshKeys) =
-            SyncMerge.mergeSshKeys(SyncStore.getSshKeys(context), remote.sshKeys, remote.knownSshKeys)
-        val (mergedWallets, newWKeys) =
-            SyncMerge.mergeWallets(SyncStore.getWallets(context), remote.wallets, remote.knownWalletKeys)
-        val mergedAuditLog =
-            SyncMerge.mergeAuditLog(SyncStore.getAuditLog(context), remote.auditLog)
-        return MergedState(rec, rec.merged, mergedSshKeys, mergedWallets, mergedAuditLog, newSshKeys, newWKeys)
+        val (mergedSshKeys, remainingSshTombstones) =
+            SyncMerge.mergeSshKeys(
+                localState.getSshKeys(),
+                remote.sshKeys,
+                localState.getSshTombstones(),
+                lastSyncAt,
+                remote.exists
+            )
+        val (mergedWallets, remainingWalletTombstones) =
+            SyncMerge.mergeWallets(
+                localState.getWallets(),
+                remote.wallets,
+                localState.getWalletTombstones(),
+                lastSyncAt,
+                remote.exists
+            )
+        return MergedState(
+            rec = rec,
+            services = rec.merged,
+            sshKeys = mergedSshKeys,
+            wallets = mergedWallets,
+            auditLog = emptyList(),
+            remainingSshTombstones = remainingSshTombstones,
+            remainingWalletTombstones = remainingWalletTombstones
+        )
     }
 
     /** Remote + newly detected conflicts, deduped by key, oldest first, newest 50 kept. */
     private fun mergeConflicts(
-        context: Context,
+        localState: SyncLocalState,
         remoteConflicts: List<SyncConflict>,
         newConflicts: List<SyncConflict>
     ): List<SyncConflict> {
         val effectiveRemoteConflicts =
-            if (SyncStore.areConflictsDismissed(context)) emptyList() else remoteConflicts
+            if (localState.areConflictsDismissed()) emptyList() else remoteConflicts
         val conflictKeySet = mutableSetOf<String>()
         val mergedConflicts = mutableListOf<SyncConflict>()
         for (c in effectiveRemoteConflicts + newConflicts) {
@@ -356,125 +424,118 @@ class SyncManager(
     }
 
     /**
-     * Step 3b: skip the PUT when the canonical local and remote payloads are identical
-     * (Frozen Req 9). An idle sync then costs one GET and no PUT, which also stops the
-     * random-IV/new-ETag churn that manufactures cross-device 409s and exhausts the
-     * per-lookup rate-limit bucket.
-     *
-     * Returns the success result when the push was skipped, or null to continue to PUT.
-     * When push is skipped, local state is reconciled and persisted to match the verified
-     * remote state (services, wallets, ssh keys, audit log, metadata cache, and known keys).
+     * Step 3b: skip the PUT when the canonical local and remote payloads are identical.
+     * An idle sync then costs one GET and no PUT, which stops random-IV/new-ETag churn,
+     * rate-limit burning, and synthetic 409 collisions.
      */
     private fun trySkipPush(
         remote: RemoteState,
         m: MergedState,
         syncConflicts: List<SyncConflict>,
-        serviceManager: ServiceManager,
-        context: Context
+        localState: SyncLocalState
     ): SyncResult.Success? {
-        if (!remote.exists || m.rec.deletedIds.isNotEmpty()) return null
+        val hasPendingTombstones = m.rec.tombstones.isNotEmpty() ||
+            m.rec.deletedIds.isNotEmpty() ||
+            m.remainingSshTombstones.isNotEmpty() ||
+            m.remainingWalletTombstones.isNotEmpty()
+
+        if (!remote.exists || hasPendingTombstones) return null
+
         val localCanon =
-            SyncBlob.canonicalBlobPayload(m.services, m.sshKeys, m.wallets, m.auditLog, syncConflicts)
-        val remoteWithMeta = remote.metadata.indices.mapNotNull { i ->
-            val id = remote.metadata[i].first ?: return@mapNotNull null
-            remote.services[i].copy(id = id, updatedAt = remote.metadata[i].second)
-        }
+            SyncBlob.canonicalBlobPayload(m.services, m.sshKeys, m.wallets, syncConflicts)
         val remoteCanon = SyncBlob.canonicalBlobPayload(
-            remoteWithMeta, remote.sshKeys, remote.wallets, remote.auditLog, remote.conflicts
+            remote.services, remote.sshKeys, remote.wallets, remote.conflicts
         )
         if (localCanon != remoteCanon) return null
 
-        serviceManager.replaceAll(m.services)
-        serviceManager.setTombstones(emptyList())
+        localState.replaceServices(m.services)
+        localState.setServiceTombstones(emptyList())
         if (m.rec.review.isNotEmpty()) {
-            serviceManager.setDeletionReview(serviceManager.getDeletionReview() + m.rec.review)
+            localState.setDeletionReview(localState.getDeletionReview() + m.rec.review)
         }
-        SyncStore.setMetadataCache(context, remote.metadata)
-        SyncStore.setKnownSshKeys(context, m.newSshKeys)
-        SyncStore.saveSshKeys(context, m.sshKeys)
-        SyncStore.setKnownWalletKeys(context, m.newWalletKeys)
-        SyncStore.saveWallets(context, m.wallets)
-        SyncStore.saveAuditLog(context, m.auditLog)
-        SyncStore.setLastSuccessfulSyncAt(context, System.currentTimeMillis())
-        return SyncResult.Success(m.services, m.sshKeys, m.wallets, m.auditLog, syncConflicts, "unchanged")
+        localState.setSshTombstones(m.remainingSshTombstones)
+        localState.saveSshKeys(m.sshKeys)
+        localState.setWalletTombstones(m.remainingWalletTombstones)
+        localState.saveWallets(m.wallets)
+        localState.setSyncVersion(remote.version)
+        localState.setLastSuccessfulSyncAt(System.currentTimeMillis())
+        return SyncResult.Success(
+            services = m.services,
+            sshKeys = m.sshKeys,
+            wallets = m.wallets,
+            walletAuditLog = emptyList(),
+            syncConflicts = syncConflicts,
+            status = "unchanged",
+            version = remote.version
+        )
     }
 
-    /** Step 3: build the encrypted PUT body. */
+    /** Step 3: build the encrypted PUT body strictly conforming to Sync v4 ZK envelope. */
     private fun encodePushBody(
         lookupId: String,
         encryptionKey: ByteArray,
         m: MergedState,
-        syncConflicts: List<SyncConflict>
+        syncConflicts: List<SyncConflict>,
+        version: Int
     ): String {
-        val contentArray = JSONArray()
-        val metadataArray = JSONArray()
+        val servicesArray = JSONArray()
         for (svc in m.services) {
-            val content = svc.toJsonContent().apply {
+            val serviceJson = svc.toJsonContent().apply {
+                if (svc.id != null) put("id", svc.id)
+                put("updated_at", svc.updatedAt)
                 remove("ssh")
             }
-            contentArray.put(content)
-            metadataArray.put(JSONObject().apply {
-                put("id", svc.id)
-                put("updated_at", svc.updatedAt)
-            })
+            servicesArray.put(serviceJson)
         }
 
         val sshArray = JSONArray().apply { m.sshKeys.forEach { put(it.toJson()) } }
         val walletsArray = JSONArray().apply { m.wallets.forEach { put(it.toJson()) } }
-        val auditArray = JSONArray().apply { m.auditLog.forEach { put(it.toJson()) } }
         val conflictsArray = JSONArray().apply { syncConflicts.forEach { put(it.toJson()) } }
 
         val blobPayload = JSONObject().apply {
-            put("services", contentArray)
+            put("services", servicesArray)
             put("ssh_keys", sshArray)
             put("wallets", walletsArray)
-            put("wallet_audit_log", auditArray)
             put("sync_conflicts", conflictsArray)
         }
 
         val plaintext = blobPayload.toString().toByteArray(Charsets.UTF_8)
         val aadEnc = lookupId.toByteArray(Charsets.UTF_8)
         val encrypted = SyncCrypto.encrypt(encryptionKey, plaintext, aadEnc)
-        val encryptedB64 = AndroidBase64.encodeToString(encrypted, AndroidBase64.NO_WRAP)
+        val encryptedB64 = Base64.getEncoder().encodeToString(encrypted)
         val checksum = SyncIntegrity.sha256Hex(encrypted)
 
         return JSONObject().apply {
-            put("services", metadataArray)
+            put("version", version)
             put("encrypted_blob", encryptedB64)
             put("checksum", checksum)
-            put("deleted_ids", JSONArray().apply { m.rec.deletedIds.forEach { put(it) } })
         }.toString()
     }
 
     /**
-     * Confirmed 2xx: only now is it safe to mark the pushed ids synced, clear the
-     * tombstones the server no longer holds, and advance the sync barrier
-     * (§3 steps 5-6, Frozen Reqs 1/5/8).
+     * Confirmed 2xx: mark pushed ids synced, clear tombstones, and advance version and sync barrier.
      */
     private fun persistPushed(
-        putResult: PutResult.Success,
-        remote: RemoteState,
+        confirmedVersion: Int,
         m: MergedState,
-        serviceManager: ServiceManager,
-        context: Context
+        localState: SyncLocalState
     ): List<ServiceEntry> {
         val pushedIds = m.services.mapNotNull { it.id }.toSet()
         val confirmed = m.services.map {
             if (it.id != null && pushedIds.contains(it.id)) it.copy(synced = true) else it
         }
-        serviceManager.replaceAll(confirmed)
-        serviceManager.setTombstones(m.rec.tombstones.filter { pushedIds.contains(it.id) })
+        localState.replaceServices(confirmed)
+        localState.setServiceTombstones(emptyList())
         if (m.rec.review.isNotEmpty()) {
-            serviceManager.setDeletionReview(serviceManager.getDeletionReview() + m.rec.review)
+            localState.setDeletionReview(localState.getDeletionReview() + m.rec.review)
         }
-        SyncStore.setMetadataCache(context, putResult.services)
-        SyncStore.setKnownSshKeys(context, m.newSshKeys)
-        SyncStore.saveSshKeys(context, m.sshKeys)
-        SyncStore.setKnownWalletKeys(context, m.newWalletKeys)
-        SyncStore.saveWallets(context, m.wallets)
-        SyncStore.saveAuditLog(context, m.auditLog)
-        SyncStore.setLastSuccessfulSyncAt(context, System.currentTimeMillis())
-        SyncStore.setConflictsDismissed(context, false)
+        localState.setSshTombstones(emptyList())
+        localState.saveSshKeys(m.sshKeys)
+        localState.setWalletTombstones(emptyList())
+        localState.saveWallets(m.wallets)
+        localState.setSyncVersion(confirmedVersion)
+        localState.setLastSuccessfulSyncAt(System.currentTimeMillis())
+        localState.setConflictsDismissed(false)
         return confirmed
     }
 

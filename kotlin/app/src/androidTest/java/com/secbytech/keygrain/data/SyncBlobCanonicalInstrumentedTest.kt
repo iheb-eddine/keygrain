@@ -54,7 +54,6 @@ class SyncBlobCanonicalInstrumentedTest {
                 val w = walletRows.getJSONObject(j)
                 WalletEntry(
                     walletName = w.getString("wallet_name"),
-                    chain = w.getString("chain"),
                     counter = w.getInt("counter"),
                     email = w.getString("email"),
                     mode = w.getString("mode"),
@@ -64,25 +63,12 @@ class SyncBlobCanonicalInstrumentedTest {
                 )
             }
 
-            val auditRows = testCase.getJSONArray("audit_log")
-            val auditLog = (0 until auditRows.length()).map { j ->
-                val entry = auditRows.getJSONObject(j)
-                WalletAuditEntry(
-                    action = entry.getString("action"),
-                    walletName = entry.getString("wallet_name"),
-                    chain = entry.getString("chain"),
-                    counter = entry.getInt("counter"),
-                    timestamp = entry.getString("timestamp"),
-                    verification = entry.getString("verification")
-                )
-            }
-
             val conflictRows = testCase.getJSONArray("sync_conflicts")
             val conflicts = (0 until conflictRows.length()).map { j ->
                 SyncConflict.fromJson(conflictRows.getJSONObject(j))
             }
 
-            val actual = SyncBlob.canonicalBlobPayload(services, wallets, auditLog, conflicts)
+            val actual = SyncBlob.canonicalBlobPayload(services, wallets, conflicts)
             assertEquals(testCase.getString("name"), testCase.getString("expected"), actual)
         }
     }

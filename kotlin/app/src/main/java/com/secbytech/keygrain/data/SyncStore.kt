@@ -115,6 +115,13 @@ internal object SyncStore {
         getPrefs(context).edit().putLong(KEY_LAST_SUCCESSFUL_SYNC_AT, ts).apply()
     }
 
+    fun getSyncVersion(context: Context): Int =
+        getPrefs(context).getInt("sync_version", 0)
+
+    fun setSyncVersion(context: Context, version: Int) {
+        getPrefs(context).edit().putInt("sync_version", version).apply()
+    }
+
 
     fun getMetadataCache(context: Context): List<Pair<String?, Long>>? {
         val json = getPrefs(context).getString("sync_metadata_cache", null) ?: return null
@@ -191,6 +198,9 @@ internal object SyncStore {
             current.add(wallet)
         }
         saveWallets(context, current)
+        val tombId = if (wallet.id.isNotEmpty()) wallet.id else if (wallet.walletId.isNotEmpty()) wallet.walletId else wallet.walletName
+        val existing = getWalletTombstones(context).filter { it.id != tombId && it.id != targetKey }
+        setWalletTombstones(context, existing)
     }
 
     fun removeWallet(context: Context, wallet: WalletEntry): Boolean {
@@ -198,6 +208,10 @@ internal object SyncStore {
         val targetKey = WalletEntry.mergeKey(wallet)
         val removed = current.removeAll { it.id == wallet.id || WalletEntry.mergeKey(it) == targetKey }
         if (removed) saveWallets(context, current)
+        val tombId = if (wallet.id.isNotEmpty()) wallet.id else targetKey
+        val now = System.currentTimeMillis()
+        val existing = getWalletTombstones(context).filter { it.id != tombId && it.id != targetKey }
+        setWalletTombstones(context, existing + Tombstone(tombId, now))
         return removed
     }
 
@@ -211,6 +225,9 @@ internal object SyncStore {
             current.add(key)
         }
         saveSshKeys(context, current)
+        val tombId = if (key.id.isNotEmpty()) key.id else key.keyName
+        val existing = getSshTombstones(context).filter { it.id != tombId && it.id != targetKey }
+        setSshTombstones(context, existing)
     }
 
     fun removeSshKey(context: Context, key: SshKeyEntry): Boolean {
@@ -218,7 +235,55 @@ internal object SyncStore {
         val targetKey = SshKeyEntry.mergeKey(key)
         val removed = current.removeAll { it.id == key.id || SshKeyEntry.mergeKey(it) == targetKey }
         if (removed) saveSshKeys(context, current)
+        val tombId = if (key.id.isNotEmpty()) key.id else key.keyName
+        val now = System.currentTimeMillis()
+        val existing = getSshTombstones(context).filter { it.id != tombId }
+        setSshTombstones(context, existing + Tombstone(tombId, now))
         return removed
+    }
+
+    fun getWalletTombstones(context: Context): List<Tombstone> {
+        val json = getPrefs(context).getString("wallet_tombstones", "[]") ?: "[]"
+        val arr = JSONArray(json)
+        return (0 until arr.length()).mapNotNull { i ->
+            try {
+                val obj = arr.getJSONObject(i)
+                Tombstone(obj.getString("id"), obj.getLong("deleted_at"))
+            } catch (_: Exception) { null }
+        }
+    }
+
+    fun setWalletTombstones(context: Context, tombstones: List<Tombstone>) {
+        val arr = JSONArray()
+        tombstones.forEach { t ->
+            arr.put(JSONObject().apply {
+                put("id", t.id)
+                put("deleted_at", t.deletedAt)
+            })
+        }
+        getPrefs(context).edit().putString("wallet_tombstones", arr.toString()).apply()
+    }
+
+    fun getSshTombstones(context: Context): List<Tombstone> {
+        val json = getPrefs(context).getString("ssh_tombstones", "[]") ?: "[]"
+        val arr = JSONArray(json)
+        return (0 until arr.length()).mapNotNull { i ->
+            try {
+                val obj = arr.getJSONObject(i)
+                Tombstone(obj.getString("id"), obj.getLong("deleted_at"))
+            } catch (_: Exception) { null }
+        }
+    }
+
+    fun setSshTombstones(context: Context, tombstones: List<Tombstone>) {
+        val arr = JSONArray()
+        tombstones.forEach { t ->
+            arr.put(JSONObject().apply {
+                put("id", t.id)
+                put("deleted_at", t.deletedAt)
+            })
+        }
+        getPrefs(context).edit().putString("ssh_tombstones", arr.toString()).apply()
     }
 
     fun getAuditLog(context: Context): List<WalletAuditEntry> {

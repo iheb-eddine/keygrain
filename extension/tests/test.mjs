@@ -884,10 +884,9 @@ await test('canonicalBlobPayload: shared KG-22 fixture matches extension seriali
     ctx._fixtureServices = vector.services.map(s => s.content);
     ctx._fixtureMetadata = vector.services.map(s => s.metadata);
     ctx._fixtureWallets = vector.wallets;
-    ctx._fixtureAudit = vector.audit_log;
     ctx._fixtureConflicts = vector.sync_conflicts;
     const actual = runInContext(
-      'canonicalBlobPayload(_fixtureServices, _fixtureMetadata, _fixtureWallets, _fixtureAudit, _fixtureConflicts)',
+      'canonicalBlobPayload(_fixtureServices, _fixtureMetadata, _fixtureWallets, _fixtureConflicts)',
       ctx
     );
     assert.equal(actual, vector.expected, vector.name);
@@ -899,8 +898,8 @@ await test('canonicalBlobPayload: order-independent for services', async () => {
   ctx._m1 = [{ id: 'i1', updated_at: 1 }, { id: 'i2', updated_at: 2 }];
   ctx._c2 = [{ site: 'b.com' }, { site: 'a.com' }];
   ctx._m2 = [{ id: 'i2', updated_at: 2 }, { id: 'i1', updated_at: 1 }];
-  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx);
-  const b = runInContext(`canonicalBlobPayload(_c2, _m2, [], [], [])`, ctx);
+  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [])`, ctx);
+  const b = runInContext(`canonicalBlobPayload(_c2, _m2, [], [])`, ctx);
   assert.equal(a, b);
 });
 
@@ -908,17 +907,17 @@ await test('canonicalBlobPayload: differs when a field changes', async () => {
   ctx._c1 = [{ site: 'a.com', counter: 1 }];
   ctx._m1 = [{ id: 'i1', updated_at: 1 }];
   ctx._c2 = [{ site: 'a.com', counter: 2 }];
-  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx);
-  const b = runInContext(`canonicalBlobPayload(_c2, _m1, [], [], [])`, ctx);
+  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [])`, ctx);
+  const b = runInContext(`canonicalBlobPayload(_c2, _m1, [], [])`, ctx);
   assert.notEqual(a, b);
 });
 
 await test('canonicalBlobPayload: differs when wallets change (not just services)', async () => {
   ctx._c1 = [{ site: 'a.com' }];
   ctx._m1 = [{ id: 'i1', updated_at: 1 }];
-  ctx._w1 = [{ wallet_name: 'main', chain: 'bitcoin' }];
-  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx);
-  const b = runInContext(`canonicalBlobPayload(_c1, _m1, _w1, [], [])`, ctx);
+  ctx._w1 = [{ wallet_name: 'main' }];
+  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [])`, ctx);
+  const b = runInContext(`canonicalBlobPayload(_c1, _m1, _w1, [])`, ctx);
   assert.notEqual(a, b);
 });
 
@@ -935,28 +934,28 @@ await test('canonicalBlobPayload: exact serialization, shared with SyncBlob.kt',
     {name: 'B', site: 'b.com', email: 'e@x', length: 20, symbols: '!@', counter: 1}
   ];
   ctx._m1 = [{id: 'i1', updated_at: 1}, {id: 'i2', updated_at: 2}];
-  assert.equal(runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx),
+  assert.equal(runInContext(`canonicalBlobPayload(_c1, _m1, [], [])`, ctx),
     '{"services":[{"id":"i1","updated_at":1,"name":"A","site":"a.com","email":"e@x","length":20,' +
     '"symbols":"!@","counter":1,"migrating":true,"totp":null,"ssh":null},' +
     '{"id":"i2","updated_at":2,"name":"B","site":"b.com","email":"e@x","length":20,' +
-    '"symbols":"!@","counter":1,"migrating":null,"totp":null,"ssh":null}],'+
-    '"wallets":[],"wallet_audit_log":[],"sync_conflicts":[]}');
+    '"symbols":"!@","counter":1,"migrating":null,"totp":null,"ssh":null}],' +
+    '"ssh_keys":[],"wallets":[],"sync_conflicts":[]}');
 });
 
 await test('canonicalBlobPayload: differs when only `migrating` differs', async () => {
   ctx._c1 = [{site: 'a.com', migrating: true}];
   ctx._c2 = [{site: 'a.com'}];
   ctx._m1 = [{id: 'i1', updated_at: 1}];
-  assert.notEqual(runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx),
-    runInContext(`canonicalBlobPayload(_c2, _m1, [], [], [])`, ctx));
+  assert.notEqual(runInContext(`canonicalBlobPayload(_c1, _m1, [], [])`, ctx),
+    runInContext(`canonicalBlobPayload(_c2, _m1, [], [])`, ctx));
 });
 
 await test('canonicalBlobPayload: excludes local-only synced flag', async () => {
   ctx._c1 = [{ site: 'a.com' }];
   ctx._c2 = [{ site: 'a.com', synced: true }];
   ctx._m1 = [{ id: 'i1', updated_at: 1 }];
-  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [], [])`, ctx);
-  const b = runInContext(`canonicalBlobPayload(_c2, _m1, [], [], [])`, ctx);
+  const a = runInContext(`canonicalBlobPayload(_c1, _m1, [], [])`, ctx);
+  const b = runInContext(`canonicalBlobPayload(_c2, _m1, [], [])`, ctx);
   assert.equal(a, b);
 });
 
@@ -989,52 +988,145 @@ await test('migrateLocalPayload: absent knownUUIDs defaults synced to false', as
 
 
 await test('mergeWallets: both have same key, newer created_at wins', async () => {
-  const local = [{ wallet_name: 'main', chain: 'bitcoin', created_at: 200 }];
-  const remote = [{ wallet_name: 'main', chain: 'bitcoin', created_at: 100 }];
+  const local = [{ wallet_name: 'main', created_at: 200 }];
+  const remote = [{ wallet_name: 'main', created_at: 100 }];
   ctx._local = local; ctx._remote = remote; ctx._known = new Set();
   const result = runInContext(`mergeWallets(_local, _remote, _known)`, ctx);
   assert.equal(result.merged.length, 1);
   assert.equal(result.merged[0].created_at, 200);
 });
 
-await test('mergeWallets: remote-only new wallet added', async () => {
+await test('mergeWallets: remote wallet present, local array empty, NO tombstone -> preserved and merged', async () => {
   const local = [];
-  const remote = [{ wallet_name: 'savings', chain: 'ethereum', created_at: 50 }];
-  ctx._local = local; ctx._remote = remote; ctx._known = new Set();
-  const result = runInContext(`mergeWallets(_local, _remote, _known)`, ctx);
+  const remote = [{ wallet_name: 'savings', created_at: 50, updated_at: 50 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs)`, ctx);
   assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].wallet_name, 'savings');
 });
 
-await test('mergeWallets: remote-only known key = deleted locally', async () => {
+await test('mergeWallets: remote wallet present, local array empty, WITH tombstone (deleted_at > remote.updated_at) -> dropped', async () => {
   const local = [];
-  const remote = [{ wallet_name: 'old', chain: 'bitcoin', created_at: 50 }];
-  ctx._local = local; ctx._remote = remote; ctx._known = new Set(['old:bitcoin']);
-  const result = runInContext(`mergeWallets(_local, _remote, _known)`, ctx);
+  const remote = [{ id: 'w1', wallet_name: 'old', created_at: 50, updated_at: 50 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [{ id: 'w1', deleted_at: 100 }];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs)`, ctx);
   assert.equal(result.merged.length, 0);
+  assert.equal(result.tombstones.length, 1);
 });
 
-await test('mergeWallets: local-only known key = deleted remotely', async () => {
-  const local = [{ wallet_name: 'gone', chain: 'bitcoin', created_at: 50 }];
+await test('mergeWallets: local wallet present, remote empty, preserved locally', async () => {
+  const local = [{ wallet_name: 'local-only', created_at: 50, updated_at: 50 }];
   const remote = [];
-  ctx._local = local; ctx._remote = remote; ctx._known = new Set(['gone:bitcoin']);
-  const result = runInContext(`mergeWallets(_local, _remote, _known)`, ctx);
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].wallet_name, 'local-only');
+});
+
+await test('mergeWallets: local wallet present, remote empty, lastSyncAt newer -> deleted remotely', async () => {
+  const local = [{ wallet_name: 'old-wallet', created_at: 50, updated_at: 50 }];
+  const remote = [];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs, [], 100, true)`, ctx);
   assert.equal(result.merged.length, 0);
 });
 
-await test('mergeAuditLog: deduplicates by key', async () => {
-  const local = [{ timestamp: 100, wallet_name: 'a', chain: 'bitcoin', action: 'create' }];
-  const remote = [{ timestamp: 100, wallet_name: 'a', chain: 'bitcoin', action: 'create' }];
-  ctx._local = local; ctx._remote = remote;
-  const result = runInContext(`mergeAuditLog(_local, _remote)`, ctx);
-  assert.equal(result.length, 1);
+await test('mergeWallets: local wallet present, remote empty, local newer than lastSyncAt -> preserved', async () => {
+  const local = [{ wallet_name: 'offline-created', created_at: 150, updated_at: 150 }];
+  const remote = [];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs, [], 100, true)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].wallet_name, 'offline-created');
 });
 
-await test('mergeAuditLog: unions distinct entries', async () => {
-  const local = [{ timestamp: 100, wallet_name: 'a', chain: 'bitcoin', action: 'create' }];
-  const remote = [{ timestamp: 200, wallet_name: 'b', chain: 'ethereum', action: 'reveal' }];
+await test('mergeWallets: distinct wallet tombstone does not drop another wallet', async () => {
+  const local = [];
+  const remote = [{ id: 'sol-1', wallet_id: 'savings', created_at: 50, updated_at: 50 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [{ id: 'other-wallet', deleted_at: 100 }];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].wallet_id, 'savings');
+});
+
+await test('mergeSshKeys: remote ssh key present, local array empty, NO tombstone -> preserved and merged', async () => {
+  const local = [];
+  const remote = [{ key_name: 'deploy-key', created_at: 50, updated_at: 50 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].key_name, 'deploy-key');
+});
+
+await test('mergeSshKeys: remote ssh key present, local array empty, WITH tombstone (deleted_at > remote.updated_at) -> dropped', async () => {
+  const local = [];
+  const remote = [{ id: 'k1', key_name: 'old-key', created_at: 50, updated_at: 50 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [{ id: 'k1', deleted_at: 100 }];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 0);
+  assert.equal(result.tombstones.length, 1);
+});
+
+await test('mergeSshKeys: local ssh key present, remote empty, preserved locally', async () => {
+  const local = [{ key_name: 'local-key', created_at: 50, updated_at: 50 }];
+  const remote = [];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].key_name, 'local-key');
+});
+
+await test('mergeSshKeys: local ssh key present, remote empty, lastSyncAt newer -> deleted remotely', async () => {
+  const local = [{ key_name: 'old-server', created_at: 50, updated_at: 50 }];
+  const remote = [];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs, [], 100, true)`, ctx);
+  assert.equal(result.merged.length, 0);
+});
+
+await test('mergeSshKeys: local ssh key present, remote empty, local newer than lastSyncAt -> preserved', async () => {
+  const local = [{ key_name: 'new-offline-server', created_at: 150, updated_at: 150 }];
+  const remote = [];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs, [], 100, true)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].key_name, 'new-offline-server');
+});
+
+await test('mergeWallets: wallet edited wallet_id with same UUID id does not duplicate', async () => {
+  const remote = [{ id: 'b27a0d4a-2b6b-41f5-8b2f-0318b30c2f21', wallet_id: 'xxxxx', label: 'test', words: 24, counter: 1, created_at: 100, updated_at: 100 }];
+  const local = [{ id: 'b27a0d4a-2b6b-41f5-8b2f-0318b30c2f21', wallet_id: 'xxxxxx', label: 'test', words: 24, counter: 1, created_at: 100, updated_at: 200 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].wallet_id, 'xxxxxx');
+  assert.equal(result.merged[0].id, 'b27a0d4a-2b6b-41f5-8b2f-0318b30c2f21');
+});
+
+await test('mergeSshKeys: ssh key edited key_name with same UUID id does not duplicate', async () => {
+  const remote = [{ id: 'uuid-ssh-1', key_name: 'dev-server', counter: 1, created_at: 100, updated_at: 100 }];
+  const local = [{ id: 'uuid-ssh-1', key_name: 'prod-server', counter: 1, created_at: 100, updated_at: 200 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].key_name, 'prod-server');
+  assert.equal(result.merged[0].id, 'uuid-ssh-1');
+});
+
+await test('mergeAuditLog: deprecated no-op returns empty array', async () => {
+  const local = [{ timestamp: 100, wallet_name: 'a', action: 'create' }];
+  const remote = [{ timestamp: 100, wallet_name: 'a', action: 'create' }];
   ctx._local = local; ctx._remote = remote;
   const result = runInContext(`mergeAuditLog(_local, _remote)`, ctx);
-  assert.equal(result.length, 2);
+  assert.equal(result.length, 0);
+});
+
+await test('mergeAuditLog: handles distinct entries as no-op', async () => {
+  const local = [{ timestamp: 100, wallet_name: 'a', action: 'create' }];
+  const remote = [{ timestamp: 200, wallet_name: 'b', action: 'reveal' }];
+  ctx._local = local; ctx._remote = remote;
+  const result = runInContext(`mergeAuditLog(_local, _remote)`, ctx);
+  assert.equal(result.length, 0);
 });
 
 await test('classifySyncCapabilities: absent metadata preserves legacy v2 classification', async () => {
@@ -1125,13 +1217,14 @@ await test('parseBlobContent: legacy flat array', async () => {
   const result = runInContext(`JSON.parse(JSON.stringify(parseBlobContent([{site:"a.com"}])))`, ctx);
   assert.deepEqual(result.services, [{ site: 'a.com' }]);
   assert.deepEqual(result.wallets, []);
-  assert.deepEqual(result.wallet_audit_log, []);
+  assert.equal(result.wallet_audit_log, undefined);
 });
 
 await test('parseBlobContent: new format', async () => {
   const result = runInContext(`JSON.parse(JSON.stringify(parseBlobContent({services:[{site:"b.com"}],wallets:[{wallet_name:"x"}],wallet_audit_log:[{action:"y"}]})))`, ctx);
   assert.deepEqual(result.services, [{ site: 'b.com' }]);
   assert.deepEqual(result.wallets, [{ wallet_name: 'x' }]);
+  assert.equal(result.wallet_audit_log, undefined);
 });
 
 // ============================================================
@@ -3312,8 +3405,8 @@ async function roundTripBlob(services, wallets, auditLog, tombstones, review) {
 await test('blob round-trip: tombstones and deletion_review survive a write', async () => {
   const r = await roundTripBlob(
     [{id: 'a', name: 'a.com', email: 'a@b.c', updated_at: 1, synced: true}],
-    [{wallet_name: 'w', chain: 'btc'}],
-    [{timestamp: 1, wallet_name: 'w', chain: 'btc', action: 'derive'}],
+    [{wallet_name: 'w'}],
+    [{timestamp: 1, wallet_name: 'w', action: 'derive'}],
     [{id: 'dead', deleted_at: 42}],
     [{service: {id: 'gone'}, deleted_at: 43, seen: false}]
   );
@@ -4106,7 +4199,7 @@ function syncResponse(status, body, etag = 'legacy-etag') {
   };
 }
 
-function installSyncHarness(getResponse, putResponse = syncResponse(201, {services: [], etag: 'put-etag'})) {
+function installSyncHarness(getResponse, putResponse = syncResponse(201, {version: 1, checksum: 'put-checksum', etag: 'put-etag'})) {
   const state = {fetches: [], writes: [], gets: [], putResponse};
   ctx.chrome = {
     storage: {
@@ -4118,6 +4211,8 @@ function installSyncHarness(getResponse, putResponse = syncResponse(201, {servic
           if (key === 'syncKnownWalletKeys') return {syncKnownWalletKeys: []};
           if (key === 'lastSuccessfulSyncAt') return {lastSuccessfulSyncAt: 0};
           if (key === 'conflictsDismissed') return {conflictsDismissed: false};
+          if (key === 'syncVersion' || key === 'sync_version') return {syncVersion: 0, sync_version: 0};
+          if (Array.isArray(key) && (key.includes('syncVersion') || key.includes('sync_version'))) return {syncVersion: 0, sync_version: 0};
           return {};
         },
         set: async value => { state.writes.push(value); },
@@ -4125,7 +4220,10 @@ function installSyncHarness(getResponse, putResponse = syncResponse(201, {servic
     }
   };
   ctx.fetch = async (url, options) => {
-    state.fetches.push({url, method: options.method});
+    state.fetches.push({url, method: options.method, headers: options.headers, body: options.body});
+    if (typeof state.fetchHandler === 'function') {
+      return state.fetchHandler(url, options);
+    }
     return options.method === 'PUT' ? state.putResponse : getResponse;
   };
   return state;
@@ -4176,7 +4274,7 @@ await test('sync GET: valid legacy envelope keeps the existing decrypt/no-op pat
       services: [], wallets: [], wallet_audit_log: [], sync_conflicts: []
     })), new TextEncoder().encode(lookup));
     return {
-      version: 1, services: [], encrypted_blob: arrayBufferToBase64(blob),
+      version: 1, encrypted_blob: arrayBufferToBase64(blob),
       checksum: await sha256Hex(blob)
     };
   })()`, ctx);
@@ -4204,11 +4302,11 @@ await test('sync GET: valid legacy 200 preserves the existing v2 write path', as
       services: [], wallets: [], wallet_audit_log: [], sync_conflicts: []
     })), new TextEncoder().encode(lookup));
     return {
-      version: 1, services: [], encrypted_blob: arrayBufferToBase64(blob),
+      version: 1, encrypted_blob: arrayBufferToBase64(blob),
       checksum: await sha256Hex(blob)
     };
   })()`, ctx);
-  const put = syncResponse(200, {services: [{id: 'local-1', updated_at: 2}], etag: 'updated-etag'});
+  const put = syncResponse(200, {version: 2, checksum: 'updated-checksum', etag: 'updated-etag'});
   const harness = installSyncHarness(syncResponse(200, legacy), put);
   installSyncInstrumentation();
   try {
@@ -4218,6 +4316,14 @@ await test('sync GET: valid legacy 200 preserves the existing v2 write path', as
     }], [], []);
     assert.equal(result.status, 'synced');
     assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 1);
+    const putFetch = harness.fetches.find(r => r.method === 'PUT');
+    assert.ok(putFetch);
+    const putBody = JSON.parse(putFetch.body);
+    assert.equal(putBody.version, 2);
+    assert.ok(putBody.encrypted_blob);
+    assert.ok(putBody.checksum);
+    assert.equal(putBody.services, undefined);
+    assert.equal(putBody.deleted_ids, undefined);
     assert.ok(syncCounters().encrypt > 0, 'legacy v2 write must still encrypt for PUT');
   } finally {
     resetSyncInstrumentation();
@@ -4286,7 +4392,7 @@ await test('sync GET: malformed absent-capability response is not treated as leg
 
 await test('sync GET: 404 still performs the existing first-sync PUT path', async () => {
   resetSyncInstrumentation();
-  const put = syncResponse(201, {services: [{id: 'local-1', updated_at: 1}], etag: 'created-etag'});
+  const put = syncResponse(201, {version: 1, checksum: 'created-checksum', etag: 'created-etag'});
   const harness = installSyncHarness(syncResponse(404, {error: 'not found'}), put);
   installSyncInstrumentation();
   try {
@@ -4297,6 +4403,14 @@ await test('sync GET: 404 still performs the existing first-sync PUT path', asyn
     assert.equal(result.status, 'created');
     assert.equal(harness.fetches.filter(r => r.method === 'GET').length, 1);
     assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 1);
+    const putFetch = harness.fetches.find(r => r.method === 'PUT');
+    assert.ok(putFetch);
+    const putBody = JSON.parse(putFetch.body);
+    assert.equal(putBody.version, 1);
+    assert.ok(putBody.encrypted_blob);
+    assert.ok(putBody.checksum);
+    assert.equal(putBody.services, undefined);
+    assert.equal(putBody.deleted_ids, undefined);
     assert.ok(syncCounters().encrypt > 0, '404 first sync must still encrypt for PUT');
   } finally {
     resetSyncInstrumentation();
@@ -4307,7 +4421,7 @@ await test('sync GET: 404 still performs the existing first-sync PUT path', asyn
 await test('sync GET: empty absent-capability blob/checksum is malformed, not legacy', async () => {
   resetSyncInstrumentation();
   const harness = installSyncHarness(syncResponse(200, {
-    version: 1, services: [], encrypted_blob: '', checksum: ''
+    version: 1, encrypted_blob: '', checksum: ''
   }));
   installSyncInstrumentation();
   try {
@@ -4325,7 +4439,7 @@ await test('sync GET: empty absent-capability blob/checksum is malformed, not le
 
 await test('syncWithServer returns offline status and skips network when offline_mode is true', async () => {
   resetSyncInstrumentation();
-  const harness = installSyncHarness(syncResponse(200, {services: []}));
+  const harness = installSyncHarness(syncResponse(200, {version: 1, encrypted_blob: 'blob', checksum: 'abc'}));
   ctx.chrome.storage.local.get = async key => {
     if (key === 'offline_mode') return {offline_mode: true};
     if (key === 'settings') return {settings: {serverUrl: 'https://sync.test'}};
@@ -4337,6 +4451,192 @@ await test('syncWithServer returns offline status and skips network when offline
     assert.deepEqual(JSON.parse(JSON.stringify(result)), {ok: true, status: 'offline', offline: true});
     assert.equal(harness.fetches.length, 0);
     assert.deepEqual(syncCounters(), {decrypt: 0, encrypt: 0, atob: 0});
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('sync v4: dirty-checking skips PUT and updates version and barrier on clean state', async () => {
+  resetSyncInstrumentation();
+  const serverBlob = await runInContext(`(async () => {
+    const lookup = await deriveLookupId('my-master-secret', 'test@gmail.com');
+    const key = await deriveEncryptionKey('my-master-secret', 'test@gmail.com');
+    const blob = await encryptBlob(key, new TextEncoder().encode(JSON.stringify({
+      services: [{
+        id: 'clean-1', name: 'Clean Svc', site: 'clean.com', email: 'u@clean.com',
+        length: 20, symbols: '!', counter: 1, updated_at: 100, migrating: null,
+        totp: null, ssh: null
+      }],
+      ssh_keys: [], wallets: [], sync_conflicts: []
+    })), new TextEncoder().encode(lookup));
+    return {
+      version: 5, encrypted_blob: arrayBufferToBase64(blob),
+      checksum: await sha256Hex(blob)
+    };
+  })()`, ctx);
+  const harness = installSyncHarness(syncResponse(200, serverBlob, 'clean-etag'));
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [{
+      id: 'clean-1', name: 'Clean Svc', site: 'clean.com', email: 'u@clean.com',
+      length: 20, symbols: '!', counter: 1, updated_at: 100, synced: true
+    }], [], []);
+    assert.equal(result.status, 'unchanged');
+    assert.equal(result.skippedPut, true);
+    assert.equal(result.version, 5);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 0);
+    const writes = harness.writes;
+    assert.ok(writes.some(w => w.lastSuccessfulSyncAt > 0), 'lastSuccessfulSyncAt must be updated');
+    assert.ok(writes.some(w => w.syncVersion === 5), 'syncVersion must be updated');
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('sync v4: pending local tombstone prevents PUT skip and purges on commit', async () => {
+  resetSyncInstrumentation();
+  const serverBlob = await runInContext(`(async () => {
+    const lookup = await deriveLookupId('my-master-secret', 'test@gmail.com');
+    const key = await deriveEncryptionKey('my-master-secret', 'test@gmail.com');
+    const blob = await encryptBlob(key, new TextEncoder().encode(JSON.stringify({
+      services: [{
+        id: 'to-delete-1', name: 'Del Svc', site: 'del.com', email: 'u@del.com',
+        length: 20, symbols: '!', counter: 1, updated_at: 100, migrating: null,
+        totp: null, ssh: null
+      }],
+      ssh_keys: [], wallets: [], sync_conflicts: []
+    })), new TextEncoder().encode(lookup));
+    return {
+      version: 2, encrypted_blob: arrayBufferToBase64(blob),
+      checksum: await sha256Hex(blob)
+    };
+  })()`, ctx);
+  const put = syncResponse(200, {version: 3, checksum: 'put-checksum', etag: 'v3-etag'});
+  const harness = installSyncHarness(syncResponse(200, serverBlob, 'v2-etag'), put);
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [], [], [{id: 'to-delete-1', deleted_at: 200}]);
+    assert.equal(result.status, 'synced');
+    assert.equal(result.skippedPut, false);
+    assert.equal(result.version, 3);
+    assert.equal(harness.fetches.filter(r => r.method === 'PUT').length, 1);
+    const putFetch = harness.fetches.find(r => r.method === 'PUT');
+    const putBody = JSON.parse(putFetch.body);
+    assert.equal(putBody.version, 3);
+    assert.equal(putBody.services, undefined);
+    assert.equal(putBody.deleted_ids, undefined);
+    assert.equal(result.tombstones.length, 0);
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('sync v4 concurrency: HTTP 409 retries with backoff and advances version', async () => {
+  resetSyncInstrumentation();
+  const v1Blob = await runInContext(`(async () => {
+    const lookup = await deriveLookupId('my-master-secret', 'test@gmail.com');
+    const key = await deriveEncryptionKey('my-master-secret', 'test@gmail.com');
+    const blob = await encryptBlob(key, new TextEncoder().encode(JSON.stringify({
+      services: [], ssh_keys: [], wallets: [], sync_conflicts: []
+    })), new TextEncoder().encode(lookup));
+    return {
+      version: 1, encrypted_blob: arrayBufferToBase64(blob),
+      checksum: await sha256Hex(blob)
+    };
+  })()`, ctx);
+  const v2Blob = await runInContext(`(async () => {
+    const lookup = await deriveLookupId('my-master-secret', 'test@gmail.com');
+    const key = await deriveEncryptionKey('my-master-secret', 'test@gmail.com');
+    const blob = await encryptBlob(key, new TextEncoder().encode(JSON.stringify({
+      services: [{
+        id: 'peer-svc', name: 'Peer', site: 'peer.com', email: 'p@peer.com',
+        length: 20, symbols: '!', counter: 1, updated_at: 50, migrating: null,
+        totp: null, ssh: null
+      }],
+      ssh_keys: [], wallets: [], sync_conflicts: []
+    })), new TextEncoder().encode(lookup));
+    return {
+      version: 2, encrypted_blob: arrayBufferToBase64(blob),
+      checksum: await sha256Hex(blob)
+    };
+  })()`, ctx);
+
+  let putCount = 0;
+  let getCount = 0;
+  const harness = installSyncHarness(syncResponse(200, v1Blob));
+  harness.fetchHandler = async (url, options) => {
+    if (options.method === 'GET') {
+      getCount++;
+      if (getCount === 1) return syncResponse(200, v1Blob, 'etag-1');
+      return syncResponse(200, v2Blob, 'etag-2');
+    }
+    if (options.method === 'PUT') {
+      putCount++;
+      if (putCount === 1) {
+        return syncResponse(409, {
+          error: 'conflict', code: 'VERSION_CONFLICT', current_version: 2, expected_version: 3, received_version: 2
+        });
+      }
+      return syncResponse(200, {version: 3, checksum: 'final-checksum', etag: 'etag-3'});
+    }
+  };
+
+  installSyncInstrumentation();
+  try {
+    const result = await call('syncWithServer', 'my-master-secret', 'test@gmail.com', [{
+      id: 'local-svc', site: 'local.com', name: 'Local', email: 'l@local.com',
+      length: 20, symbols: '!', counter: 1, updated_at: 100, synced: false
+    }], [], []);
+    assert.equal(result.status, 'synced');
+    assert.equal(result.version, 3);
+    assert.equal(putCount, 2);
+    assert.equal(getCount, 2);
+    // Services should have both peer and local
+    assert.equal(result.services.length, 2);
+  } finally {
+    resetSyncInstrumentation();
+  }
+});
+
+await test('sync v4 concurrency: HTTP 409 throws conflict when retries exhausted', async () => {
+  resetSyncInstrumentation();
+  const v1Blob = await runInContext(`(async () => {
+    const lookup = await deriveLookupId('my-master-secret', 'test@gmail.com');
+    const key = await deriveEncryptionKey('my-master-secret', 'test@gmail.com');
+    const blob = await encryptBlob(key, new TextEncoder().encode(JSON.stringify({
+      services: [], ssh_keys: [], wallets: [], sync_conflicts: []
+    })), new TextEncoder().encode(lookup));
+    return {
+      version: 1, encrypted_blob: arrayBufferToBase64(blob),
+      checksum: await sha256Hex(blob)
+    };
+  })()`, ctx);
+
+  let putCount = 0;
+  const harness = installSyncHarness(syncResponse(200, v1Blob));
+  harness.fetchHandler = async (url, options) => {
+    if (options.method === 'GET') {
+      return syncResponse(200, v1Blob, 'etag-1');
+    }
+    if (options.method === 'PUT') {
+      putCount++;
+      return syncResponse(409, {
+        error: 'conflict', code: 'VERSION_CONFLICT', current_version: 1, expected_version: 2, received_version: 2
+      });
+    }
+  };
+
+  installSyncInstrumentation();
+  try {
+    await assert.rejects(
+      () => call('syncWithServer', 'my-master-secret', 'test@gmail.com', [{
+        id: 'local-svc', site: 'local.com', name: 'Local', email: 'l@local.com',
+        length: 20, symbols: '!', counter: 1, updated_at: 100, synced: false
+      }], [], []),
+      err => err && (err.message === 'conflict' || err.status === 'conflict' || err.code === 'CONFLICT')
+    );
+    // Initial attempt + 3 retries = 4 PUT attempts
+    assert.equal(putCount, 4);
   } finally {
     resetSyncInstrumentation();
   }

@@ -49,11 +49,11 @@ function canonicalPayload(payload) {
   const copy = {...payload};
   copy.services = [...payload.services].sort((a, b) => compareCodePoints(a.id ?? '', b.id ?? ''));
   copy.wallets = [...payload.wallets].sort((a, b) => compareCodePoints(
-    `${(a.wallet_name ?? '').toLowerCase()}:${(a.chain ?? '').toLowerCase()}`,
-    `${(b.wallet_name ?? '').toLowerCase()}:${(b.chain ?? '').toLowerCase()}`));
+    (a.wallet_name ?? '').toLowerCase(),
+    (b.wallet_name ?? '').toLowerCase()));
   copy.wallet_audit_log = [...payload.wallet_audit_log].sort((a, b) => compareCodePoints(
-    `${a.timestamp}\u0000${a.wallet_name}\u0000${a.chain}\u0000${a.action}`,
-    `${b.timestamp}\u0000${b.wallet_name}\u0000${b.chain}\u0000${b.action}`));
+    `${a.timestamp}\u0000${a.wallet_name}\u0000${a.action}`,
+    `${b.timestamp}\u0000${b.wallet_name}\u0000${b.action}`));
   copy.sync_conflicts = [...payload.sync_conflicts].sort((a, b) => compareCodePoints(a.conflict_id, b.conflict_id));
   return canonicalJSON(copy);
 }

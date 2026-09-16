@@ -109,15 +109,18 @@ sealed class SyncResult {
         val services: List<ServiceEntry>,
         val sshKeys: List<SshKeyEntry> = emptyList(),
         val wallets: List<WalletEntry>,
-        val walletAuditLog: List<WalletAuditEntry>,
+        val walletAuditLog: List<WalletAuditEntry> = emptyList(),
         val syncConflicts: List<SyncConflict>,
-        val status: String
+        val status: String,
+        val version: Int = 0
     ) : SyncResult()
     data class AuthError(val httpCode: Int) : SyncResult()
     data class NetworkError(val cause: Throwable) : SyncResult()
     data class ServerError(val httpCode: Int, val body: String) : SyncResult()
     data class IntegrityError(val detail: String) : SyncResult()
     data object UpgradeRequired : SyncResult()
+    data object Conflict : SyncResult()
+    @Deprecated("Use Conflict instead", ReplaceWith("SyncResult.Conflict"))
     data object ConflictError : SyncResult()
 }
 
@@ -175,7 +178,6 @@ data class WalletEntry(
     val notes: String = "",
     val synced: Boolean = false,
     val walletName: String = walletId,
-    val chain: String = "universal",
     val email: String = "",
     val mode: String = "keygrain"
 ) {
@@ -183,7 +185,6 @@ data class WalletEntry(
         // If legacy format (wallet_name present without wallet_id), preserve legacy keys
         if (walletId.isEmpty() && walletName.isNotEmpty()) {
             put("wallet_name", walletName)
-            put("chain", chain)
             put("counter", counter)
             put("email", email)
             put("mode", mode)
@@ -220,24 +221,21 @@ data class WalletEntry(
                 updatedAt = obj.optString("updated_at", ""),
                 notes = obj.optString("notes", ""),
                 walletName = wName,
-                chain = obj.optString("chain", "universal"),
                 email = obj.optString("email", ""),
                 mode = obj.optString("mode", "keygrain")
             )
         }
 
         fun mergeKey(w: WalletEntry): String {
-            val primary = if (w.walletId.isNotEmpty()) w.walletId else if (w.walletName.isNotEmpty()) w.walletName else w.id
-            val secondary = if (w.chain.isNotEmpty()) w.chain else "universal"
-            return "${primary.lowercase()}:${secondary.lowercase()}"
+            return (w.walletId.ifEmpty { w.walletName.ifEmpty { w.id } }).lowercase()
         }
     }
 }
 
+@Deprecated("Eliminated from sync payloads")
 data class WalletAuditEntry(
     val action: String,
     val walletName: String,
-    val chain: String,
     val counter: Int,
     val timestamp: String,
     val verification: String
@@ -245,19 +243,17 @@ data class WalletAuditEntry(
     fun toJson(): JSONObject = JSONObject().apply {
         put("action", action)
         put("wallet_name", walletName)
-        put("chain", chain)
         put("counter", counter)
         put("timestamp", timestamp)
         put("verification", verification)
     }
 
-    fun dedupeKey(): String = "$timestamp:$walletName:$chain:$action"
+    fun dedupeKey(): String = "$timestamp:$walletName:$action"
 
     companion object {
         fun fromJson(obj: JSONObject): WalletAuditEntry = WalletAuditEntry(
             action = obj.optString("action", ""),
             walletName = obj.optString("wallet_name", ""),
-            chain = obj.optString("chain", ""),
             counter = obj.optInt("counter", 1),
             timestamp = obj.optString("timestamp", ""),
             verification = obj.optString("verification", "")
@@ -278,7 +274,6 @@ data class SshKeyEntry(
         put("id", id)
         put("key_name", keyName)
         put("counter", counter)
-        if (email.isNotEmpty()) put("email", email)
         if (comment.isNotEmpty()) put("comment", comment)
         put("created_at", createdAt)
         put("updated_at", updatedAt)
@@ -300,13 +295,14 @@ data class SshKeyEntry(
 
         fun fromJson(obj: JSONObject): SshKeyEntry {
             val kn = obj.optString("key_name", "")
-            val emailVal = obj.optString("email", "")
-            val commentVal = obj.optString("comment", kn)
+            val commentRaw = obj.optString("comment", "")
+            val emailRaw = obj.optString("email", "")
+            val commentVal = commentRaw.ifEmpty { emailRaw.ifEmpty { kn } }
             return SshKeyEntry(
                 id = if (obj.has("id")) obj.optString("id", "") else java.util.UUID.randomUUID().toString(),
                 keyName = kn,
                 counter = obj.optInt("counter", 1),
-                email = emailVal,
+                email = "",
                 comment = commentVal,
                 createdAt = parseTime(obj, "created_at"),
                 updatedAt = parseTime(obj, "updated_at")
