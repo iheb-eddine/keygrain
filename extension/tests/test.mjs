@@ -959,6 +959,16 @@ await test('canonicalBlobPayload: excludes local-only synced flag', async () => 
   assert.equal(a, b);
 });
 
+await test('canonicalBlobPayload: excludes local-only synced flag for wallets and ssh keys', async () => {
+  ctx._w1 = [{ wallet_id: 'savings', synced: true }];
+  ctx._w2 = [{ wallet_id: 'savings' }];
+  ctx._k1 = [{ key_name: 'prod', synced: true }];
+  ctx._k2 = [{ key_name: 'prod' }];
+  const a = runInContext(`canonicalBlobPayload([], [], _w1, [], _k1)`, ctx);
+  const b = runInContext(`canonicalBlobPayload([], [], _w2, [], _k2)`, ctx);
+  assert.equal(a, b);
+});
+
 // ---- migrateLocalPayload (design §8) ----
 
 await test('migrateLocalPayload: knownUUIDs become synced flags', async () => {
@@ -1024,15 +1034,23 @@ await test('mergeWallets: local wallet present, remote empty, preserved locally'
 });
 
 await test('mergeWallets: local wallet present, remote empty, lastSyncAt newer -> deleted remotely', async () => {
-  const local = [{ wallet_name: 'old-wallet', created_at: 50, updated_at: 50 }];
+  const local = [{ id: 'w-old', wallet_name: 'old-wallet', created_at: 50, updated_at: 50, synced: true }];
   const remote = [];
   ctx._local = local; ctx._remote = remote; ctx._tombs = [];
   const result = runInContext(`mergeWallets(_local, _remote, _tombs, [], 100, true)`, ctx);
   assert.equal(result.merged.length, 0);
 });
 
+await test('mergeWallets: local wallet present, remote empty, zero resurrection when lastSyncAt === 0', async () => {
+  const local = [{ id: 'w-old', wallet_name: 'old-wallet', created_at: 50, updated_at: 50, synced: true }];
+  const remote = [];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs, [], 0, true)`, ctx);
+  assert.equal(result.merged.length, 0);
+});
+
 await test('mergeWallets: local wallet present, remote empty, local newer than lastSyncAt -> preserved', async () => {
-  const local = [{ wallet_name: 'offline-created', created_at: 150, updated_at: 150 }];
+  const local = [{ id: 'w-new', wallet_name: 'offline-created', created_at: 150, updated_at: 150, synced: false }];
   const remote = [];
   ctx._local = local; ctx._remote = remote; ctx._tombs = [];
   const result = runInContext(`mergeWallets(_local, _remote, _tombs, [], 100, true)`, ctx);
@@ -1077,15 +1095,23 @@ await test('mergeSshKeys: local ssh key present, remote empty, preserved locally
 });
 
 await test('mergeSshKeys: local ssh key present, remote empty, lastSyncAt newer -> deleted remotely', async () => {
-  const local = [{ key_name: 'old-server', created_at: 50, updated_at: 50 }];
+  const local = [{ id: 'k-old', key_name: 'old-server', created_at: 50, updated_at: 50, synced: true }];
   const remote = [];
   ctx._local = local; ctx._remote = remote; ctx._tombs = [];
   const result = runInContext(`mergeSshKeys(_local, _remote, _tombs, [], 100, true)`, ctx);
   assert.equal(result.merged.length, 0);
 });
 
+await test('mergeSshKeys: local ssh key present, remote empty, zero resurrection when lastSyncAt === 0', async () => {
+  const local = [{ id: 'k-old', key_name: 'old-server', created_at: 50, updated_at: 50, synced: true }];
+  const remote = [];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs, [], 0, true)`, ctx);
+  assert.equal(result.merged.length, 0);
+});
+
 await test('mergeSshKeys: local ssh key present, remote empty, local newer than lastSyncAt -> preserved', async () => {
-  const local = [{ key_name: 'new-offline-server', created_at: 150, updated_at: 150 }];
+  const local = [{ id: 'k-new', key_name: 'new-offline-server', created_at: 150, updated_at: 150, synced: false }];
   const remote = [];
   ctx._local = local; ctx._remote = remote; ctx._tombs = [];
   const result = runInContext(`mergeSshKeys(_local, _remote, _tombs, [], 100, true)`, ctx);
@@ -1111,6 +1137,110 @@ await test('mergeSshKeys: ssh key edited key_name with same UUID id does not dup
   assert.equal(result.merged.length, 1);
   assert.equal(result.merged[0].key_name, 'prod-server');
   assert.equal(result.merged[0].id, 'uuid-ssh-1');
+});
+
+await test('mergeWallets: Rule 7 newer remote edit resurrects over tombstone', async () => {
+  const local = [];
+  const remote = [{ id: 'w-res', wallet_name: 'resurrected-wallet', updated_at: 200 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [{ id: 'w-res', deleted_at: 100 }];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].id, 'w-res');
+  assert.equal(result.merged[0].synced, true);
+  assert.equal(result.resurrected.length, 1);
+  assert.equal(result.resurrected[0], 'w-res');
+  assert.equal(result.tombstones.length, 0);
+});
+
+await test('mergeWallets: Rule 7 older remote stays deleted and is declared', async () => {
+  const local = [];
+  const remote = [{ id: 'w-del', wallet_name: 'stale-wallet', updated_at: 100 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [{ id: 'w-del', deleted_at: 200 }];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 0);
+  assert.equal(result.deletedIds.length, 1);
+  assert.equal(result.deletedIds[0], 'w-del');
+  assert.equal(result.tombstones.length, 1);
+  assert.equal(result.tombstones[0].id, 'w-del');
+});
+
+await test('mergeWallets: tombstone for already-absent wallet id clears without declaring', async () => {
+  const local = [];
+  const remote = [{ id: 'w-live', wallet_name: 'live-wallet', updated_at: 100 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [{ id: 'ghost-wallet', deleted_at: 200 }];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.deletedIds.length, 0);
+  assert.equal(result.tombstones.length, 0);
+});
+
+await test('mergeWallets: duplicate collapse tombstones and declares synced loser', async () => {
+  const local = [
+    { id: 'w1', wallet_id: 'same-wallet', updated_at: 200, synced: true },
+    { id: 'w2', wallet_id: 'same-wallet', updated_at: 100, synced: true }
+  ];
+  const remote = [
+    { id: 'w1', wallet_id: 'same-wallet', updated_at: 200 },
+    { id: 'w2', wallet_id: 'same-wallet', updated_at: 100 }
+  ];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeWallets(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].id, 'w1');
+  assert.equal(result.deletedIds.includes('w2'), true);
+  assert.equal(result.tombstones.some(t => t.id === 'w2'), true);
+});
+
+await test('mergeSshKeys: Rule 7 newer remote edit resurrects over tombstone', async () => {
+  const local = [];
+  const remote = [{ id: 'k-res', key_name: 'resurrected-key', updated_at: 200 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [{ id: 'k-res', deleted_at: 100 }];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].id, 'k-res');
+  assert.equal(result.merged[0].synced, true);
+  assert.equal(result.resurrected.length, 1);
+  assert.equal(result.resurrected[0], 'k-res');
+  assert.equal(result.tombstones.length, 0);
+});
+
+await test('mergeSshKeys: Rule 7 older remote stays deleted and is declared', async () => {
+  const local = [];
+  const remote = [{ id: 'k-del', key_name: 'stale-key', updated_at: 100 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [{ id: 'k-del', deleted_at: 200 }];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 0);
+  assert.equal(result.deletedIds.length, 1);
+  assert.equal(result.deletedIds[0], 'k-del');
+  assert.equal(result.tombstones.length, 1);
+  assert.equal(result.tombstones[0].id, 'k-del');
+});
+
+await test('mergeSshKeys: tombstone for already-absent ssh key id clears without declaring', async () => {
+  const local = [];
+  const remote = [{ id: 'k-live', key_name: 'live-key', updated_at: 100 }];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [{ id: 'ghost-key', deleted_at: 200 }];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.deletedIds.length, 0);
+  assert.equal(result.tombstones.length, 0);
+});
+
+await test('mergeSshKeys: duplicate collapse tombstones and declares synced loser', async () => {
+  const local = [
+    { id: 'k1', key_name: 'same-key', updated_at: 200, synced: true },
+    { id: 'k2', key_name: 'same-key', updated_at: 100, synced: true }
+  ];
+  const remote = [
+    { id: 'k1', key_name: 'same-key', updated_at: 200 },
+    { id: 'k2', key_name: 'same-key', updated_at: 100 }
+  ];
+  ctx._local = local; ctx._remote = remote; ctx._tombs = [];
+  const result = runInContext(`mergeSshKeys(_local, _remote, _tombs)`, ctx);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.merged[0].id, 'k1');
+  assert.equal(result.deletedIds.includes('k2'), true);
+  assert.equal(result.tombstones.some(t => t.id === 'k2'), true);
 });
 
 await test('mergeAuditLog: deprecated no-op returns empty array', async () => {

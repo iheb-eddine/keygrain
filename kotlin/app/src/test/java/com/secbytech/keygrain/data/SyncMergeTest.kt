@@ -188,7 +188,7 @@ class SyncMergeTest {
     @Test
     fun localWalletPresent_remoteEmpty_lastSyncNewer_walletDeletedRemotely() {
         val local = listOf(
-            WalletEntry(id = "w1", walletId = "old-wallet", updatedAt = "2026-09-10T10:00:00Z")
+            WalletEntry(id = "w1", walletId = "old-wallet", updatedAt = "2026-09-10T10:00:00Z", synced = true)
         )
         val lastSyncAt = Instant.parse("2026-09-10T12:00:00Z").toEpochMilli()
         val (merged, _) = SyncMerge.mergeWallets(
@@ -199,6 +199,41 @@ class SyncMergeTest {
             remoteExists = true
         )
         assertEquals(0, merged.size)
+    }
+
+    @Test
+    fun localWalletPresent_remoteEmpty_lastSyncZero_walletDeletedRemotely_zeroResurrectionBug() {
+        // Zero resurrection bug test: when lastSyncAt == 0 and remoteExists == true,
+        // a synced local wallet absent remotely MUST be deleted remotely, not resurrected.
+        val local = listOf(
+            WalletEntry(id = "w1", walletId = "old-wallet", updatedAt = "2026-09-10T10:00:00Z", synced = true)
+        )
+        val (merged, _) = SyncMerge.mergeWallets(
+            local = local,
+            remote = emptyList(),
+            tombstones = emptyList(),
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(0, merged.size)
+    }
+
+    @Test
+    fun localWalletPresent_remoteEmpty_unsynced_pushedAsLocalCreate() {
+        // Rule 4: unsynced local wallet is pushed to server, never deleted remotely
+        val local = listOf(
+            WalletEntry(id = "w-new", walletId = "new-wallet", updatedAt = "2026-09-10T10:00:00Z", synced = false)
+        )
+        val (merged, _) = SyncMerge.mergeWallets(
+            local = local,
+            remote = emptyList(),
+            tombstones = emptyList(),
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(1, merged.size)
+        assertEquals("new-wallet", merged[0].walletId)
+        org.junit.Assert.assertFalse(merged[0].synced)
     }
 
     @Test
@@ -238,7 +273,7 @@ class SyncMergeTest {
     @Test
     fun localSshKeyPresent_remoteEmpty_lastSyncNewer_sshKeyDeletedRemotely() {
         val local = listOf(
-            SshKeyEntry(id = "k1", keyName = "old-server", updatedAt = 1000L)
+            SshKeyEntry(id = "k1", keyName = "old-server", updatedAt = 1000L, synced = true)
         )
         val (merged, _) = SyncMerge.mergeSshKeys(
             local = local,
@@ -248,6 +283,41 @@ class SyncMergeTest {
             remoteExists = true
         )
         assertEquals(0, merged.size)
+    }
+
+    @Test
+    fun localSshKeyPresent_remoteEmpty_lastSyncZero_sshKeyDeletedRemotely_zeroResurrectionBug() {
+        // Zero resurrection bug test: when lastSyncAt == 0 and remoteExists == true,
+        // a synced local SSH key absent remotely MUST be deleted remotely, not resurrected.
+        val local = listOf(
+            SshKeyEntry(id = "k1", keyName = "old-server", updatedAt = 1000L, synced = true)
+        )
+        val (merged, _) = SyncMerge.mergeSshKeys(
+            local = local,
+            remote = emptyList(),
+            tombstones = emptyList(),
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(0, merged.size)
+    }
+
+    @Test
+    fun localSshKeyPresent_remoteEmpty_unsynced_pushedAsLocalCreate() {
+        // Rule 4: unsynced local SSH key is pushed to server, never deleted remotely
+        val local = listOf(
+            SshKeyEntry(id = "k-new", keyName = "new-server", updatedAt = 1000L, synced = false)
+        )
+        val (merged, _) = SyncMerge.mergeSshKeys(
+            local = local,
+            remote = emptyList(),
+            tombstones = emptyList(),
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(1, merged.size)
+        assertEquals("new-server", merged[0].keyName)
+        org.junit.Assert.assertFalse(merged[0].synced)
     }
 
     @Test

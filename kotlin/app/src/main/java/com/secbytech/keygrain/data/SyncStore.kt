@@ -163,15 +163,8 @@ internal object SyncStore {
     }
 
     fun saveSshKeys(context: Context, keys: List<SshKeyEntry>) {
-        val arr = JSONArray().apply { keys.forEach { put(it.toJson()) } }
+        val arr = JSONArray().apply { keys.forEach { put(it.toJson(includeSynced = true)) } }
         getPrefs(context).edit().putString("ssh_keys", arr.toString()).apply()
-    }
-
-    fun getKnownWalletKeys(context: Context): Set<String> =
-        getPrefs(context).getStringSet("known_wallet_keys", emptySet()) ?: emptySet()
-
-    fun setKnownWalletKeys(context: Context, keys: Set<String>) {
-        getPrefs(context).edit().putStringSet("known_wallet_keys", keys).apply()
     }
 
 
@@ -184,7 +177,7 @@ internal object SyncStore {
     }
 
     fun saveWallets(context: Context, wallets: List<WalletEntry>) {
-        val arr = JSONArray().apply { wallets.forEach { put(it.toJson()) } }
+        val arr = JSONArray().apply { wallets.forEach { put(it.toJson(includeSynced = true)) } }
         getPrefs(context).edit().putString("wallets", arr.toString()).apply()
     }
 
@@ -199,8 +192,8 @@ internal object SyncStore {
         }
         saveWallets(context, current)
         val tombId = if (wallet.id.isNotEmpty()) wallet.id else if (wallet.walletId.isNotEmpty()) wallet.walletId else wallet.walletName
-        val existing = getWalletTombstones(context).filter { it.id != tombId && it.id != targetKey }
-        setWalletTombstones(context, existing)
+        val existing = getTombstones(context).filter { it.id != tombId && it.id != targetKey }
+        setTombstones(context, existing)
     }
 
     fun removeWallet(context: Context, wallet: WalletEntry): Boolean {
@@ -210,8 +203,8 @@ internal object SyncStore {
         if (removed) saveWallets(context, current)
         val tombId = if (wallet.id.isNotEmpty()) wallet.id else targetKey
         val now = System.currentTimeMillis()
-        val existing = getWalletTombstones(context).filter { it.id != tombId && it.id != targetKey }
-        setWalletTombstones(context, existing + Tombstone(tombId, now))
+        val existing = getTombstones(context).filter { it.id != tombId && it.id != targetKey }
+        setTombstones(context, existing + SyncTombstone(tombId, now))
         return removed
     }
 
@@ -226,8 +219,8 @@ internal object SyncStore {
         }
         saveSshKeys(context, current)
         val tombId = if (key.id.isNotEmpty()) key.id else key.keyName
-        val existing = getSshTombstones(context).filter { it.id != tombId && it.id != targetKey }
-        setSshTombstones(context, existing)
+        val existing = getTombstones(context).filter { it.id != tombId && it.id != targetKey }
+        setTombstones(context, existing)
     }
 
     fun removeSshKey(context: Context, key: SshKeyEntry): Boolean {
@@ -237,23 +230,46 @@ internal object SyncStore {
         if (removed) saveSshKeys(context, current)
         val tombId = if (key.id.isNotEmpty()) key.id else key.keyName
         val now = System.currentTimeMillis()
-        val existing = getSshTombstones(context).filter { it.id != tombId }
-        setSshTombstones(context, existing + Tombstone(tombId, now))
+        val existing = getTombstones(context).filter { it.id != tombId }
+        setTombstones(context, existing + SyncTombstone(tombId, now))
         return removed
     }
 
-    fun getWalletTombstones(context: Context): List<Tombstone> {
-        val json = getPrefs(context).getString("wallet_tombstones", "[]") ?: "[]"
+    fun getTombstones(context: Context): List<SyncTombstone> {
+        val prefs = getPrefs(context)
+        if (!prefs.contains("tombstones") && (prefs.contains("wallet_tombstones") || prefs.contains("ssh_tombstones"))) {
+            val walletTombsJson = prefs.getString("wallet_tombstones", "[]") ?: "[]"
+            val sshTombsJson = prefs.getString("ssh_tombstones", "[]") ?: "[]"
+            val list = mutableListOf<SyncTombstone>()
+            try {
+                val wArr = JSONArray(walletTombsJson)
+                for (i in 0 until wArr.length()) {
+                    val o = wArr.getJSONObject(i)
+                    list.add(SyncTombstone(o.getString("id"), o.getLong("deleted_at")))
+                }
+            } catch (_: Exception) {}
+            try {
+                val sArr = JSONArray(sshTombsJson)
+                for (i in 0 until sArr.length()) {
+                    val o = sArr.getJSONObject(i)
+                    list.add(SyncTombstone(o.getString("id"), o.getLong("deleted_at")))
+                }
+            } catch (_: Exception) {}
+            setTombstones(context, list)
+            prefs.edit().remove("wallet_tombstones").remove("ssh_tombstones").apply()
+            return list
+        }
+        val json = prefs.getString("tombstones", "[]") ?: "[]"
         val arr = JSONArray(json)
         return (0 until arr.length()).mapNotNull { i ->
             try {
                 val obj = arr.getJSONObject(i)
-                Tombstone(obj.getString("id"), obj.getLong("deleted_at"))
+                SyncTombstone(obj.getString("id"), obj.getLong("deleted_at"))
             } catch (_: Exception) { null }
         }
     }
 
-    fun setWalletTombstones(context: Context, tombstones: List<Tombstone>) {
+    fun setTombstones(context: Context, tombstones: List<SyncTombstone>) {
         val arr = JSONArray()
         tombstones.forEach { t ->
             arr.put(JSONObject().apply {
@@ -261,29 +277,12 @@ internal object SyncStore {
                 put("deleted_at", t.deletedAt)
             })
         }
-        getPrefs(context).edit().putString("wallet_tombstones", arr.toString()).apply()
+        getPrefs(context).edit().putString("tombstones", arr.toString()).apply()
     }
 
-    fun getSshTombstones(context: Context): List<Tombstone> {
-        val json = getPrefs(context).getString("ssh_tombstones", "[]") ?: "[]"
-        val arr = JSONArray(json)
-        return (0 until arr.length()).mapNotNull { i ->
-            try {
-                val obj = arr.getJSONObject(i)
-                Tombstone(obj.getString("id"), obj.getLong("deleted_at"))
-            } catch (_: Exception) { null }
-        }
-    }
-
-    fun setSshTombstones(context: Context, tombstones: List<Tombstone>) {
-        val arr = JSONArray()
-        tombstones.forEach { t ->
-            arr.put(JSONObject().apply {
-                put("id", t.id)
-                put("deleted_at", t.deletedAt)
-            })
-        }
-        getPrefs(context).edit().putString("ssh_tombstones", arr.toString()).apply()
+    fun appendTombstone(context: Context, id: String, deletedAt: Long = System.currentTimeMillis()) {
+        val existing = getTombstones(context).filter { it.id != id }
+        setTombstones(context, existing + SyncTombstone(id, deletedAt))
     }
 
     fun getAuditLog(context: Context): List<WalletAuditEntry> {

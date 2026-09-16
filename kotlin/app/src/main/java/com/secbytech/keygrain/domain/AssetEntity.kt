@@ -685,7 +685,7 @@ fun SshKeyEntry.toAssetEntity(): SshEntity {
         algorithmId = "ed25519",
         createdAt = createdAt,
         updatedAt = updatedAt,
-        synced = false,
+        synced = synced,
         tags = emptyList(),
         frecency = 0.0,
         tombstoned = false
@@ -700,7 +700,8 @@ fun SshEntity.toSshKeyEntry(): SshKeyEntry {
         email = "",
         comment = comment,
         createdAt = createdAt,
-        updatedAt = updatedAt
+        updatedAt = updatedAt,
+        synced = synced
     )
 }
 

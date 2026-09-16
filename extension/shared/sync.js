@@ -349,28 +349,13 @@ async function setSyncVersion(version) {
   await chrome.storage.local.set({syncVersion: version, sync_version: version});
 }
 
-// Known wallet keys (wallet_id pairs seen from server)
-async function getKnownWalletKeys() {
-  const data = await chrome.storage.local.get("syncKnownWalletKeys");
-  return new Set(data.syncKnownWalletKeys || []);
-}
-
-async function setKnownWalletKeys(keys) {
-  await chrome.storage.local.set({syncKnownWalletKeys: [...keys]});
-}
-
-async function getKnownSshKeys() {
-  const data = await chrome.storage.local.get("syncKnownSshKeys");
-  return new Set(data.syncKnownSshKeys || []);
-}
-
-async function setKnownSshKeys(keys) {
-  await chrome.storage.local.set({syncKnownSshKeys: [...keys]});
-}
-
 function sshKeyId(k) {
   const primary = (k && (k.key_name || k.id || "")) + "";
   return primary.toLowerCase().trim();
+}
+
+function walletKey(w) {
+  return (w && (w.wallet_id || w.wallet_name || w.id || "")).toLowerCase().trim();
 }
 
 function normalizeTimestampMs(ts) {
@@ -387,187 +372,262 @@ function normalizeTimestampMs(ts) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function mergeSshKeys(localSshKeys, remoteSshKeys, localTombstones = [], remoteTombstones = [], lastSyncAt = 0, remoteExists = true) {
-  const tombByKey = new Map();
-  const tombs = Array.isArray(localTombstones) ? localTombstones : [];
-  for (const t of tombs) {
-    if (!t) continue;
-    const ts = normalizeTimestampMs(t.deleted_at);
-    if (t.id) {
-      const key = String(t.id).toLowerCase().trim();
-      const prev = tombByKey.get(key);
-      if (prev === undefined || ts > prev) {
-        tombByKey.set(key, ts);
+/**
+ * Unified Entity Reconciliation.
+ * Every entity (service, ssh key, wallet) uses the exact same Identity Principle:
+ *   - synced: boolean (true iff confirmed on server at least once)
+ *   - id: string (unique identifier)
+ *   - updated_at: numeric timestamp
+ *
+ * Rules:
+ *   - Tombstone match: if remote edit is newer (remote.updated_at > tombstone.deleted_at),
+ *     resurrect with synced = true (Rule 7). Otherwise stays deleted. If remote doesn't
+ *     have ID, tombstone is cleared.
+ *   - Local only: if synced && remoteExists, deleted remotely (silently or review).
+ *     If !synced, push local create.
+ *   - Remote only: add locally with synced = true.
+ *   - Both: LWW by updated_at (remote wins tie).
+ *   - Semantic deduplication:
+ *     - Services: by normalized site + email
+ *     - SSH keys: by sshKeyId
+ *     - Wallets: by wallet_id (or wallet_name)
+ */
+function reconcileCollection({
+  localItems = [],
+  localTombstones = [],
+  remoteItems = [],
+  remoteMetadata = [],
+  lastSyncAt = 0,
+  remoteExists = true,
+  entityType = "service",
+  semanticKeyFn,
+  conflictDetector
+}) {
+  const remoteByID = new Map();
+  const remoteBySemanticKey = new Map();
+
+  if (Array.isArray(remoteMetadata) && remoteMetadata.length > 0 && remoteMetadata[0] && remoteMetadata[0].id) {
+    for (let i = 0; i < remoteMetadata.length; i++) {
+      const meta = remoteMetadata[i];
+      if (!meta || !meta.id) continue;
+      const content = remoteItems[i] || {};
+      const item = {
+        ...content,
+        id: meta.id,
+        updated_at: normalizeTimestampMs(meta.updated_at)
+      };
+      remoteByID.set(meta.id, item);
+      if (semanticKeyFn) {
+        const semKey = semanticKeyFn(item);
+        if (semKey) remoteBySemanticKey.set(semKey, item);
       }
     }
-  }
-
-  const remoteTombByKey = new Map();
-  const rTombs = Array.isArray(remoteTombstones) ? remoteTombstones : [];
-  for (const t of rTombs) {
-    if (!t) continue;
-    const ts = normalizeTimestampMs(t.deleted_at);
-    if (t.id) {
-      const key = String(t.id).toLowerCase().trim();
-      const prev = remoteTombByKey.get(key);
-      if (prev === undefined || ts > prev) {
-        remoteTombByKey.set(key, ts);
-      }
-    }
-  }
-
-  function getTombstoneDeletedAt(map, k) {
-    if (!k) return undefined;
-    const candidates = [
-      k.id ? String(k.id).toLowerCase().trim() : null,
-      k.key_name ? String(k.key_name).toLowerCase().trim().replace(/\s+/g, "-") : null,
-      sshKeyId(k).toLowerCase().trim(),
-    ].filter(Boolean);
-
-    let maxTs = undefined;
-    for (const c of candidates) {
-      const ts = map.get(c);
-      if (ts !== undefined && (maxTs === undefined || ts > maxTs)) {
-        maxTs = ts;
-      }
-    }
-    return maxTs;
-  }
-
-  const localById = new Map();
-  const localByKey = new Map();
-  for (const k of (localSshKeys || [])) {
-    if (!k) continue;
-    if (k.id) localById.set(String(k.id).toLowerCase().trim(), k);
-    localByKey.set(sshKeyId(k), k);
-  }
-
-  const merged = [];
-  const retainedTombstones = [];
-  const handledTombstoneKeys = new Set();
-  const handledLocalKeys = new Set();
-  const handledLocalIds = new Set();
-
-  for (const remote of (remoteSshKeys || [])) {
-    if (!remote) continue;
-    const rKey = sshKeyId(remote);
-    const rId = remote.id ? String(remote.id).toLowerCase().trim() : null;
-
-    let local = null;
-    if (rId && !handledLocalIds.has(rId) && localById.has(rId)) {
-      local = localById.get(rId);
-    } else if (!handledLocalKeys.has(rKey) && localByKey.has(rKey)) {
-      const candidate = localByKey.get(rKey);
-      const candId = candidate.id ? String(candidate.id).toLowerCase().trim() : null;
-      if (!candId || !rId || candId === rId) {
-        if (!candId || !handledLocalIds.has(candId)) {
-          local = candidate;
+  } else {
+    for (const r of (remoteItems || [])) {
+      if (!r) continue;
+      const rId = r.id || (semanticKeyFn ? semanticKeyFn(r) : null);
+      if (rId) {
+        const item = {
+          ...r,
+          id: rId,
+          updated_at: normalizeTimestampMs(r.updated_at || r.created_at)
+        };
+        remoteByID.set(rId, item);
+        if (semanticKeyFn) {
+          const semKey = semanticKeyFn(item);
+          if (semKey) remoteBySemanticKey.set(semKey, item);
         }
       }
     }
+  }
 
-    if (local) {
-      const localTs = normalizeTimestampMs(local.updated_at || local.created_at);
-      const remoteTs = normalizeTimestampMs(remote.updated_at || remote.created_at);
-      merged.push(localTs > remoteTs ? local : remote);
+  const localByID = new Map();
+  const localBySemanticKey = new Map();
+  const localWithoutId = [];
 
-      if (local.id) handledLocalIds.add(String(local.id).toLowerCase().trim());
-      handledLocalKeys.add(sshKeyId(local));
-      if (remote.id) handledLocalIds.add(String(remote.id).toLowerCase().trim());
-      handledLocalKeys.add(rKey);
+  for (const item of (localItems || [])) {
+    if (!item) continue;
+    if (item.id) {
+      const normalizedItem = {
+        ...item,
+        updated_at: normalizeTimestampMs(item.updated_at || item.created_at)
+      };
+      localByID.set(item.id, normalizedItem);
+      if (semanticKeyFn) {
+        const semKey = semanticKeyFn(normalizedItem);
+        if (semKey) localBySemanticKey.set(semKey, normalizedItem);
+      }
     } else {
-      const tombDeletedAt = getTombstoneDeletedAt(tombByKey, remote);
-      const remoteTs = normalizeTimestampMs(remote.updated_at || remote.created_at);
-      if (tombDeletedAt !== undefined && tombDeletedAt > remoteTs) {
-        const tombId = remote.id || remote.key_name || rKey;
-        retainedTombstones.push({ id: tombId, deleted_at: tombDeletedAt });
-        const candidates = [
-          remote.id ? String(remote.id).toLowerCase().trim() : null,
-          remote.key_name ? String(remote.key_name).toLowerCase().trim().replace(/\s+/g, "-") : null,
-          sshKeyId(remote).toLowerCase().trim(),
-        ].filter(Boolean);
-        for (const c of candidates) handledTombstoneKeys.add(c);
-      } else {
-        if (tombDeletedAt !== undefined) {
-          const candidates = [
-            remote.id ? String(remote.id).toLowerCase().trim() : null,
-            remote.key_name ? String(remote.key_name).toLowerCase().trim().replace(/\s+/g, "-") : null,
-            sshKeyId(remote).toLowerCase().trim(),
-          ].filter(Boolean);
-          for (const c of candidates) handledTombstoneKeys.add(c);
+      localWithoutId.push(item);
+    }
+  }
+
+  // Tombstones indexed by id
+  const tombByID = new Map();
+  for (const t of (localTombstones || [])) {
+    if (!t || !t.id) continue;
+    const ts = normalizeTimestampMs(t.deleted_at);
+    const key = String(t.id).trim();
+    const prev = tombByID.get(key);
+    if (prev === undefined || ts > prev) {
+      tombByID.set(key, ts);
+    }
+  }
+
+  let merged = [];
+  let tombstones = [];
+  let deletedIds = [];
+  let review = [];
+  const resurrected = [];
+
+  if (!remoteExists) {
+    merged = (localItems || []).filter(item => item && item.id).map(item => ({...item, synced: false}));
+  } else {
+    const allIds = new Set([...localByID.keys(), ...remoteByID.keys(), ...tombByID.keys()]);
+    const handledIds = new Set();
+
+    for (const id of allIds) {
+      if (handledIds.has(id)) continue;
+
+      const L = localByID.get(id);
+      let R = remoteByID.get(id);
+      if (!R && remoteBySemanticKey.has(id)) {
+        R = remoteBySemanticKey.get(id);
+      }
+      const T = tombByID.get(id);
+
+      if (T !== undefined) {
+        if (R && normalizeTimestampMs(R.updated_at) > T) {
+          // Rule 7: a newer remote edit supersedes this pending deletion.
+          merged.push({...R, synced: true});
+          resurrected.push(id);
+          if (R.id) handledIds.add(R.id);
+          if (semanticKeyFn) {
+            const sem = semanticKeyFn(R);
+            if (sem) handledIds.add(sem);
+          }
+        } else {
+          // Stays deleted. Declare it only if the server still holds it;
+          // otherwise if remote doesn't have ID, tombstone is cleared.
+          if (R) {
+            const delId = R.id || id;
+            if (!deletedIds.includes(delId)) deletedIds.push(delId);
+            tombstones.push({id, deleted_at: T});
+            if (R.id) handledIds.add(R.id);
+            if (semanticKeyFn) {
+              const sem = semanticKeyFn(R);
+              if (sem) handledIds.add(sem);
+            }
+          }
         }
-        merged.push(remote);
+        continue;
+      }
+
+      if (L && R) {
+        // Rules 1-3: newer wins, remote wins ties.
+        const winner = normalizeTimestampMs(L.updated_at) > normalizeTimestampMs(R.updated_at) ? L : R;
+        merged.push({...winner, id, synced: true});
+        if (L.id) handledIds.add(L.id);
+        if (R.id) handledIds.add(R.id);
+        continue;
+      }
+
+      if (L) {
+        if (!L.synced) {
+          // Rule 4: never reached the server yet -> create remotely. Never deleted.
+          merged.push(L);
+        } else {
+          // Rule 6: it was on the server and is now gone -> deleted elsewhere.
+          // Retain for review ONLY when this device holds an unsynced change to it.
+          if (normalizeTimestampMs(L.updated_at) > lastSyncAt) {
+            const reviewField = entityType === "wallet" ? "wallet" : (entityType === "ssh_key" ? "ssh_key" : "service");
+            review.push({[reviewField]: L, deleted_at: Date.now(), seen: false});
+          }
+        }
+        if (L.id) handledIds.add(L.id);
+        continue;
+      }
+
+      // Rule 5: remote-only, no tombstone -> create locally.
+      if (R) {
+        merged.push({...R, synced: true});
+        if (R.id) handledIds.add(R.id);
       }
     }
   }
 
-  for (const local of (localSshKeys || [])) {
-    if (!local) continue;
-    const lKey = sshKeyId(local);
-    const lId = local.id ? String(local.id).toLowerCase().trim() : null;
-    if (handledLocalKeys.has(lKey) || (lId && handledLocalIds.has(lId))) continue;
-
-    const remoteTombDeletedAt = getTombstoneDeletedAt(remoteTombByKey, local);
-    const localTs = normalizeTimestampMs(local.updated_at || local.created_at);
-    if (remoteTombDeletedAt !== undefined && remoteTombDeletedAt > localTs) {
-      // Remote tombstone explicitly deleted it
-      continue;
-    }
-    if (remoteExists && lastSyncAt > 0 && localTs <= lastSyncAt) {
-      // Was synced before, no newer edit, absent remotely -> deleted remotely
-      continue;
-    }
-    merged.push(local);
-    if (lId) handledLocalIds.add(lId);
-    handledLocalKeys.add(lKey);
+  // Legacy records with no id yet: assign one and treat as unsynced creates (rule 4).
+  for (const item of localWithoutId) {
+    const assignedId = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+      ? crypto.randomUUID()
+      : ("uuid-" + Math.random().toString(36).slice(2));
+    merged.push({...item, id: assignedId, synced: false});
   }
 
-  // Post-merge LWW deduplication: collapse duplicates by UUID and by sshKeyId
-  const dedupedById = new Map();
+  // Second pass — semantic duplicate collapse
+  const seen = new Map();
+  const syncConflicts = [];
   for (const item of merged) {
-    if (!item) continue;
-    const id = item.id ? String(item.id).toLowerCase().trim() : null;
-    if (id) {
-      const prev = dedupedById.get(id);
-      if (!prev) {
-        dedupedById.set(id, item);
-      } else {
-        const itemTs = normalizeTimestampMs(item.updated_at || item.created_at);
-        const prevTs = normalizeTimestampMs(prev.updated_at || prev.created_at);
-        if (itemTs > prevTs) dedupedById.set(id, item);
-      }
+    const key = semanticKeyFn ? semanticKeyFn(item) : item.id;
+    if (!key) {
+      seen.set(item.id, item);
+      continue;
     }
-  }
-
-  const deduped = [];
-  const seenKeys = new Map();
-  for (const item of merged) {
-    if (!item) continue;
-    const id = item.id ? String(item.id).toLowerCase().trim() : null;
-    if (id && dedupedById.get(id) !== item) continue;
-
-    const key = sshKeyId(item);
-    const prev = seenKeys.get(key);
-    if (!prev) {
-      seenKeys.set(key, item);
-      deduped.push(item);
+    const existing = seen.get(key);
+    if (!existing) {
+      seen.set(key, item);
+      continue;
+    }
+    let winner, loser;
+    const itemTs = normalizeTimestampMs(item.updated_at || item.created_at);
+    const existingTs = normalizeTimestampMs(existing.updated_at || existing.created_at);
+    if (itemTs > existingTs || (itemTs === existingTs && item.id < existing.id)) {
+      winner = item;
+      loser = existing;
     } else {
-      const itemTs = normalizeTimestampMs(item.updated_at || item.created_at);
-      const prevTs = normalizeTimestampMs(prev.updated_at || prev.created_at);
-      if (itemTs > prevTs) {
-        const idx = deduped.indexOf(prev);
-        if (idx >= 0) deduped[idx] = item;
-        seenKeys.set(key, item);
+      winner = existing;
+      loser = item;
+    }
+    seen.set(key, winner);
+    if (conflictDetector) {
+      const conflict = conflictDetector(winner, loser);
+      if (conflict) syncConflicts.push(conflict);
+    }
+    if (loser.synced && (remoteByID.has(loser.id) || (remoteBySemanticKey && remoteBySemanticKey.has(key)))) {
+      const loserId = loser.id || (remoteBySemanticKey && remoteBySemanticKey.get(key)?.id);
+      if (loserId && !deletedIds.includes(loserId)) deletedIds.push(loserId);
+      if (loserId && !tombstones.some(t => t.id === loserId)) {
+        tombstones.push({id: loserId, deleted_at: Date.now()});
       }
     }
   }
 
-  const newKnownKeys = new Set(deduped.map(k => sshKeyId(k)));
-  return { merged: deduped, tombstones: retainedTombstones, knownSshKeys: newKnownKeys };
+  return {
+    merged: [...seen.values()],
+    tombstones,
+    deletedIds,
+    review,
+    resurrected,
+    syncConflicts
+  };
 }
 
-function walletKey(w) {
-  return (w && (w.wallet_id || w.wallet_name || w.id || "")).toLowerCase().trim();
+function mergeSshKeys(localSshKeys, remoteSshKeys, localTombstones = [], remoteMetadata = [], lastSyncAt = 0, remoteExists = true) {
+  const tombs = Array.isArray(localTombstones) ? localTombstones : (localTombstones instanceof Set ? [...localTombstones].map(id => ({id, deleted_at: 0})) : []);
+  const actualLastSyncAt = typeof remoteMetadata === "number" ? remoteMetadata : lastSyncAt;
+  const actualRemoteExists = typeof remoteMetadata === "number" ? (typeof lastSyncAt === "boolean" ? lastSyncAt : true) : remoteExists;
+  const actualMeta = (Array.isArray(remoteMetadata) && remoteMetadata.length > 0 && remoteMetadata[0]?.updated_at !== undefined && remoteMetadata[0]?.deleted_at === undefined) ? remoteMetadata : [];
+
+  return reconcileCollection({
+    localItems: localSshKeys,
+    localTombstones: tombs,
+    remoteItems: remoteSshKeys,
+    remoteMetadata: actualMeta,
+    lastSyncAt: actualLastSyncAt,
+    remoteExists: actualRemoteExists,
+    entityType: "ssh_key",
+    semanticKeyFn: sshKeyId
+  });
 }
 
 /**
@@ -576,186 +636,22 @@ function walletKey(w) {
  * Conflict: most recent updated_at wins (falls back to created_at if updated_at absent).
  * Deletion is explicitly tracked via tombstones.
  */
-function mergeWallets(localWallets, remoteWallets, localTombstones = [], remoteTombstones = [], lastSyncAt = 0, remoteExists = true) {
-  const tombByKey = new Map();
-  const tombs = Array.isArray(localTombstones) ? localTombstones : [];
-  for (const t of tombs) {
-    if (!t) continue;
-    const ts = normalizeTimestampMs(t.deleted_at);
-    if (t.id) {
-      const key = String(t.id).toLowerCase().trim();
-      const prev = tombByKey.get(key);
-      if (prev === undefined || ts > prev) {
-        tombByKey.set(key, ts);
-      }
-    }
-  }
+function mergeWallets(localWallets, remoteWallets, localTombstones = [], remoteMetadata = [], lastSyncAt = 0, remoteExists = true) {
+  const tombs = Array.isArray(localTombstones) ? localTombstones : (localTombstones instanceof Set ? [...localTombstones].map(id => ({id, deleted_at: 0})) : []);
+  const actualLastSyncAt = typeof remoteMetadata === "number" ? remoteMetadata : lastSyncAt;
+  const actualRemoteExists = typeof remoteMetadata === "number" ? (typeof lastSyncAt === "boolean" ? lastSyncAt : true) : remoteExists;
+  const actualMeta = (Array.isArray(remoteMetadata) && remoteMetadata.length > 0 && remoteMetadata[0]?.updated_at !== undefined && remoteMetadata[0]?.deleted_at === undefined) ? remoteMetadata : [];
 
-  const remoteTombByKey = new Map();
-  const rTombs = Array.isArray(remoteTombstones) ? remoteTombstones : [];
-  for (const t of rTombs) {
-    if (!t) continue;
-    const ts = normalizeTimestampMs(t.deleted_at);
-    if (t.id) {
-      const key = String(t.id).toLowerCase().trim();
-      const prev = remoteTombByKey.get(key);
-      if (prev === undefined || ts > prev) {
-        remoteTombByKey.set(key, ts);
-      }
-    }
-  }
-
-  function getTombstoneDeletedAt(map, w) {
-    if (!w) return undefined;
-    const candidates = [
-      w.id ? String(w.id).toLowerCase().trim() : null,
-      walletKey(w).toLowerCase().trim(),
-      w.wallet_id ? String(w.wallet_id).toLowerCase().trim() : null,
-      w.wallet_name ? String(w.wallet_name).toLowerCase().trim() : null,
-    ].filter(Boolean);
-
-    let maxTs = undefined;
-    for (const c of candidates) {
-      const ts = map.get(c);
-      if (ts !== undefined && (maxTs === undefined || ts > maxTs)) {
-        maxTs = ts;
-      }
-    }
-    return maxTs;
-  }
-
-  const localById = new Map();
-  const localByKey = new Map();
-  for (const w of (localWallets || [])) {
-    if (!w) continue;
-    if (w.id) localById.set(String(w.id).toLowerCase().trim(), w);
-    localByKey.set(walletKey(w), w);
-  }
-
-  const merged = [];
-  const retainedTombstones = [];
-  const handledTombstoneKeys = new Set();
-  const handledLocalKeys = new Set();
-  const handledLocalIds = new Set();
-
-  for (const remote of (remoteWallets || [])) {
-    if (!remote) continue;
-    const rKey = walletKey(remote);
-    const rId = remote.id ? String(remote.id).toLowerCase().trim() : null;
-
-    let local = null;
-    if (rId && !handledLocalIds.has(rId) && localById.has(rId)) {
-      local = localById.get(rId);
-    } else if (!handledLocalKeys.has(rKey) && localByKey.has(rKey)) {
-      const candidate = localByKey.get(rKey);
-      const candId = candidate.id ? String(candidate.id).toLowerCase().trim() : null;
-      if (!candId || !rId || candId === rId) {
-        if (!candId || !handledLocalIds.has(candId)) {
-          local = candidate;
-        }
-      }
-    }
-
-    if (local) {
-      const localTs = normalizeTimestampMs(local.updated_at || local.created_at);
-      const remoteTs = normalizeTimestampMs(remote.updated_at || remote.created_at);
-      merged.push(localTs > remoteTs ? local : remote);
-
-      if (local.id) handledLocalIds.add(String(local.id).toLowerCase().trim());
-      handledLocalKeys.add(walletKey(local));
-      if (remote.id) handledLocalIds.add(String(remote.id).toLowerCase().trim());
-      handledLocalKeys.add(rKey);
-    } else {
-      const tombDeletedAt = getTombstoneDeletedAt(tombByKey, remote);
-      const remoteTs = normalizeTimestampMs(remote.updated_at || remote.created_at);
-      if (tombDeletedAt !== undefined && tombDeletedAt > remoteTs) {
-        const tombId = remote.id || remote.wallet_id || remote.wallet_name || rKey;
-        retainedTombstones.push({ id: tombId, deleted_at: tombDeletedAt });
-        const candidates = [
-          remote.id ? String(remote.id).toLowerCase().trim() : null,
-          walletKey(remote).toLowerCase().trim(),
-          remote.wallet_id ? String(remote.wallet_id).toLowerCase().trim() : null,
-          remote.wallet_name ? String(remote.wallet_name).toLowerCase().trim() : null,
-        ].filter(Boolean);
-        for (const c of candidates) handledTombstoneKeys.add(c);
-      } else {
-        if (tombDeletedAt !== undefined) {
-          const candidates = [
-            remote.id ? String(remote.id).toLowerCase().trim() : null,
-            walletKey(remote).toLowerCase().trim(),
-            remote.wallet_id ? String(remote.wallet_id).toLowerCase().trim() : null,
-            remote.wallet_name ? String(remote.wallet_name).toLowerCase().trim() : null,
-          ].filter(Boolean);
-          for (const c of candidates) handledTombstoneKeys.add(c);
-        }
-        merged.push(remote);
-      }
-    }
-  }
-
-  for (const local of (localWallets || [])) {
-    if (!local) continue;
-    const lKey = walletKey(local);
-    const lId = local.id ? String(local.id).toLowerCase().trim() : null;
-    if (handledLocalKeys.has(lKey) || (lId && handledLocalIds.has(lId))) continue;
-
-    const remoteTombDeletedAt = getTombstoneDeletedAt(remoteTombByKey, local);
-    const localTs = normalizeTimestampMs(local.updated_at || local.created_at);
-    if (remoteTombDeletedAt !== undefined && remoteTombDeletedAt > localTs) {
-      // Remote tombstone explicitly deleted it
-      continue;
-    }
-    if (remoteExists && lastSyncAt > 0 && localTs <= lastSyncAt) {
-      // Was synced before, no newer edit, absent remotely -> deleted remotely
-      continue;
-    }
-    merged.push(local);
-    if (lId) handledLocalIds.add(lId);
-    handledLocalKeys.add(lKey);
-  }
-
-  // Post-merge LWW deduplication: collapse duplicates by UUID and by walletKey
-  const dedupedById = new Map();
-  for (const item of merged) {
-    if (!item) continue;
-    const id = item.id ? String(item.id).toLowerCase().trim() : null;
-    if (id) {
-      const prev = dedupedById.get(id);
-      if (!prev) {
-        dedupedById.set(id, item);
-      } else {
-        const itemTs = normalizeTimestampMs(item.updated_at || item.created_at);
-        const prevTs = normalizeTimestampMs(prev.updated_at || prev.created_at);
-        if (itemTs > prevTs) dedupedById.set(id, item);
-      }
-    }
-  }
-
-  const deduped = [];
-  const seenKeys = new Map();
-  for (const item of merged) {
-    if (!item) continue;
-    const id = item.id ? String(item.id).toLowerCase().trim() : null;
-    if (id && dedupedById.get(id) !== item) continue;
-
-    const key = walletKey(item);
-    const prev = seenKeys.get(key);
-    if (!prev) {
-      seenKeys.set(key, item);
-      deduped.push(item);
-    } else {
-      const itemTs = normalizeTimestampMs(item.updated_at || item.created_at);
-      const prevTs = normalizeTimestampMs(prev.updated_at || prev.created_at);
-      if (itemTs > prevTs) {
-        const idx = deduped.indexOf(prev);
-        if (idx >= 0) deduped[idx] = item;
-        seenKeys.set(key, item);
-      }
-    }
-  }
-
-  const newKnownKeys = new Set(deduped.map(w => walletKey(w)));
-  return { merged: deduped, tombstones: retainedTombstones, knownWalletKeys: newKnownKeys };
+  return reconcileCollection({
+    localItems: localWallets,
+    localTombstones: tombs,
+    remoteItems: remoteWallets,
+    remoteMetadata: actualMeta,
+    lastSyncAt: actualLastSyncAt,
+    remoteExists: actualRemoteExists,
+    entityType: "wallet",
+    semanticKeyFn: walletKey
+  });
 }
 
 /**
@@ -783,155 +679,27 @@ function parseBlobContent(parsed) {
 /**
  * Sync v3 deletion reconciliation.
  * See the sync v3 reconciliation contract §2.
- *
- * The central invariant: `synced === true` means a record bearing this id has been
- * confirmed present on the server at least once. It is a property of IDENTITY, not of
- * content — editing a service MUST NOT clear it, or rule 6 becomes unreachable for
- * edited records and deleted services resurrect.
- *
- * localServices:  [{id, site, email, ..., updated_at, synced}]
- * localTombstones:[{id, deleted_at}]  pending local deletions
- * remoteServices: decrypted blob service contents, index-aligned with remoteMetadata
- * remoteMetadata: [{id, updated_at}] from the server response
- * lastSyncAt:     lastSuccessfulSyncAt (ms); 0 when never synced
- *
- * Returns {merged, tombstones, deletedIds, review, resurrected, syncConflicts}
- *   merged      — services to keep locally and push
- *   tombstones  — tombstones to retain (cleared ones are dropped)
- *   deletedIds  — ids to declare in the PUT (only ids the server still holds)
- *   review      — records deleted remotely that this device had unsynced changes to
- *   resurrected — ids where a newer remote edit superseded a pending local deletion
  */
 function reconcileServices(localServices, localTombstones, remoteServices, remoteMetadata, lastSyncAt, remoteExists = true) {
-  const remoteByID = new Map();
-  for (let i = 0; i < remoteMetadata.length; i++) {
-    if (!remoteMetadata[i] || !remoteMetadata[i].id) continue;
-    remoteByID.set(remoteMetadata[i].id, {
-      ...remoteServices[i],
-      id: remoteMetadata[i].id,
-      updated_at: remoteMetadata[i].updated_at
-    });
-  }
-
-  const localByID = new Map();
-  const localWithoutId = [];
-  for (const svc of localServices) {
-    if (!svc) continue;
-    if (svc.id) localByID.set(svc.id, svc);
-    // Legacy records (pre-UUID v1 stores) can lack an id. They MUST be given one and
-    // treated as unsynced creates — dropping them would silently lose the service. This
-    // mirrors the same branch in SyncManager.kt.
-    else localWithoutId.push(svc);
-  }
-
-  // Latest deletion intent per id.
-  const tombByID = new Map();
-  for (const t of localTombstones) {
-    if (!t || !t.id) continue;
-    const prev = tombByID.get(t.id);
-    if (!prev || t.deleted_at > prev) tombByID.set(t.id, t.deleted_at);
-  }
-
-  let merged = [];
-  let tombstones = [];
-  let deletedIds = [];
-  let review = [];
-  const resurrected = [];
-
-  if (!remoteExists) {
-    // Frozen Req 11: no server record (fresh account, or server-side data loss). This is
-    // NEVER interpreted as deletions — otherwise a lost blob would wipe every device.
-    // Everything local is re-created, and pending tombstones are dropped because the
-    // server holds nothing to delete.
-    merged = localServices.filter(s => s && s.id).map(s => ({...s, synced: false}));
-  } else {
-    const allIds = new Set([...localByID.keys(), ...remoteByID.keys(), ...tombByID.keys()]);
-
-    for (const id of allIds) {
-      const L = localByID.get(id);
-      const R = remoteByID.get(id);
-      const T = tombByID.get(id);
-
-      if (T !== undefined) {
-        if (R && R.updated_at > T) {
-          // Rule 7: a newer remote edit supersedes this pending deletion.
-          merged.push({...R, synced: true});
-          resurrected.push(id);
-          // tombstone dropped
-        } else {
-          // Stays deleted. Declare it only if the server still holds it; otherwise the
-          // deletion is already reflected remotely and the tombstone can be cleared
-          // without forcing a PUT (§3 step 3, §4).
-          if (R) {
-            deletedIds.push(id);
-            tombstones.push({id, deleted_at: T});
-          }
-        }
-        continue;
+  return reconcileCollection({
+    localItems: localServices,
+    localTombstones,
+    remoteItems: remoteServices,
+    remoteMetadata,
+    lastSyncAt,
+    remoteExists,
+    entityType: "service",
+    semanticKeyFn: svc => (normalizeSite(svc.site) || svc.id) + "\n" + (svc.email || "").toLowerCase(),
+    conflictDetector: (winner, loser) => {
+      if (loser.length !== winner.length || loser.symbols !== winner.symbols ||
+          loser.counter !== winner.counter ||
+          JSON.stringify(loser.totp || null) !== JSON.stringify(winner.totp || null) ||
+          JSON.stringify(loser.ssh || null) !== JSON.stringify(winner.ssh || null)) {
+        return {winner_id: winner.id, loser, detected_at: new Date().toISOString()};
       }
-
-      if (L && R) {
-        // Rules 1-3: newer wins, remote wins ties.
-        const winner = L.updated_at > R.updated_at ? L : R;
-        merged.push({...winner, id, synced: true});
-        continue;
-      }
-
-      if (L) {
-        if (!L.synced) {
-          // Rule 4: never reached the server yet -> create remotely. Never deleted.
-          merged.push(L);
-        } else {
-          // Rule 6: it was on the server and is now gone -> deleted elsewhere.
-          // Retain for review ONLY when this device holds an unsynced change to it
-          // (Frozen Req 7). Routine deletions leave no trace.
-          if (L.updated_at > lastSyncAt) {
-            review.push({service: L, deleted_at: Date.now(), seen: false});
-          }
-          // No tombstone: the server already lacks it.
-        }
-        continue;
-      }
-
-      // Rule 5: remote-only, no tombstone -> create locally.
-      merged.push({...R, synced: true});
+      return null;
     }
-  }
-
-  // Legacy records with no id yet: assign one and treat as unsynced creates (rule 4).
-  for (const svc of localWithoutId) {
-    merged.push({...svc, id: crypto.randomUUID(), synced: false});
-  }
-
-  // Second pass — semantic duplicate collapse by (normalizeSite(site), email).
-  // Unchanged from v2 except that a synced loser is now tombstoned + declared so the
-  // duplicate is removed server-side instead of merely dropped locally.
-  const seen = new Map();
-  const syncConflicts = [];
-  for (const svc of merged) {
-    const key = (normalizeSite(svc.site) || svc.id) + "\n" + (svc.email || "").toLowerCase();
-    const existing = seen.get(key);
-    if (!existing) { seen.set(key, svc); continue; }
-    let winner, loser;
-    if (svc.updated_at > existing.updated_at || (svc.updated_at === existing.updated_at && svc.id < existing.id)) {
-      winner = svc; loser = existing;
-    } else {
-      winner = existing; loser = svc;
-    }
-    seen.set(key, winner);
-    if (loser.length !== winner.length || loser.symbols !== winner.symbols ||
-        loser.counter !== winner.counter ||
-        JSON.stringify(loser.totp || null) !== JSON.stringify(winner.totp || null) ||
-        JSON.stringify(loser.ssh || null) !== JSON.stringify(winner.ssh || null)) {
-      syncConflicts.push({winner_id: winner.id, loser, detected_at: new Date().toISOString()});
-    }
-    if (loser.synced && remoteByID.has(loser.id)) {
-      if (!deletedIds.includes(loser.id)) deletedIds.push(loser.id);
-      if (!tombstones.some(t => t.id === loser.id)) tombstones.push({id: loser.id, deleted_at: Date.now()});
-    }
-  }
-
-  return {merged: [...seen.values()], tombstones, deletedIds, review, resurrected, syncConflicts};
+  });
 }
 
 /**
@@ -1023,7 +791,7 @@ function canonicalBlobPayload(services, metadata, wallets = [], syncConflicts = 
       ssh: content.ssh ?? null
     };
   });
-  const orderedWallets = [...wallets].sort((a, b) => {
+  const orderedWallets = [...wallets].map(({synced, ...w}) => w).sort((a, b) => {
     const ka = (a && (a.wallet_id || a.wallet_name || a.id || "")).toLowerCase();
     const kb = (b && (b.wallet_id || b.wallet_name || b.id || "")).toLowerCase();
     return ka < kb ? -1 : ka > kb ? 1 : 0;
@@ -1046,7 +814,7 @@ function canonicalBlobPayload(services, metadata, wallets = [], syncConflicts = 
     ',"totp":' + canonicalSyncJSON(s.totp) +
     ',"ssh":' + canonicalSyncJSON(s.ssh) + '}'
   );
-  const orderedSshKeys = [...(sshKeys || [])].sort((a, b) => {
+  const orderedSshKeys = [...(sshKeys || [])].map(({synced, ...k}) => k).sort((a, b) => {
     const ka = sshKeyId(a), kb = sshKeyId(b);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
@@ -1095,19 +863,17 @@ function migrateLocalPayload(payload, knownUUIDs, now) {
  * Throws on auth/network/server errors.
  */
 async function syncWithServer(secret, email, localServices, localWallets = [], localTombstones = [], retryCount = 0, isCreate = false, localSshKeys = [], localWalletTombstones = [], localSshTombstones = []) {
+  if (Array.isArray(localWalletTombstones) && localWalletTombstones.length > 0) {
+    localTombstones = [...localTombstones, ...localWalletTombstones];
+  }
+  if (Array.isArray(localSshTombstones) && localSshTombstones.length > 0) {
+    localTombstones = [...localTombstones, ...localSshTombstones];
+  }
   const storageArea = (typeof chrome !== "undefined" && chrome.storage?.local) ? chrome.storage.local : (typeof browser !== "undefined" && browser.storage?.local ? browser.storage.local : null);
   if (storageArea) {
     const { offline_mode } = await storageArea.get("offline_mode");
     if (offline_mode) {
       return { ok: true, status: "offline", offline: true };
-    }
-    if (!localWalletTombstones || localWalletTombstones.length === 0) {
-      const wData = await storageArea.get("wallet_tombstones");
-      if (Array.isArray(wData.wallet_tombstones)) localWalletTombstones = wData.wallet_tombstones;
-    }
-    if (!localSshTombstones || localSshTombstones.length === 0) {
-      const sData = await storageArea.get("ssh_tombstones");
-      if (Array.isArray(sData.ssh_tombstones)) localSshTombstones = sData.ssh_tombstones;
     }
   }
   const lookupId = await deriveLookupId(secret, email);
@@ -1215,15 +981,46 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     }
 
     // Step 2: Reconcile
-    const rec = reconcileServices(localServices, localTombstones, remoteServices, remoteMetadata, lastSyncAt, remoteExists);
-    const merged = rec.merged;
-    const {merged: mergedWallets, tombstones: remWalletTombstones} = mergeWallets(localWallets, remoteWallets, localWalletTombstones, [], lastSyncAt, remoteExists);
-    const {merged: mergedSshKeys, tombstones: remSshTombstones} = mergeSshKeys(localSshKeys, remoteSshKeys, localSshTombstones, [], lastSyncAt, remoteExists);
+    const recServices = reconcileServices(localServices, localTombstones, remoteServices, remoteMetadata, lastSyncAt, remoteExists);
+    const recWallets = mergeWallets(localWallets, remoteWallets, localTombstones, [], lastSyncAt, remoteExists);
+    const recSshKeys = mergeSshKeys(localSshKeys, remoteSshKeys, localTombstones, [], lastSyncAt, remoteExists);
+
+    const merged = recServices.merged;
+    const mergedWallets = recWallets.merged;
+    const mergedSshKeys = recSshKeys.merged;
+
+    const allDeletedIds = Array.from(new Set([
+      ...recServices.deletedIds,
+      ...recWallets.deletedIds,
+      ...recSshKeys.deletedIds,
+    ]));
+
+    const retainedTombstonesMap = new Map();
+    for (const t of [...recServices.tombstones, ...recWallets.tombstones, ...recSshKeys.tombstones]) {
+      if (!t || !t.id) continue;
+      const prev = retainedTombstonesMap.get(t.id);
+      if (prev === undefined || t.deleted_at > prev) {
+        retainedTombstonesMap.set(t.id, t.deleted_at);
+      }
+    }
+    const retainedTombstones = [...retainedTombstonesMap.entries()].map(([id, deleted_at]) => ({ id, deleted_at }));
+
+    const allReview = [
+      ...recServices.review,
+      ...recWallets.review,
+      ...recSshKeys.review,
+    ];
+
+    const allResurrected = Array.from(new Set([
+      ...recServices.resurrected,
+      ...recWallets.resurrected,
+      ...recSshKeys.resurrected,
+    ]));
 
     // Empty-push protection: an empty push is legitimate only when every remote id it
     // drops is explicitly declared as deleted.
     if (merged.length === 0 && remoteMetadata.length > 0) {
-      const declared = new Set(rec.deletedIds);
+      const declared = new Set(recServices.deletedIds);
       const allDeclared = remoteMetadata.every(m => m && m.id && declared.has(m.id));
       if (!allDeclared) throw Object.assign(new Error("empty_push_blocked"), {code: "EMPTY_PUSH_BLOCKED"});
     }
@@ -1237,7 +1034,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     const effectiveRemoteConflicts = dismissData.conflictsDismissed ? [] : remoteConflicts;
     const conflictKeySet = new Set();
     const mergedConflicts = [];
-    for (const c of [...effectiveRemoteConflicts, ...rec.syncConflicts]) {
+    for (const c of [...effectiveRemoteConflicts, ...recServices.syncConflicts, ...(recWallets.syncConflicts || []), ...(recSshKeys.syncConflicts || [])]) {
       const ck = c.winner_id + "+" + (c.loser && c.loser.id);
       if (conflictKeySet.has(ck)) continue;
       conflictKeySet.add(ck);
@@ -1247,7 +1044,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     const sync_conflicts = mergedConflicts.slice(-50);
 
     // Step 3b: Client Dirty-Checking (Zero-Write on No-Op)
-    const hasPendingTombstones = rec.tombstones.length > 0 || rec.deletedIds.length > 0 || remWalletTombstones.length > 0 || remSshTombstones.length > 0;
+    const hasPendingTombstones = retainedTombstones.length > 0 || allDeletedIds.length > 0;
     if (remoteExists && !hasPendingTombstones) {
       const localCanon = canonicalBlobPayload(contentArray, metadataArray, mergedWallets, sync_conflicts, mergedSshKeys);
       const remoteCanon = canonicalBlobPayload(remoteServices, remoteMetadata, remoteWallets, remoteConflicts, remoteSshKeys);
@@ -1258,8 +1055,6 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
           await storageArea.set({
             syncVersion: remoteVersion,
             sync_version: remoteVersion,
-            wallet_tombstones: remWalletTombstones,
-            ssh_tombstones: remSshTombstones,
           });
         }
         return {
@@ -1270,11 +1065,9 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
           status: "unchanged",
           version: remoteVersion,
           etag,
-          tombstones: rec.tombstones,
-          walletTombstones: remWalletTombstones,
-          sshTombstones: remSshTombstones,
-          review: rec.review,
-          resurrected: rec.resurrected,
+          tombstones: retainedTombstones,
+          review: allReview,
+          resurrected: allResurrected,
           skippedPut: true
         };
       }
@@ -1282,10 +1075,12 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
 
     // Step 4: Encrypt and PUT request
     const cleanServices = merged.map(({synced, frecency, ...s}) => s);
+    const cleanWallets = mergedWallets.map(({synced, ...w}) => w);
+    const cleanSshKeys = mergedSshKeys.map(({synced, ...k}) => k);
     const blobPayload = {
       services: cleanServices,
-      ssh_keys: mergedSshKeys,
-      wallets: mergedWallets,
+      ssh_keys: cleanSshKeys,
+      wallets: cleanWallets,
       sync_conflicts
     };
     const plaintext = new TextEncoder().encode(JSON.stringify(blobPayload));
@@ -1321,7 +1116,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       try { await putResp.json(); } catch (_) {}
       if (retryCount < 3) {
         await sleepWithJitter(CONFLICT_BACKOFF_MS[retryCount]);
-        return syncWithServer(secret, email, localServices, localWallets, localTombstones, retryCount + 1, isCreate, localSshKeys, localWalletTombstones, localSshTombstones);
+        return syncWithServer(secret, email, localServices, localWallets, localTombstones, retryCount + 1, isCreate, localSshKeys);
       }
       throw Object.assign(new Error("conflict"), {code: "CONFLICT", status: "conflict"});
     }
@@ -1346,6 +1141,8 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
     }
 
     const confirmedServices = merged.map(s => ({...s, synced: true}));
+    const confirmedWallets = mergedWallets.map(w => ({...w, synced: true}));
+    const confirmedSshKeys = mergedSshKeys.map(k => ({...k, synced: true}));
     const status = remoteExists ? "synced" : "created";
     if (storageArea) {
       await storageArea.set({
@@ -1353,23 +1150,19 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
         sync_version: finalVersion,
         syncConflicts: sync_conflicts,
         conflictsDismissed: false,
-        wallet_tombstones: [],
-        ssh_tombstones: [],
       });
     }
     return {
       services: confirmedServices,
-      wallets: mergedWallets,
-      ssh_keys: mergedSshKeys,
+      wallets: confirmedWallets,
+      ssh_keys: confirmedSshKeys,
       sync_conflicts,
       status,
       version: finalVersion,
       etag: finalEtag,
       tombstones: [],
-      walletTombstones: [],
-      sshTombstones: [],
-      review: rec.review,
-      resurrected: rec.resurrected,
+      review: allReview,
+      resurrected: allResurrected,
       skippedPut: false
     };
   } finally {

@@ -922,8 +922,7 @@ for (const browserName of ['chrome', 'firefox']) {
 await test('executeCollectionMutation handles put and delete for wallets and ssh keys without error', async () => {
   for (const browserName of ['chrome', 'firefox']) {
     const source = ownerSource(browserName);
-    assert.match(source, /let currentWalletTombstones/, `${browserName}: currentWalletTombstones must be reassignable let`);
-    assert.match(source, /let currentSshTombstones/, `${browserName}: currentSshTombstones must be reassignable let`);
+    assert.match(source, /let currentTombstones/, `${browserName}: currentTombstones must be reassignable let`);
     assert.match(source, /const normId = String\(rawName\)/, `${browserName}: normId must be defined`);
 
     let currentFullData = {
@@ -935,8 +934,6 @@ await test('executeCollectionMutation handles put and delete for wallets and ssh
       walletAuditLog: [],
       tombstones: [],
       deletionReview: [],
-      walletTombstones: [],
-      sshTombstones: [],
     };
     const mockOwner = {
       snapshot: () => ({state: 'full'}),
@@ -1002,8 +999,8 @@ await test('executeCollectionMutation handles put and delete for wallets and ssh
     })`, ctx);
     assert.ok(delWallet2.ok, `${browserName}: delete wallet 2 must succeed`);
     assert.equal(delWallet2.data.length, 1);
-    assert.equal(currentFullData.walletTombstones.length, 1);
-    assert.equal(currentFullData.walletTombstones[0].id, 'trading');
+    assert.equal(currentFullData.tombstones.length, 1);
+    assert.equal(currentFullData.tombstones[0].id, 'trading');
 
     // 4. Put wallet 2 again - verifies tombstone is pruned!
     const rePutWallet2 = await runInContext(`executeCollectionMutation({
@@ -1014,7 +1011,7 @@ await test('executeCollectionMutation handles put and delete for wallets and ssh
     })`, ctx);
     assert.ok(rePutWallet2.ok, `${browserName}: re-put wallet 2 must succeed`);
     assert.equal(rePutWallet2.data.length, 2);
-    assert.equal(currentFullData.walletTombstones.length, 0, `${browserName}: tombstone must be pruned on put`);
+    assert.equal(currentFullData.tombstones.length, 0, `${browserName}: tombstone must be pruned on put`);
 
     // 5. Put SSH key
     const putSsh = await runInContext(`executeCollectionMutation({
@@ -1035,7 +1032,8 @@ await test('executeCollectionMutation handles put and delete for wallets and ssh
     })`, ctx);
     assert.ok(delSsh.ok, `${browserName}: delete ssh key must succeed`);
     assert.equal(delSsh.data.length, 0);
-    assert.equal(currentFullData.sshTombstones.length, 1);
+    assert.equal(currentFullData.tombstones.length, 1);
+    assert.equal(currentFullData.tombstones[0].id, 'deploy-key');
 
     // 7. Put SSH key again - verifies tombstone is pruned!
     const rePutSsh = await runInContext(`executeCollectionMutation({
@@ -1046,7 +1044,7 @@ await test('executeCollectionMutation handles put and delete for wallets and ssh
     })`, ctx);
     assert.ok(rePutSsh.ok, `${browserName}: re-put ssh key must succeed`);
     assert.equal(rePutSsh.data.length, 1);
-    assert.equal(currentFullData.sshTombstones.length, 0, `${browserName}: ssh tombstone must be pruned on put`);
+    assert.equal(currentFullData.tombstones.length, 0, `${browserName}: ssh tombstone must be pruned on put`);
 
     console.log(`  ✓ ${browserName}: executeCollectionMutation put/delete lifecycle verified`);
   }

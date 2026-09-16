@@ -8,7 +8,8 @@ import org.json.JSONObject
  * the server no longer holds the id (Frozen Req 5) — so there is no unbounded growth and
  * no GC window.
  */
-data class Tombstone(val id: String, val deletedAt: Long)
+data class SyncTombstone(val id: String, val deletedAt: Long)
+typealias Tombstone = SyncTombstone
 
 /**
  * A service that was deleted on another device while THIS device held an unsynced change

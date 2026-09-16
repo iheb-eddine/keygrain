@@ -165,6 +165,7 @@ class ServiceManager(context: Context) {
             .putString("services", servicesJson(remaining))
             .putString("tombstones", tombstonesJson(tombs))
             .apply()
+        SyncStore.appendTombstone(appContext, id, deletedAt)
     }
 
     // === Sync v3 tombstones (local-only, never sent to the server) ===

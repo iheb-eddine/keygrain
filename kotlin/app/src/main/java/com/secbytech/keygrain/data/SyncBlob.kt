@@ -33,6 +33,9 @@ internal object SyncBlob {
         val orderedWallets = wallets.sortedBy { (it.walletId.ifEmpty { it.walletName }).lowercase() }
         val orderedConflicts = syncConflicts.sortedBy { it.dedupeKey() }
 
+        val cleanSshKeys = orderedSshKeys.map { it.toJson(includeSynced = false).apply { remove("synced") } }
+        val cleanWallets = orderedWallets.map { it.toJson(includeSynced = false).apply { remove("synced") } }
+
         // Top-level and service field order are an existing comparison contract. All nested
         // and variable objects use canonicalJson, which sorts their object keys recursively.
         return buildString {
@@ -42,9 +45,9 @@ internal object SyncBlob {
                 append(canonicalService(service))
             }
             append("],\"ssh_keys\":")
-                .append(canonicalJson(orderedSshKeys.map { it.toJson() }))
+                .append(canonicalJson(cleanSshKeys))
             append(",\"wallets\":")
-                .append(canonicalJson(orderedWallets.map { it.toJson() }))
+                .append(canonicalJson(cleanWallets))
             append(",\"sync_conflicts\":")
                 .append(canonicalJson(orderedConflicts.map { it.toJson() }))
             append("}")
@@ -193,13 +196,13 @@ internal object SyncBlob {
         val sshArr = obj.optJSONArray("ssh_keys") ?: JSONArray()
 
         val parsedSshKeys = (0 until sshArr.length()).mapNotNull { i ->
-            try { SshKeyEntry.fromJson(sshArr.getJSONObject(i)) } catch (_: Exception) { null }
+            try { SshKeyEntry.fromRemoteJson(sshArr.getJSONObject(i)) } catch (_: Exception) { null }
         }
         val legacySshKeys = extractSshKeysFromServices(services)
         val combinedSshKeys = reconcileParsedSsh(parsedSshKeys, legacySshKeys)
 
         val wallets = (0 until walletsArr.length()).mapNotNull { i ->
-            try { WalletEntry.fromJson(walletsArr.getJSONObject(i)) } catch (_: Exception) { null }
+            try { WalletEntry.fromRemoteJson(walletsArr.getJSONObject(i)) } catch (_: Exception) { null }
         }
         val conflicts = (0 until conflictsArr.length()).mapNotNull { i ->
             try { SyncConflict.fromJson(conflictsArr.getJSONObject(i)) } catch (_: Exception) { null }
@@ -221,7 +224,8 @@ internal object SyncBlob {
                         email = svc.email,
                         comment = kn,
                         createdAt = svc.updatedAt,
-                        updatedAt = svc.updatedAt
+                        updatedAt = svc.updatedAt,
+                        synced = true
                     )
                 )
             }

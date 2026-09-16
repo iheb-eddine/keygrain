@@ -14,21 +14,25 @@ import org.json.JSONObject
 internal interface SyncLocalState {
     fun getServices(): List<ServiceEntry>
     fun replaceServices(services: List<ServiceEntry>)
-    fun getServiceTombstones(): List<Tombstone>
-    fun setServiceTombstones(tombstones: List<Tombstone>)
     fun getDeletionReview(): List<DeletionReviewEntry>
     fun setDeletionReview(review: List<DeletionReviewEntry>)
     fun parseServicesJson(json: String): List<ServiceEntry>
 
     fun getSshKeys(): List<SshKeyEntry>
     fun saveSshKeys(keys: List<SshKeyEntry>)
-    fun getSshTombstones(): List<Tombstone>
-    fun setSshTombstones(tombstones: List<Tombstone>)
 
     fun getWallets(): List<WalletEntry>
     fun saveWallets(wallets: List<WalletEntry>)
-    fun getWalletTombstones(): List<Tombstone>
-    fun setWalletTombstones(tombstones: List<Tombstone>)
+
+    fun getTombstones(): List<SyncTombstone>
+    fun setTombstones(tombstones: List<SyncTombstone>)
+
+    fun getServiceTombstones(): List<SyncTombstone> = getTombstones()
+    fun setServiceTombstones(tombstones: List<SyncTombstone>) = setTombstones(tombstones)
+    fun getSshTombstones(): List<SyncTombstone> = getTombstones()
+    fun setSshTombstones(tombstones: List<SyncTombstone>) = setTombstones(tombstones)
+    fun getWalletTombstones(): List<SyncTombstone> = getTombstones()
+    fun setWalletTombstones(tombstones: List<SyncTombstone>) = setTombstones(tombstones)
 
     fun getLastSuccessfulSyncAt(): Long
     fun setLastSuccessfulSyncAt(ts: Long)
@@ -49,21 +53,31 @@ internal class AndroidSyncLocalState(
 ) : SyncLocalState {
     override fun getServices(): List<ServiceEntry> = serviceManager.getServices()
     override fun replaceServices(services: List<ServiceEntry>) = serviceManager.replaceAll(services)
-    override fun getServiceTombstones(): List<Tombstone> = serviceManager.getTombstones()
-    override fun setServiceTombstones(tombstones: List<Tombstone>) = serviceManager.setTombstones(tombstones)
     override fun getDeletionReview(): List<DeletionReviewEntry> = serviceManager.getDeletionReview()
     override fun setDeletionReview(review: List<DeletionReviewEntry>) = serviceManager.setDeletionReview(review)
     override fun parseServicesJson(json: String): List<ServiceEntry> = serviceManager.parseJson(json)
 
     override fun getSshKeys(): List<SshKeyEntry> = SyncStore.getSshKeys(context)
     override fun saveSshKeys(keys: List<SshKeyEntry>) = SyncStore.saveSshKeys(context, keys)
-    override fun getSshTombstones(): List<Tombstone> = SyncStore.getSshTombstones(context)
-    override fun setSshTombstones(tombstones: List<Tombstone>) = SyncStore.setSshTombstones(context, tombstones)
 
     override fun getWallets(): List<WalletEntry> = SyncStore.getWallets(context)
     override fun saveWallets(wallets: List<WalletEntry>) = SyncStore.saveWallets(context, wallets)
-    override fun getWalletTombstones(): List<Tombstone> = SyncStore.getWalletTombstones(context)
-    override fun setWalletTombstones(tombstones: List<Tombstone>) = SyncStore.setWalletTombstones(context, tombstones)
+
+    override fun getTombstones(): List<SyncTombstone> {
+        val smTombs = serviceManager.getTombstones()
+        val storeTombs = SyncStore.getTombstones(context)
+        val map = mutableMapOf<String, Long>()
+        for (t in smTombs + storeTombs) {
+            val prev = map[t.id]
+            if (prev == null || t.deletedAt > prev) map[t.id] = t.deletedAt
+        }
+        return map.entries.map { SyncTombstone(it.key, it.value) }
+    }
+
+    override fun setTombstones(tombstones: List<SyncTombstone>) {
+        serviceManager.setTombstones(emptyList())
+        SyncStore.setTombstones(context, tombstones)
+    }
 
     override fun getLastSuccessfulSyncAt(): Long = SyncStore.getLastSuccessfulSyncAt(context)
     override fun setLastSuccessfulSyncAt(ts: Long) = SyncStore.setLastSuccessfulSyncAt(context, ts)
@@ -121,6 +135,17 @@ class SyncManager(
     fun removeSshKey(context: Context, key: SshKeyEntry) =
         SyncStore.removeSshKey(context, key)
 
+    fun getTombstones(context: Context): List<SyncTombstone> =
+        SyncStore.getTombstones(context)
+
+    fun setTombstones(context: Context, tombstones: List<SyncTombstone>) =
+        SyncStore.setTombstones(context, tombstones)
+
+    fun deleteService(context: Context, serviceManager: ServiceManager, id: String) {
+        serviceManager.deleteService(id)
+        SyncStore.appendTombstone(context, id)
+    }
+
     fun getAuditLog(context: Context): List<WalletAuditEntry> = SyncStore.getAuditLog(context)
 
     fun saveAuditLog(context: Context, log: List<WalletAuditEntry>) =
@@ -173,8 +198,9 @@ class SyncManager(
         val sshKeys: List<SshKeyEntry>,
         val wallets: List<WalletEntry>,
         val auditLog: List<WalletAuditEntry> = emptyList(),
-        val remainingSshTombstones: List<Tombstone>,
-        val remainingWalletTombstones: List<Tombstone>
+        val remainingTombstones: List<SyncTombstone>,
+        val allDeletedIds: List<String>,
+        val allConflicts: List<SyncConflict>
     )
 
     suspend fun sync(
@@ -245,7 +271,7 @@ class SyncManager(
             }
 
             // Merge conflicts: remote + new, dedup by key, cap at 50
-            val syncConflicts = mergeConflicts(currentLocalState, remote.conflicts, m.rec.syncConflicts)
+            val syncConflicts = mergeConflicts(currentLocalState, remote.conflicts, m.allConflicts)
 
             // Step 3b: Client Dirty-Checking (Zero-Write on No-Op)
             trySkipPush(remote, m, syncConflicts, currentLocalState)
@@ -371,38 +397,51 @@ class SyncManager(
         localState: SyncLocalState
     ): MergedState {
         val lastSyncAt = localState.getLastSuccessfulSyncAt()
-        val rec = SyncReconciler.reconcileServices(
+        val localTombstones = localState.getTombstones()
+        val recServices = SyncReconciler.reconcileServices(
             local = localState.getServices(),
-            localTombstones = localState.getServiceTombstones(),
+            localTombstones = localTombstones,
             remote = remote.services,
             remoteMeta = emptyList(),
             lastSyncAt = lastSyncAt,
             remoteExists = remote.exists
         )
-        val (mergedSshKeys, remainingSshTombstones) =
-            SyncMerge.mergeSshKeys(
-                localState.getSshKeys(),
-                remote.sshKeys,
-                localState.getSshTombstones(),
-                lastSyncAt,
-                remote.exists
-            )
-        val (mergedWallets, remainingWalletTombstones) =
-            SyncMerge.mergeWallets(
-                localState.getWallets(),
-                remote.wallets,
-                localState.getWalletTombstones(),
-                lastSyncAt,
-                remote.exists
-            )
+        val recSsh = SyncMerge.mergeSshKeys(
+            local = localState.getSshKeys(),
+            remote = remote.sshKeys,
+            tombstones = localTombstones,
+            lastSyncAt = lastSyncAt,
+            remoteExists = remote.exists
+        )
+        val recWallets = SyncMerge.mergeWallets(
+            local = localState.getWallets(),
+            remote = remote.wallets,
+            tombstones = localTombstones,
+            lastSyncAt = lastSyncAt,
+            remoteExists = remote.exists
+        )
+
+        val allDeletedIds = (recServices.deletedIds + recSsh.deletedIds + recWallets.deletedIds).distinct()
+
+        val retainedTombstonesMap = mutableMapOf<String, Long>()
+        for (t in recServices.tombstones + recSsh.tombstones + recWallets.tombstones) {
+            if (t.id.isEmpty()) continue
+            val prev = retainedTombstonesMap[t.id]
+            if (prev == null || t.deletedAt > prev) {
+                retainedTombstonesMap[t.id] = t.deletedAt
+            }
+        }
+        val remainingTombstones = retainedTombstonesMap.entries.map { SyncTombstone(it.key, it.value) }
+
         return MergedState(
-            rec = rec,
-            services = rec.merged,
-            sshKeys = mergedSshKeys,
-            wallets = mergedWallets,
+            rec = recServices,
+            services = recServices.merged,
+            sshKeys = recSsh.merged,
+            wallets = recWallets.merged,
             auditLog = emptyList(),
-            remainingSshTombstones = remainingSshTombstones,
-            remainingWalletTombstones = remainingWalletTombstones
+            remainingTombstones = remainingTombstones,
+            allDeletedIds = allDeletedIds,
+            allConflicts = recServices.syncConflicts + recSsh.syncConflicts + recWallets.syncConflicts
         )
     }
 
@@ -434,10 +473,7 @@ class SyncManager(
         syncConflicts: List<SyncConflict>,
         localState: SyncLocalState
     ): SyncResult.Success? {
-        val hasPendingTombstones = m.rec.tombstones.isNotEmpty() ||
-            m.rec.deletedIds.isNotEmpty() ||
-            m.remainingSshTombstones.isNotEmpty() ||
-            m.remainingWalletTombstones.isNotEmpty()
+        val hasPendingTombstones = m.remainingTombstones.isNotEmpty() || m.allDeletedIds.isNotEmpty()
 
         if (!remote.exists || hasPendingTombstones) return null
 
@@ -449,14 +485,12 @@ class SyncManager(
         if (localCanon != remoteCanon) return null
 
         localState.replaceServices(m.services)
-        localState.setServiceTombstones(emptyList())
         if (m.rec.review.isNotEmpty()) {
             localState.setDeletionReview(localState.getDeletionReview() + m.rec.review)
         }
-        localState.setSshTombstones(m.remainingSshTombstones)
         localState.saveSshKeys(m.sshKeys)
-        localState.setWalletTombstones(m.remainingWalletTombstones)
         localState.saveWallets(m.wallets)
+        localState.setTombstones(m.remainingTombstones)
         localState.setSyncVersion(remote.version)
         localState.setLastSuccessfulSyncAt(System.currentTimeMillis())
         return SyncResult.Success(
@@ -488,8 +522,8 @@ class SyncManager(
             servicesArray.put(serviceJson)
         }
 
-        val sshArray = JSONArray().apply { m.sshKeys.forEach { put(it.toJson()) } }
-        val walletsArray = JSONArray().apply { m.wallets.forEach { put(it.toJson()) } }
+        val sshArray = JSONArray().apply { m.sshKeys.forEach { put(it.toJson(includeSynced = false)) } }
+        val walletsArray = JSONArray().apply { m.wallets.forEach { put(it.toJson(includeSynced = false)) } }
         val conflictsArray = JSONArray().apply { syncConflicts.forEach { put(it.toJson()) } }
 
         val blobPayload = JSONObject().apply {
@@ -520,23 +554,21 @@ class SyncManager(
         m: MergedState,
         localState: SyncLocalState
     ): List<ServiceEntry> {
-        val pushedIds = m.services.mapNotNull { it.id }.toSet()
-        val confirmed = m.services.map {
-            if (it.id != null && pushedIds.contains(it.id)) it.copy(synced = true) else it
-        }
-        localState.replaceServices(confirmed)
-        localState.setServiceTombstones(emptyList())
+        val confirmedServices = m.services.map { it.copy(synced = true) }
+        val confirmedSshKeys = m.sshKeys.map { it.copy(synced = true) }
+        val confirmedWallets = m.wallets.map { it.copy(synced = true) }
+
+        localState.replaceServices(confirmedServices)
         if (m.rec.review.isNotEmpty()) {
             localState.setDeletionReview(localState.getDeletionReview() + m.rec.review)
         }
-        localState.setSshTombstones(emptyList())
-        localState.saveSshKeys(m.sshKeys)
-        localState.setWalletTombstones(emptyList())
-        localState.saveWallets(m.wallets)
+        localState.saveSshKeys(confirmedSshKeys)
+        localState.saveWallets(confirmedWallets)
+        localState.setTombstones(emptyList())
         localState.setSyncVersion(confirmedVersion)
         localState.setLastSuccessfulSyncAt(System.currentTimeMillis())
         localState.setConflictsDismissed(false)
-        return confirmed
+        return confirmedServices
     }
 
 

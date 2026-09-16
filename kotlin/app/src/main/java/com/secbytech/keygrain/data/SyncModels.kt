@@ -181,7 +181,7 @@ data class WalletEntry(
     val email: String = "",
     val mode: String = "keygrain"
 ) {
-    fun toJson(): JSONObject = JSONObject().apply {
+    fun toJson(includeSynced: Boolean = false): JSONObject = JSONObject().apply {
         // If legacy format (wallet_name present without wallet_id), preserve legacy keys
         if (walletId.isEmpty() && walletName.isNotEmpty()) {
             put("wallet_name", walletName)
@@ -201,16 +201,20 @@ data class WalletEntry(
             put("updated_at", updatedAt)
             put("notes", notes)
         }
+        if (includeSynced) {
+            put("synced", synced)
+        }
     }
 
     companion object {
-        fun fromJson(obj: JSONObject): WalletEntry {
+        fun fromJson(obj: JSONObject, defaultSynced: Boolean = false): WalletEntry {
             val wid = if (obj.has("wallet_id")) obj.optString("wallet_id", "")
             else if (obj.has("wallet_name")) obj.optString("wallet_name", "")
             else obj.optString("id", "")
             val lbl = if (obj.has("label")) obj.optString("label", "") else obj.optString("wallet_name", wid)
             val wName = if (obj.has("wallet_name")) obj.optString("wallet_name", wid) else wid
             val idVal = if (obj.has("id")) obj.optString("id", "") else java.util.UUID.randomUUID().toString()
+            val syncedVal = if (obj.has("synced")) obj.optBoolean("synced", defaultSynced) else defaultSynced
             return WalletEntry(
                 id = idVal,
                 walletId = wid,
@@ -220,11 +224,14 @@ data class WalletEntry(
                 createdAt = obj.optString("created_at", ""),
                 updatedAt = obj.optString("updated_at", ""),
                 notes = obj.optString("notes", ""),
+                synced = syncedVal,
                 walletName = wName,
                 email = obj.optString("email", ""),
                 mode = obj.optString("mode", "keygrain")
             )
         }
+
+        fun fromRemoteJson(obj: JSONObject): WalletEntry = fromJson(obj, defaultSynced = true)
 
         fun mergeKey(w: WalletEntry): String {
             return (w.walletId.ifEmpty { w.walletName.ifEmpty { w.id } }).lowercase()
@@ -268,15 +275,19 @@ data class SshKeyEntry(
     val email: String = "",
     val comment: String = "",
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val synced: Boolean = false
 ) {
-    fun toJson(): JSONObject = JSONObject().apply {
+    fun toJson(includeSynced: Boolean = false): JSONObject = JSONObject().apply {
         put("id", id)
         put("key_name", keyName)
         put("counter", counter)
         if (comment.isNotEmpty()) put("comment", comment)
         put("created_at", createdAt)
         put("updated_at", updatedAt)
+        if (includeSynced) {
+            put("synced", synced)
+        }
     }
 
     companion object {
@@ -293,11 +304,12 @@ data class SshKeyEntry(
             }
         }
 
-        fun fromJson(obj: JSONObject): SshKeyEntry {
+        fun fromJson(obj: JSONObject, defaultSynced: Boolean = false): SshKeyEntry {
             val kn = obj.optString("key_name", "")
             val commentRaw = obj.optString("comment", "")
             val emailRaw = obj.optString("email", "")
             val commentVal = commentRaw.ifEmpty { emailRaw.ifEmpty { kn } }
+            val syncedVal = if (obj.has("synced")) obj.optBoolean("synced", defaultSynced) else defaultSynced
             return SshKeyEntry(
                 id = if (obj.has("id")) obj.optString("id", "") else java.util.UUID.randomUUID().toString(),
                 keyName = kn,
@@ -305,9 +317,12 @@ data class SshKeyEntry(
                 email = "",
                 comment = commentVal,
                 createdAt = parseTime(obj, "created_at"),
-                updatedAt = parseTime(obj, "updated_at")
+                updatedAt = parseTime(obj, "updated_at"),
+                synced = syncedVal
             )
         }
+
+        fun fromRemoteJson(obj: JSONObject): SshKeyEntry = fromJson(obj, defaultSynced = true)
 
         fun mergeKey(entry: SshKeyEntry): String {
             val primary = if (entry.keyName.isNotEmpty()) entry.keyName else entry.id

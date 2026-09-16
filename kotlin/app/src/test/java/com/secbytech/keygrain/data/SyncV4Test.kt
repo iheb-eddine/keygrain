@@ -64,11 +64,9 @@ class SyncV4Test {
 
     private class FakeLocalState(
         var localServices: MutableList<ServiceEntry> = mutableListOf(),
-        var localTombstones: MutableList<Tombstone> = mutableListOf(),
+        var localTombstones: MutableList<SyncTombstone> = mutableListOf(),
         var localSshKeys: MutableList<SshKeyEntry> = mutableListOf(),
-        var localSshTombstones: MutableList<Tombstone> = mutableListOf(),
         var localWallets: MutableList<WalletEntry> = mutableListOf(),
-        var localWalletTombstones: MutableList<Tombstone> = mutableListOf(),
         var localLastSyncAt: Long = 0L,
         var localSyncVersion: Int = 0,
         var localAadEnabled: Boolean = true,
@@ -79,8 +77,12 @@ class SyncV4Test {
         override fun replaceServices(services: List<ServiceEntry>) {
             this.localServices = services.toMutableList()
         }
-        override fun getServiceTombstones(): List<Tombstone> = localTombstones
-        override fun setServiceTombstones(tombstones: List<Tombstone>) {
+        override fun getTombstones(): List<SyncTombstone> = localTombstones
+        override fun setTombstones(tombstones: List<SyncTombstone>) {
+            this.localTombstones = tombstones.toMutableList()
+        }
+        override fun getServiceTombstones(): List<SyncTombstone> = localTombstones
+        override fun setServiceTombstones(tombstones: List<SyncTombstone>) {
             this.localTombstones = tombstones.toMutableList()
         }
         override fun getDeletionReview(): List<DeletionReviewEntry> = localDeletionReview
@@ -94,18 +96,18 @@ class SyncV4Test {
         override fun saveSshKeys(keys: List<SshKeyEntry>) {
             this.localSshKeys = keys.toMutableList()
         }
-        override fun getSshTombstones(): List<Tombstone> = localSshTombstones
-        override fun setSshTombstones(tombstones: List<Tombstone>) {
-            this.localSshTombstones = tombstones.toMutableList()
+        override fun getSshTombstones(): List<SyncTombstone> = localTombstones
+        override fun setSshTombstones(tombstones: List<SyncTombstone>) {
+            this.localTombstones = tombstones.toMutableList()
         }
 
         override fun getWallets(): List<WalletEntry> = localWallets
         override fun saveWallets(wallets: List<WalletEntry>) {
             this.localWallets = wallets.toMutableList()
         }
-        override fun getWalletTombstones(): List<Tombstone> = localWalletTombstones
-        override fun setWalletTombstones(tombstones: List<Tombstone>) {
-            this.localWalletTombstones = tombstones.toMutableList()
+        override fun getWalletTombstones(): List<SyncTombstone> = localTombstones
+        override fun setWalletTombstones(tombstones: List<SyncTombstone>) {
+            this.localTombstones = tombstones.toMutableList()
         }
 
         override fun getLastSuccessfulSyncAt(): Long = localLastSyncAt

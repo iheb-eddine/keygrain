@@ -550,6 +550,120 @@ class SyncReconcileTest {
         }
     }
 
+    @Test
+    fun unifiedEntityReconciliation_walletsAndSshKeys_useUnifiedSyncedAndTombstones() {
+        val unifiedTombs = listOf(
+            SyncTombstone(id = "w-deleted", deletedAt = 2000L),
+            SyncTombstone(id = "k-deleted", deletedAt = 3000L)
+        )
+
+        val remoteWallets = listOf(
+            WalletEntry(id = "w-deleted", walletId = "w-deleted", updatedAt = "1000", synced = true),
+            WalletEntry(id = "w-live", walletId = "w-live", updatedAt = "5000", synced = true)
+        )
+        val recW = SyncMerge.mergeWallets(
+            local = emptyList(),
+            remote = remoteWallets,
+            tombstones = unifiedTombs,
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(1, recW.merged.size)
+        assertEquals("w-live", recW.merged[0].id)
+        assertTrue(recW.merged[0].synced)
+        assertEquals(listOf("w-deleted"), recW.deletedIds)
+        assertEquals(1, recW.tombstones.size)
+        assertEquals("w-deleted", recW.tombstones[0].id)
+
+        val remoteSsh = listOf(
+            SshKeyEntry(id = "k-deleted", keyName = "k-deleted", updatedAt = 2000L, synced = true),
+            SshKeyEntry(id = "k-live", keyName = "k-live", updatedAt = 4000L, synced = true)
+        )
+        val recK = SyncMerge.mergeSshKeys(
+            local = emptyList(),
+            remote = remoteSsh,
+            tombstones = unifiedTombs,
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(1, recK.merged.size)
+        assertEquals("k-live", recK.merged[0].id)
+        assertTrue(recK.merged[0].synced)
+        assertEquals(listOf("k-deleted"), recK.deletedIds)
+        assertEquals(1, recK.tombstones.size)
+        assertEquals("k-deleted", recK.tombstones[0].id)
+    }
+
+    @Test
+    fun zeroResurrectionBugsWhenLastSyncAtZero_forAllEntityTypes() {
+        // When lastSyncAt == 0 and remoteExists == true, synced items absent remotely MUST be deleted, NOT resurrected!
+        val syncedService = ServiceEntry(name = "svc", site = "svc.com", email = "a@b.com", id = "s1", updatedAt = 1000L, synced = true)
+        val recS = SyncReconciler.reconcileServices(
+            local = listOf(syncedService),
+            localTombstones = emptyList(),
+            remote = emptyList(),
+            remoteMeta = emptyList(),
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(0, recS.merged.size)
+
+        val syncedWallet = WalletEntry(id = "w1", walletId = "w-vault", updatedAt = "1000", synced = true)
+        val recW = SyncMerge.mergeWallets(
+            local = listOf(syncedWallet),
+            remote = emptyList(),
+            tombstones = emptyList(),
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(0, recW.merged.size)
+
+        val syncedSsh = SshKeyEntry(id = "k1", keyName = "staging", updatedAt = 1000L, synced = true)
+        val recK = SyncMerge.mergeSshKeys(
+            local = listOf(syncedSsh),
+            remote = emptyList(),
+            tombstones = emptyList(),
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(0, recK.merged.size)
+    }
+
+    @Test
+    fun semanticDeduplication_syncedLoserDeclaredAndTombstoned_walletAndSsh() {
+        // Wallets with same wallet_id (Vector 13 pattern): both exist on remote, newer wins,
+        // synced loser is declared in deletedIds and tombstoned for server cleanup.
+        val olderW = WalletEntry(id = "w-older", walletId = "my-wallet", updatedAt = "1000", synced = true)
+        val newerW = WalletEntry(id = "w-newer", walletId = "my-wallet", updatedAt = "2000", synced = true)
+        val recW = SyncMerge.mergeWallets(
+            local = listOf(olderW, newerW),
+            remote = listOf(olderW, newerW),
+            tombstones = emptyList(),
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(1, recW.merged.size)
+        assertEquals("w-newer", recW.merged[0].id)
+        assertTrue(recW.deletedIds.contains("w-older"))
+        assertTrue(recW.tombstones.any { it.id == "w-older" })
+
+        // SSH keys with same key_name: both exist on remote, newer wins,
+        // synced loser is declared in deletedIds and tombstoned for server cleanup.
+        val olderK = SshKeyEntry(id = "k-older", keyName = "deploy-box", updatedAt = 1000L, synced = true)
+        val newerK = SshKeyEntry(id = "k-newer", keyName = "deploy-box", updatedAt = 2000L, synced = true)
+        val recK = SyncMerge.mergeSshKeys(
+            local = listOf(olderK, newerK),
+            remote = listOf(olderK, newerK),
+            tombstones = emptyList(),
+            lastSyncAt = 0L,
+            remoteExists = true
+        )
+        assertEquals(1, recK.merged.size)
+        assertEquals("k-newer", recK.merged[0].id)
+        assertTrue(recK.deletedIds.contains("k-older"))
+        assertTrue(recK.tombstones.any { it.id == "k-older" })
+    }
+
     private fun jsonStrList(arr: JSONArray): List<String> =
         (0 until arr.length()).map { arr.getString(it) }
 }
