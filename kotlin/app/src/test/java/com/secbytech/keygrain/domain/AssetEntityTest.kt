@@ -89,6 +89,10 @@ class AssetEntityTest {
         assertEquals(DerivationSource.DETERMINISTIC, entity.derivationSource)
         assertEquals("ed25519", entity.algorithmId)
         assertFalse(entity.tombstoned)
+
+        assertEquals("prod-bastion", cleanKeyName("prod:bastion"))
+        val colonEntity = createSshEntity(keyName = "prod:bastion")
+        assertEquals("prod-bastion", colonEntity.keyName)
     }
 
     @Test

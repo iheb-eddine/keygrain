@@ -170,6 +170,10 @@ await test('createSshEntity creates valid immutable SSH entity', async () => {
   assert.equal(entity.comment, 'bastion-prod');
   assert.equal(entity.derivationSource, 'deterministic');
   assert.ok(Object.isFrozen(entity));
+
+  assert.equal(runInContext(`cleanKeyName('prod:bastion')`, ctx), 'prod-bastion');
+  const colonEntity = runInContext(`createSshEntity({ keyName: 'prod:bastion' })`, ctx);
+  assert.equal(colonEntity.keyName, 'prod-bastion');
 });
 
 await test('createWalletEntity creates valid immutable wallet entity', async () => {
@@ -233,7 +237,8 @@ await test('validateEntity enforces invariants and throws on invalid entities', 
   assert.throws(() => runInContext(`createWalletEntity({ walletId: 'Invalid_Wallet_Slug!' })`, ctx), /walletId must match/);
 
   // Invalid SSH key name
-  assert.throws(() => runInContext(`createSshEntity({ keyName: 'key:with:colons' })`, ctx), /SSH keyName must not contain colons/);
+  assert.throws(() => runInContext(`validateEntity({ id: 'valid-id', kind: AssetKind.SSH, label: 'SSH', keyName: 'key:with:colons', counter: 1, createdAt: 1000, updatedAt: 1000, frecency: 0, version: 1, tombstoned: false, derivationSource: 'deterministic' })`, ctx), /SSH keyName must not contain colons/);
+  assert.throws(() => runInContext(`createSshEntity({ keyName: 'bad\\x00key' })`, ctx), /SSH keyName must not contain colons or control characters/);
 });
 
 // ============================================================

@@ -72,7 +72,7 @@
 
   function cleanKeyName(keyName) {
     if (typeof keyName !== "string") return "";
-    return keyName.trim().replace(/\s+/g, "-").toLowerCase();
+    return keyName.trim().replace(/[:\s]+/g, "-").toLowerCase();
   }
 
   /**
@@ -707,6 +707,7 @@
   const KeygrainAssetEntity = Object.freeze({
     AssetKind,
     DerivationSource,
+    cleanKeyName,
     createLoginEntity,
     createSshEntity,
     createWalletEntity,
@@ -727,6 +728,7 @@
 
   root.AssetKind = AssetKind;
   root.DerivationSource = DerivationSource;
+  root.cleanKeyName = cleanKeyName;
   root.createLoginEntity = createLoginEntity;
   root.createSshEntity = createSshEntity;
   root.createWalletEntity = createWalletEntity;

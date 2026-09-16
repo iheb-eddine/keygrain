@@ -15,6 +15,13 @@ const LOOKUP_ID_RE = /^[0-9a-f]{64}$/;
 const COMMITMENT_DOMAIN = "keygrain-account-defaults-v1\0";
 const V3_AAD_DOMAIN = "keygrain-sync-v3\0";
 
+function fetchTimeoutSignal(ms = 15000) {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(ms);
+  }
+  return undefined;
+}
+
 function assertCanonicalDefaults(defaults) {
   if (defaults === null || typeof defaults !== "object" || Array.isArray(defaults)) {
     throw new TypeError("defaults must be a plain object");
@@ -888,6 +895,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
       getResp = await fetch(syncServer + "/api/sync/" + lookupId, {
         method: "GET",
         headers: {"Authorization": authHeader},
+        signal: fetchTimeoutSignal(15000),
       });
     } catch (e) {
       throw Object.assign(new Error("network_error"), {code: "NETWORK_ERROR"});
@@ -1107,6 +1115,7 @@ async function syncWithServer(secret, email, localServices, localWallets = [], l
           encrypted_blob: encryptedB64,
           checksum
         }),
+        signal: fetchTimeoutSignal(15000),
       });
     } catch (e) {
       throw Object.assign(new Error("network_error"), {code: "NETWORK_ERROR"});
@@ -1221,6 +1230,7 @@ async function deleteServerData(secret, email) {
     resp = await fetch(syncServer + "/api/sync/" + lookupId, {
       method: "DELETE",
       headers: {"Authorization": authHeader},
+      signal: fetchTimeoutSignal(15000),
     });
   } catch (e) {
     return {ok: false, result: "network"};

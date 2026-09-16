@@ -48,7 +48,7 @@ fun normalizeSiteDomain(site: String): String {
  */
 fun cleanKeyName(keyName: String): String {
     if (keyName.isBlank()) return ""
-    return keyName.trim().replace(Regex("\\s+"), "-").lowercase()
+    return keyName.trim().replace(Regex("[:\\s]+"), "-").lowercase()
 }
 
 /**
