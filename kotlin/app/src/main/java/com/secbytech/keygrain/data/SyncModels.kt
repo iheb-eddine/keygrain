@@ -109,7 +109,6 @@ sealed class SyncResult {
         val services: List<ServiceEntry>,
         val sshKeys: List<SshKeyEntry> = emptyList(),
         val wallets: List<WalletEntry>,
-        val walletAuditLog: List<WalletAuditEntry> = emptyList(),
         val syncConflicts: List<SyncConflict>,
         val status: String,
         val version: Int = 0
@@ -120,8 +119,6 @@ sealed class SyncResult {
     data class IntegrityError(val detail: String) : SyncResult()
     data object UpgradeRequired : SyncResult()
     data object Conflict : SyncResult()
-    @Deprecated("Use Conflict instead", ReplaceWith("SyncResult.Conflict"))
-    data object ConflictError : SyncResult()
 }
 
 /**
@@ -236,35 +233,6 @@ data class WalletEntry(
         fun mergeKey(w: WalletEntry): String {
             return (w.walletId.ifEmpty { w.walletName.ifEmpty { w.id } }).lowercase()
         }
-    }
-}
-
-@Deprecated("Eliminated from sync payloads")
-data class WalletAuditEntry(
-    val action: String,
-    val walletName: String,
-    val counter: Int,
-    val timestamp: String,
-    val verification: String
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("action", action)
-        put("wallet_name", walletName)
-        put("counter", counter)
-        put("timestamp", timestamp)
-        put("verification", verification)
-    }
-
-    fun dedupeKey(): String = "$timestamp:$walletName:$action"
-
-    companion object {
-        fun fromJson(obj: JSONObject): WalletAuditEntry = WalletAuditEntry(
-            action = obj.optString("action", ""),
-            walletName = obj.optString("wallet_name", ""),
-            counter = obj.optInt("counter", 1),
-            timestamp = obj.optString("timestamp", ""),
-            verification = obj.optString("verification", "")
-        )
     }
 }
 

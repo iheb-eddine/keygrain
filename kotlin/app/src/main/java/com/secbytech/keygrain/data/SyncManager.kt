@@ -146,12 +146,6 @@ class SyncManager(
         SyncStore.appendTombstone(context, id)
     }
 
-    fun getAuditLog(context: Context): List<WalletAuditEntry> = SyncStore.getAuditLog(context)
-
-    fun saveAuditLog(context: Context, log: List<WalletAuditEntry>) =
-        SyncStore.saveAuditLog(context, log)
-
-
     internal fun conflictBackoffMs(retryCount: Int): Long =
         when (retryCount) {
             0 -> 250L
@@ -173,7 +167,6 @@ class SyncManager(
         val services: List<ServiceEntry>,
         val sshKeys: List<SshKeyEntry>,
         val wallets: List<WalletEntry>,
-        val auditLog: List<WalletAuditEntry> = emptyList(),
         val conflicts: List<SyncConflict>,
         val version: Int,
         val etag: String?,
@@ -197,7 +190,6 @@ class SyncManager(
         val services: List<ServiceEntry>,
         val sshKeys: List<SshKeyEntry>,
         val wallets: List<WalletEntry>,
-        val auditLog: List<WalletAuditEntry> = emptyList(),
         val remainingTombstones: List<SyncTombstone>,
         val allDeletedIds: List<String>,
         val allConflicts: List<SyncConflict>
@@ -292,7 +284,6 @@ class SyncManager(
                         services = confirmed,
                         sshKeys = m.sshKeys,
                         wallets = m.wallets,
-                        walletAuditLog = emptyList(),
                         syncConflicts = syncConflicts,
                         status = if (remote.exists) "synced" else "created",
                         version = confirmedVersion
@@ -358,7 +349,6 @@ class SyncManager(
                         services = blobContent.services,
                         sshKeys = blobContent.sshKeys,
                         wallets = blobContent.wallets,
-                        auditLog = emptyList(),
                         conflicts = blobContent.syncConflicts,
                         version = getResult.version,
                         etag = getResult.etag,
@@ -373,7 +363,6 @@ class SyncManager(
                         services = emptyList(),
                         sshKeys = emptyList(),
                         wallets = emptyList(),
-                        auditLog = emptyList(),
                         conflicts = emptyList(),
                         version = 0,
                         etag = null,
@@ -438,7 +427,6 @@ class SyncManager(
             services = recServices.merged,
             sshKeys = recSsh.merged,
             wallets = recWallets.merged,
-            auditLog = emptyList(),
             remainingTombstones = remainingTombstones,
             allDeletedIds = allDeletedIds,
             allConflicts = recServices.syncConflicts + recSsh.syncConflicts + recWallets.syncConflicts
@@ -497,7 +485,6 @@ class SyncManager(
             services = m.services,
             sshKeys = m.sshKeys,
             wallets = m.wallets,
-            walletAuditLog = emptyList(),
             syncConflicts = syncConflicts,
             status = "unchanged",
             version = remote.version
@@ -583,7 +570,7 @@ class SyncManager(
      * Does NOT read or parse the 200 response body: the informational
      * {"status":"deleted"} payload is irrelevant to the outcome.
      */
-    suspend fun deleteServerData(secret: ByteArray, email: String, context: Context): DeleteResult =
+    suspend fun deleteServerData(secret: ByteArray, email: String): DeleteResult =
         withContext(Dispatchers.IO) {
             val lookupId = Keygrain.deriveLookupId(secret, email)
             val authPassword = Keygrain.deriveAuthPassword(secret, email)

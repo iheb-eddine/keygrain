@@ -65,10 +65,7 @@ fun SshScreen(
     masterSecret: String,
     serviceManager: ServiceManager,
     isDemoMode: Boolean = false,
-    defaultEmail: String = "",
-    onLock: (() -> Unit)? = null,
     onBack: (() -> Unit)? = null,
-    onSwitchAccount: (() -> Unit)? = null,
     onDataChanged: (() -> Unit)? = null,
     onSshKeysChanged: ((List<SshKeyEntry>) -> Unit)? = null,
     showAddSshDialog: Boolean = false,
@@ -77,7 +74,6 @@ fun SshScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val settingsPrefs = remember { context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE) }
     val snackbarHostState = remember { SnackbarHostState() }
     var sshKeys by remember { mutableStateOf(emptyList<SshKeyEntry>()) }
     var searchQuery by remember { mutableStateOf("") }

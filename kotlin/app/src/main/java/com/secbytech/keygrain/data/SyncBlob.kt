@@ -171,7 +171,6 @@ internal object SyncBlob {
         val services: List<ServiceEntry>,
         val sshKeys: List<SshKeyEntry> = emptyList(),
         val wallets: List<WalletEntry>,
-        val auditLog: List<WalletAuditEntry> = emptyList(),
         val syncConflicts: List<SyncConflict>
     )
 
@@ -186,7 +185,7 @@ internal object SyncBlob {
         if (trimmed.startsWith("[")) {
             val services = parseServices(trimmed)
             val extractedSsh = extractSshKeysFromServices(services)
-            return BlobContent(services, extractedSsh, emptyList(), emptyList(), emptyList())
+            return BlobContent(services, extractedSsh, emptyList(), emptyList())
         }
         val obj = JSONObject(trimmed)
         val servicesArr = obj.optJSONArray("services") ?: JSONArray()
@@ -207,7 +206,7 @@ internal object SyncBlob {
         val conflicts = (0 until conflictsArr.length()).mapNotNull { i ->
             try { SyncConflict.fromJson(conflictsArr.getJSONObject(i)) } catch (_: Exception) { null }
         }
-        return BlobContent(services, combinedSshKeys, wallets, emptyList(), conflicts)
+        return BlobContent(services, combinedSshKeys, wallets, conflicts)
     }
 
     private fun extractSshKeysFromServices(services: List<ServiceEntry>): List<SshKeyEntry> {

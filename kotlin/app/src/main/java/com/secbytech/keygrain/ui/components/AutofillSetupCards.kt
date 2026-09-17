@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -197,7 +197,7 @@ fun AutofillSettingsDialog(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Icon(
-                                Icons.Default.OpenInNew,
+                                Icons.AutoMirrored.Filled.OpenInNew,
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -240,7 +240,7 @@ fun ChromeAutofillGuideDialog(
         onDismissRequest = onDismiss,
         icon = {
             Icon(
-                Icons.Default.OpenInNew,
+                Icons.AutoMirrored.Filled.OpenInNew,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary
             )

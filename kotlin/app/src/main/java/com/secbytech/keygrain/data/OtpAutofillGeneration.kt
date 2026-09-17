@@ -156,6 +156,7 @@ internal class FillCompletion(private val deliver: (FillResponse?) -> Unit) {
 }
 
 internal object OtpAutofillResponse {
+    @Suppress("DEPRECATION")
     fun addValue(
         dataset: Dataset.Builder,
         id: AutofillId,

@@ -53,8 +53,6 @@ internal fun ServiceListScreen(
     serviceManager: ServiceManager,
     isDemoMode: Boolean = false,
     onLock: () -> Unit,
-    onSwitchAccount: () -> Unit,
-    onWipeLocalAndRestart: () -> Unit,
     triggerDebouncedSync: () -> Unit = {},
     offlineMode: Boolean = false,
     syncGeneration: Int = 0,
@@ -83,7 +81,6 @@ internal fun ServiceListScreen(
     var showEditDialog by remember { mutableStateOf<ServiceEntry?>(null) }
     var detailService by remember { mutableStateOf<ServiceEntry?>(null) }
 
-    var showSwitchAccountDialog by remember { mutableStateOf(false) }
     // Sync v3 deletion review (Frozen Req 7): services this device changed that were
     // deleted on another device. Populated by SyncManager on a confirmed sync.
     var deletionReview by remember {
@@ -99,9 +96,6 @@ internal fun ServiceListScreen(
     // already clears the clipboard — so no leak there.
     val clipboardScope = rememberCoroutineScope()
     val syncManager = remember { SyncManager() }
-    val settingsPrefs = remember {
-        context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
-    }
 
     LaunchedEffect(isDemoMode) {
         services = if (isDemoMode) DemoData.getServices() else serviceManager.getServices()

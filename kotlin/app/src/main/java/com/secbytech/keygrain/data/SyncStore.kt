@@ -285,19 +285,6 @@ internal object SyncStore {
         setTombstones(context, existing + SyncTombstone(id, deletedAt))
     }
 
-    fun getAuditLog(context: Context): List<WalletAuditEntry> {
-        val json = getPrefs(context).getString("wallet_audit_log", "[]") ?: "[]"
-        val arr = JSONArray(json)
-        return (0 until arr.length()).mapNotNull { i ->
-            try { WalletAuditEntry.fromJson(arr.getJSONObject(i)) } catch (_: Exception) { null }
-        }
-    }
-
-    fun saveAuditLog(context: Context, log: List<WalletAuditEntry>) {
-        val arr = JSONArray().apply { log.forEach { put(it.toJson()) } }
-        getPrefs(context).edit().putString("wallet_audit_log", arr.toString()).apply()
-    }
-
 
     // Named accessors for the two boolean flags sync() used to poke at through a raw
     // getPrefs() handle. Same preference file, same key strings, same defaults.

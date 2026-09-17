@@ -53,10 +53,6 @@ import java.util.UUID
 fun WalletScreen(
     masterSecret: String,
     isDemoMode: Boolean = false,
-    defaultEmail: String = "",
-    onLock: (() -> Unit)? = null,
-    onBack: (() -> Unit)? = null,
-    onSwitchAccount: (() -> Unit)? = null,
     onDataChanged: (() -> Unit)? = null,
     onWalletsChanged: ((List<WalletEntry>) -> Unit)? = null,
     showAddWalletDialog: Boolean = false,
@@ -66,7 +62,6 @@ fun WalletScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val syncMgr = remember { SyncManager() }
-    val settingsPrefs = remember { context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE) }
 
     var wallets by remember { mutableStateOf(emptyList<WalletEntry>()) }
     var searchQuery by remember { mutableStateOf("") }
@@ -234,8 +229,6 @@ fun WalletScreen(
     if (isAdding || editingWallet != null) {
         WalletEditorDialog(
             initialWallet = editingWallet,
-            masterSecret = masterSecret,
-            isDemoMode = isDemoMode,
             onDismiss = {
                 showAddDialog = false
                 editingWallet = null
@@ -547,8 +540,6 @@ private fun WalletItemCard(
 @Composable
 private fun WalletEditorDialog(
     initialWallet: WalletEntry?,
-    masterSecret: String,
-    isDemoMode: Boolean,
     onDismiss: () -> Unit,
     onSave: (WalletEntry) -> Unit
 ) {
@@ -729,7 +720,6 @@ private fun WalletViewerDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var mnemonic by remember { mutableStateOf<String?>(null) }
     var seedHex by remember { mutableStateOf<String?>(null) }
     var selectedFormatTab by remember { mutableIntStateOf(0) }

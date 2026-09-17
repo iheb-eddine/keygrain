@@ -95,17 +95,4 @@ internal object SyncMerge {
             remoteExists = remoteExists,
             policy = SSH_POLICY
         )
-
-    @Deprecated("wallet_audit_log is eliminated from sync payloads")
-    fun mergeAuditLog(
-        local: List<WalletAuditEntry>,
-        remote: List<WalletAuditEntry>
-    ): List<WalletAuditEntry> {
-        val seen = mutableSetOf<String>()
-        val merged = mutableListOf<WalletAuditEntry>()
-        for (entry in local + remote) {
-            if (seen.add(entry.dedupeKey())) merged.add(entry)
-        }
-        return merged
-    }
 }

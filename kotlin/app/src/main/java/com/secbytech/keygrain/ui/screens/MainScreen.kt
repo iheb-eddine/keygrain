@@ -325,7 +325,7 @@ fun MainScreen() {
                                                     is SyncResult.NetworkError -> UserMessages.NETWORK_ERROR
                                                     is SyncResult.ServerError -> UserMessages.SERVER_ERROR
                                                     is SyncResult.IntegrityError -> UserMessages.INTEGRITY_ERROR
-                                                    is SyncResult.Conflict, is SyncResult.ConflictError -> UserMessages.CONFLICT_ERROR
+                                                    is SyncResult.Conflict -> UserMessages.CONFLICT_ERROR
                                                     is SyncResult.UpgradeRequired -> UserMessages.SYNC_UPGRADE_REQUIRED
                                                 }
                                             } catch (e: Exception) {
@@ -525,8 +525,6 @@ fun MainScreen() {
                                 serviceManager = serviceManager,
                                 isDemoMode = isDemoMode,
                                 onLock = onLockAction,
-                                onSwitchAccount = wipeLocalAndRestart,
-                                onWipeLocalAndRestart = wipeLocalAndRestart,
                                 triggerDebouncedSync = ::triggerDebouncedSync,
                                 offlineMode = offlineMode,
                                 syncGeneration = syncGeneration,
@@ -543,10 +541,7 @@ fun MainScreen() {
                                 masterSecret = masterSecret,
                                 serviceManager = serviceManager,
                                 isDemoMode = isDemoMode,
-                                defaultEmail = getEffectiveEmail(),
-                                onLock = onLockAction,
                                 onBack = null,
-                                onSwitchAccount = wipeLocalAndRestart,
                                 onDataChanged = ::triggerDebouncedSync,
                                 onSshKeysChanged = { list -> sshKeyCount = list.size },
                                 showAddSshDialog = showAddSshDialog,
@@ -558,10 +553,6 @@ fun MainScreen() {
                             WalletScreen(
                                 masterSecret = masterSecret,
                                 isDemoMode = isDemoMode,
-                                defaultEmail = getEffectiveEmail(),
-                                onLock = onLockAction,
-                                onBack = null,
-                                onSwitchAccount = wipeLocalAndRestart,
                                 onDataChanged = ::triggerDebouncedSync,
                                 onWalletsChanged = { list -> walletCount = list.size },
                                 showAddWalletDialog = showAddWalletDialog,
@@ -587,7 +578,7 @@ fun MainScreen() {
                         try {
                             val key = Keygrain.deriveEncryptionKey(secretBytes, email)
                             val json = serviceManager.exportJson().toByteArray()
-                            val encrypted = SyncCrypto.encrypt(key, json)
+                            SyncCrypto.encrypt(key, json)
                             key.fill(0)
                         } catch (e: Exception) {
                             Log.e("Keygrain", "Backup failed", e)

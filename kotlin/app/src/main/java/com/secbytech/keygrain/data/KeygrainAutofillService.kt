@@ -81,6 +81,7 @@ class KeygrainAutofillService : AutofillService() {
         return prefs.getStringSet(KEY_BROWSERS, null) ?: DEFAULT_BROWSER_PACKAGES
     }
 
+    @Suppress("DEPRECATION")
     override fun onFillRequest(request: FillRequest, cancel: CancellationSignal, callback: FillCallback) {
         var otpPath = false
         try {
@@ -227,6 +228,7 @@ class KeygrainAutofillService : AutofillService() {
         var hasOtpValue: Boolean
     )
 
+    @Suppress("DEPRECATION")
     private fun handleOtpRequest(
         secret: String,
         matches: List<ServiceEntry>,
