@@ -325,6 +325,219 @@ await test('standalone wallet options projection preserves id, label, notes, and
   assert.equal(generated.ok, true);
 });
 
+await test('standalone wallets with synced boolean flags succeed and project options items properly', async () => {
+  validDerive();
+  context.now = 90000;
+  const syncedWallet = {
+    id: 'wallet-synced-true',
+    wallet_id: 'cold-synced',
+    label: 'Cold Synced',
+    words: 24,
+    counter: 1,
+    notes: 'synced vault',
+    synced: true,
+  };
+  const unsyncedWallet = {
+    id: 'wallet-synced-false',
+    wallet_id: 'hot-unsynced',
+    label: 'Hot Unsynced',
+    words: 12,
+    counter: 2,
+    notes: 'unsynced vault',
+    synced: false,
+  };
+  unlock([syncedWallet, unsyncedWallet]);
+  const options = await invoke(trusted, {action: 'keygrain.wallet.options'});
+  assert.equal(options.ok, true);
+  assert.equal(options.result.items.length, 2);
+
+  const [item1, item2] = options.result.items;
+  assert.equal(item1.walletId, 'cold-synced');
+  assert.equal(item1.label, 'Cold Synced');
+  assert.equal(item1.words, 24);
+  assert.equal(item1.counter, 1);
+  assert.equal(item1.id, 'wallet-synced-true');
+  assert.equal(item1.notes, 'synced vault');
+
+  assert.equal(item2.walletId, 'hot-unsynced');
+  assert.equal(item2.label, 'Hot Unsynced');
+  assert.equal(item2.words, 12);
+  assert.equal(item2.counter, 2);
+  assert.equal(item2.id, 'wallet-synced-false');
+  assert.equal(item2.notes, 'unsynced vault');
+
+  const gen1 = await invoke(trusted, {action: 'keygrain.wallet.generate', selectionToken: item1.selectionToken});
+  assert.equal(gen1.ok, true);
+  const gen2 = await invoke(trusted, {action: 'keygrain.wallet.generate', selectionToken: item2.selectionToken});
+  assert.equal(gen2.ok, true);
+
+  await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: [{...syncedWallet, synced: 'true'}]});
+  await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: [{...syncedWallet, synced: 1}]});
+  await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: [validWallet({synced: 'true'})]});
+  await ownerRejectsFixture({secret: 'owner-secret', services: [], wallets: [validWallet({synced: 1})]});
+
+  unlock([validWallet({synced: true}), validWallet({synced: false, wallet_name: 'second'})]);
+  const legacyOptions = await invoke(trusted, {action: 'keygrain.wallet.options'});
+  assert.equal(legacyOptions.ok, true);
+  assert.equal(legacyOptions.result.items.length, 2);
+});
+
+await test('exact wallet fixture from demo3@keygrain.com succeeds and projects all wallets', async () => {
+  validDerive();
+  context.now = 95000;
+  const demo3Wallets = [
+    {
+      id: "48098044-d410-41fb-9a08-a7b5e5cfa140",
+      wallet_id: "thirdwallet",
+      label: "thirdwallet",
+      words: 12,
+      counter: 1,
+      created_at: "2026-09-07T13:31:24.644477Z",
+      updated_at: 1788973663806,
+      notes: "",
+      synced: true,
+    },
+    {
+      id: "wallet-1788796168453-eib9q",
+      wallet_id: "fromext2",
+      label: "From extension 2",
+      words: 24,
+      counter: 1,
+      created_at: "2026-09-07T15:49:28.452Z",
+      updated_at: 1788796168452,
+      notes: "",
+      synced: true,
+    },
+    {
+      id: "wallet-1788796245836-lnqos",
+      wallet_id: "ext3",
+      label: "ext3",
+      words: 24,
+      counter: 1,
+      created_at: "2026-09-07T15:50:45.835Z",
+      updated_at: 1788796245835,
+      notes: "",
+      synced: true,
+    },
+    {
+      id: "d231cf98-f1fe-4dff-9997-004c06f36e4d",
+      wallet_id: "android3",
+      label: "android3",
+      words: 24,
+      counter: 1,
+      created_at: "2026-09-07T15:50:20.339333Z",
+      updated_at: 1788796220339,
+      notes: "",
+      synced: true,
+    },
+    {
+      id: "bfef77d8-9bd8-4816-8050-e0b0aa6dd982",
+      wallet_id: "android4",
+      label: "android4",
+      words: 24,
+      counter: 1,
+      created_at: "2026-09-07T15:52:35.220267Z",
+      updated_at: 1788796355220,
+      notes: "",
+      synced: true,
+    },
+    {
+      id: "6232e26c-9bf3-43fe-b2d4-442ca89841f7",
+      wallet_id: "android-androidfirst",
+      label: "android-androidfirst",
+      words: 24,
+      counter: 1,
+      created_at: "2026-09-07T15:59:51.422024Z",
+      updated_at: 1788796791422,
+      notes: "",
+      synced: true,
+    },
+    {
+      id: "wallet-1788796985302-4fz6p",
+      wallet_id: "ext-adroidfirst",
+      label: "ext-adroidfirst",
+      words: 24,
+      counter: 1,
+      created_at: "2026-09-07T16:03:05.302Z",
+      updated_at: 1788796985302,
+      notes: "",
+      synced: true,
+    },
+    {
+      id: "d8a55193-6571-47db-b91e-e03720c6fda2",
+      wallet_id: "ggggg",
+      label: "ggggg hhhhh",
+      words: 24,
+      counter: 1,
+      created_at: "2026-09-07T16:06:59.980810Z",
+      updated_at: 1788816437962,
+      notes: "dghjh ggjkj",
+      synced: true,
+    },
+    {
+      id: "9b0b0b32-ca02-4616-8ba4-02a8bc4f18b6",
+      wallet_id: "an2",
+      label: "an2",
+      words: 12,
+      counter: 1,
+      created_at: "2026-09-09T09:52:03.654Z",
+      updated_at: 1788947556256,
+      notes: "",
+      synced: true,
+    },
+    {
+      id: "b27a0d4a-2b6b-41f5-8b2f-0318b30c2f21",
+      wallet_id: "xxxxxx",
+      label: "xxxxxyyyyy",
+      words: 24,
+      counter: 1,
+      created_at: "2026-09-10T10:13:19.552Z",
+      updated_at: 1789035440907,
+      notes: "",
+      synced: true,
+    },
+    {
+      id: "cb922dec-342e-4612-aa43-0e6c5d5382ac",
+      wallet_id: "sssss",
+      label: "ssss ssss",
+      words: 24,
+      counter: 1,
+      created_at: "2026-09-10T10:23:04.789Z",
+      updated_at: 1789035784789,
+      notes: "",
+      synced: true,
+    },
+  ];
+  unlock(demo3Wallets);
+  const options = await invoke(trusted, {action: 'keygrain.wallet.options'});
+  assert.equal(options.ok, true);
+  assert.equal(options.result.items.length, 11);
+
+  for (let i = 0; i < demo3Wallets.length; i++) {
+    const fixture = demo3Wallets[i];
+    const item = options.result.items[i];
+    assert.equal(item.id, fixture.id);
+    assert.equal(item.walletId, fixture.wallet_id);
+    assert.equal(item.label, fixture.label);
+    assert.equal(item.words, fixture.words);
+    assert.equal(item.counter, fixture.counter);
+    assert.equal(item.notes, fixture.notes);
+    assert.equal(typeof item.selectionToken, 'string');
+    assert.ok(item.selectionToken.length > 0);
+  }
+
+  resetDerive();
+  const firstItem = options.result.items[0];
+  const generateRes = await invoke(trusted, {action: 'keygrain.wallet.generate', selectionToken: firstItem.selectionToken});
+  assert.equal(generateRes.ok, true);
+  assert.equal(deriveCalls.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(deriveCalls[0][1])), {
+    walletId: 'thirdwallet',
+    counter: 1,
+    words: 12,
+  });
+});
+
 await test('wallet-page.html marks email as optional and wallet-page.js does not require email', async () => {
   const html = readFileSync(resolve(shared, 'wallet-page.html'), 'utf8');
   assert.match(html, /<label for="wallet-email">Email <span class="optional">\(optional\)<\/span>/);

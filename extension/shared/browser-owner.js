@@ -1860,7 +1860,7 @@
     });
 
     const walletCapabilities = new Map();
-    const WALLET_KEYS = Object.freeze(["wallet_name", "counter", "email", "mode", "created_at", "updated_at", "notes"]);
+    const WALLET_KEYS = Object.freeze(["wallet_name", "counter", "email", "mode", "created_at", "updated_at", "notes", "synced"]);
     const WALLET_REQUIRED_KEYS = Object.freeze(["wallet_name", "counter", "email"]);
     const WALLET_METADATA_KEYS = new Set(["created_at", "updated_at", "notes"]);
 
@@ -1895,6 +1895,7 @@
         expectedIndex++;
       }
       for (const key of WALLET_REQUIRED_KEYS) if (!Object.prototype.hasOwnProperty.call(value, key)) walletError();
+      if (Object.prototype.hasOwnProperty.call(value, "synced") && typeof walletOwn(value, "synced") !== "boolean") walletError();
     }
     function walletCanonicalRecord(value) {
       if (!b3PlainData(value)) walletError();
@@ -1905,13 +1906,14 @@
         try { keys = Reflect.ownKeys(value); } catch (_) { walletError(); }
         const STANDALONE_ALLOWED = [
           "id", "wallet_id", "walletId", "label", "words", "counter", "notes",
-          "created_at", "updated_at", "wallet_name", "walletName", "email", "mode"
+          "created_at", "updated_at", "wallet_name", "walletName", "email", "mode", "synced"
         ];
         if (keys.some(key => typeof key !== "string" || !STANDALONE_ALLOWED.includes(key))) walletError();
         for (const key of keys) {
           const descriptor = Object.getOwnPropertyDescriptor(value, key);
           if (!descriptor || !descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, "value")) walletError();
         }
+        if (Object.prototype.hasOwnProperty.call(value, "synced") && typeof walletOwn(value, "synced") !== "boolean") walletError();
         const walletIdRaw = Object.prototype.hasOwnProperty.call(value, "wallet_id")
           ? walletOwn(value, "wallet_id")
           : walletOwn(value, "walletId");
