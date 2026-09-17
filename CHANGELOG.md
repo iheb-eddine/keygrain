@@ -8,12 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Components are 
 
 ### [1.4.0] - 2026-09-17
 
-- Multi-asset tabbed UI: manage web services, standalone SSH keys, and HD wallets in dedicated tabs directly within the extension popup.
-- Spec v5 cryptographic compliance: SSH key and HD wallet derivations use dedicated Argon2id domain salts, completely decoupled from account email.
-- PIN removal: eliminated persistent PIN storage in favor of secure in-memory session auto-lock with configurable lease durations and on-demand elevation.
-- Sync v4: Zero-Knowledge synchronization protocol featuring serialized mutual exclusion to prevent race conditions and network fetch timeouts for increased resilience.
-- Unified entity reconciliation: implemented Option B unified synchronization and a single consolidated tombstones store across all credential types.
-- Streamlined HD wallet derivation: eliminated legacy blockchain network parameters and local wallet audit logs in accordance with standard BIP-39 mnemonic generation.
+- Enhanced security & PIN removal: eliminated persistent PIN storage in favor of volatile in-memory auto-lock with configurable timeouts.
+- Two-tier auto-lock UX: keep service names visible for fast search while credentials require quick re-authentication.
+- Multi-asset tabs: manage web logins, standalone SSH keys, and HD wallets directly inside the popup.
+- Zero-Knowledge sync: all service names, keys, and timestamps are end-to-end encrypted with zero server visibility.
+- Streamlined HD wallets: generates standard 12 or 24-word BIP-39 disaster recovery phrases directly.
+- Email-decoupled keys: SSH keys and crypto wallets derive independently of your account email.
+- Autofill shortcut: default shortcut updated to Ctrl+Shift+L (Command+Shift+L on Mac) to avoid browser conflicts.
+- Offline mode & server controls: easily isolate from sync networks or erase server data while keeping your local vault.
 
 ### [1.3.0] - 2026-08-11
 
@@ -85,12 +87,14 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ### [1.4.0] - 2026-09-17
 
-- Multi-asset tabbed UI: manage web services, standalone SSH keys, and HD wallets in dedicated tabs directly within the extension popup.
-- Spec v5 cryptographic compliance: SSH key and HD wallet derivations use dedicated Argon2id domain salts, completely decoupled from account email.
-- PIN removal: eliminated persistent PIN storage in favor of secure in-memory session auto-lock with configurable lease durations and on-demand elevation.
-- Sync v4: Zero-Knowledge synchronization protocol featuring serialized mutual exclusion to prevent race conditions and network fetch timeouts for increased resilience.
-- Unified entity reconciliation: implemented Option B unified synchronization and a single consolidated tombstones store across all credential types.
-- Streamlined HD wallet derivation: eliminated legacy blockchain network parameters and local wallet audit logs in accordance with standard BIP-39 mnemonic generation.
+- Enhanced security & PIN removal: eliminated persistent PIN storage in favor of volatile in-memory auto-lock with configurable timeouts.
+- Two-tier auto-lock UX: keep service names visible for fast search while credentials require quick re-authentication.
+- Multi-asset tabs: manage web logins, standalone SSH keys, and HD wallets directly inside the popup.
+- Zero-Knowledge sync: all service names, keys, and timestamps are end-to-end encrypted with zero server visibility.
+- Streamlined HD wallets: generates standard 12 or 24-word BIP-39 disaster recovery phrases directly.
+- Email-decoupled keys: SSH keys and crypto wallets derive independently of your account email.
+- Autofill shortcut: default shortcut updated to Ctrl+Shift+L (Command+Shift+L on Mac) to avoid browser conflicts.
+- Offline mode & server controls: easily isolate from sync networks or erase server data while keeping your local vault.
 
 ### [1.3.0] - 2026-08-11
 
@@ -163,11 +167,12 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 ### [1.4.0] - 2026-09-17
 
 - Multi-asset keychain: manage logins, standalone SSH keys, and HD wallets in one place.
-- Spec v5 cryptography: SSH keys and HD wallets are securely decoupled from email.
-- Sync v4: Zero-Knowledge protocol with transactional versioning and client dirty-checking.
-- Unified entity reconciliation with a single tombstone store across all item types.
-- Full Demo Mode with complete state isolation and rich multi-asset dataset.
-- Streamlined HD wallets without chain parameters or audit logs.
+- Email-decoupled keys: SSH keys and crypto wallets derive independently from your account email.
+- Zero-Knowledge sync: all item metadata and timestamps are end-to-end encrypted with zero server visibility.
+- Autofill TOTP: automatically detects and fills 2FA one-time verification codes on login forms.
+- Interactive Demo Mode: try Keygrain with sample logins, SSH keys, and wallets before entering your master secret.
+- Streamlined HD wallets: generates standard 12 or 24-word BIP-39 disaster recovery phrases directly.
+- More reliable biometric unlock handling across device manufacturers.
 
 ### [1.3.0] - 2026-08-11
 
@@ -218,8 +223,10 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ### [1.1.0] - 2026-09-17
 
-- Spec v5 cryptographic compliance: SSH key and HD wallet derivations now use isolated Argon2id domain salts (`keygrain-ssh:<key_name>` and `keygrain-wallet:<wallet_id>`), completely decoupled from account email.
-- Streamlined HD wallet derivation: eliminated legacy `--chain` and `--path` flags in favor of clean BIP-39 mnemonic seed phrase generation.
+- Email-decoupled keys: SSH keypair and HD wallet derivations derive independently from your account email.
+- Streamlined HD wallet derivation: generate standard 12 or 24-word BIP-39 mnemonic seed phrases directly.
+- Added wallet export formats via --format (json, sparrow, electrum).
+- keygrain --version now reports git commit metadata and dirty state when run from source.
 
 ### [1.0.1] - 2026-08-11
 
@@ -245,10 +252,10 @@ No algorithm changes — output is byte-identical across all Keygrain platforms 
 
 ### [1.2.0] - 2026-09-17
 
-- Sync v4 Zero-Knowledge protocol: implemented server-side blind depository with transactional version incrementing, ETag matching, and atomic temporary-file writes.
-- Structured JSON error responses: added standard JSON error payloads, including `VERSION_CONFLICT` with current version reporting, enabling clean client-side merge and retry workflows.
-- CORS optimizations: exposed and allowed `X-Keygrain-Version` header in CORS middleware and configured `Access-Control-Max-Age: 86400` to cache preflight requests.
-- Security hardening: equalized response timing on `handlePut` for non-existent accounts to protect against account enumeration via timing side channels.
+- Zero-Knowledge storage: server functions as a blind depository storing opaque encrypted blobs with zero entity metadata or timestamps.
+- Transactional versioning: strictly monotonic version enforcement with structured error responses for client synchronization.
+- CORS optimizations: added preflight caching (Access-Control-Max-Age) and exposed version metadata headers.
+- Security hardening: equalized response timing on account creation to protect against timing side-channels.
 
 ### [1.1.1] - 2026-08-11
 
