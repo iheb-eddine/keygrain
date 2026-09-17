@@ -57,6 +57,12 @@ internal fun TotpRow(
                 }
             } else if (totp.has("seed")) {
                 android.util.Base64.decode(totp.getString("seed"), android.util.Base64.DEFAULT)
+            } else if (totp.has("secret")) {
+                try {
+                    TotpEngine.parseTotpInput(totp.getString("secret")).seed
+                } catch (_: Exception) {
+                    null
+                }
             } else null
         } else {
             TotpEngine.deriveTotpSeed(masterSecret.toByteArray(), service.email, service.site)

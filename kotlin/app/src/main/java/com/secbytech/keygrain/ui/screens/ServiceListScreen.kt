@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.secbytech.keygrain.data.DeleteResult
+import com.secbytech.keygrain.data.DemoData
 import com.secbytech.keygrain.data.Keygrain
 import com.secbytech.keygrain.data.PublicSuffixList
 import com.secbytech.keygrain.data.ServiceEntry
@@ -66,74 +67,7 @@ internal fun ServiceListScreen(
     onOpenAutofillSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val demoServices = remember { listOf(
-        ServiceEntry(
-            name = "GitHub",
-            site = "github.com",
-            email = "demo@example.com",
-            length = 20,
-            symbols = Keygrain.DEFAULT_SYMBOLS,
-            counter = 1,
-            totp = JSONObject().apply {
-                put("mode", "derived")
-                put("digits", 6)
-                put("period", 30)
-                put("algorithm", "SHA1")
-            },
-            ssh = JSONObject().apply {
-                put("key_name", "id_ed25519")
-                put("counter", 1)
-            },
-            updatedAt = 1
-        ),
-        ServiceEntry(
-            name = "Google",
-            site = "google.com",
-            email = "demo@example.com",
-            length = 20,
-            symbols = Keygrain.DEFAULT_SYMBOLS,
-            counter = 1,
-            totp = JSONObject().apply {
-                put("mode", "derived")
-                put("digits", 6)
-                put("period", 30)
-                put("algorithm", "SHA1")
-            },
-            updatedAt = 2
-        ),
-        ServiceEntry(
-            name = "Production Bastion",
-            site = "bastion.internal",
-            email = "demo@example.com",
-            length = 24,
-            symbols = Keygrain.DEFAULT_SYMBOLS,
-            counter = 1,
-            ssh = JSONObject().apply {
-                put("key_name", "bastion-admin")
-                put("counter", 1)
-            },
-            updatedAt = 3
-        ),
-        ServiceEntry(
-            name = "Mastodon",
-            site = "mastodon.social",
-            email = "demo@example.com",
-            length = 20,
-            symbols = Keygrain.DEFAULT_SYMBOLS,
-            counter = 1,
-            updatedAt = 4
-        ),
-        ServiceEntry(
-            name = "Wikipedia",
-            site = "wikipedia.org",
-            email = "demo@example.com",
-            length = 20,
-            symbols = Keygrain.DEFAULT_SYMBOLS,
-            counter = 1,
-            updatedAt = 5
-        )
-    ) }
-    var services by remember { mutableStateOf(if (isDemoMode) demoServices else serviceManager.getServices()) }
+    var services by remember { mutableStateOf(if (isDemoMode) DemoData.getServices() else serviceManager.getServices()) }
     var searchQuery by remember { mutableStateOf("") }
     val filteredServices = remember(services, searchQuery) {
         if (searchQuery.isBlank()) services.sortedByDescending { it.frecency }
@@ -167,6 +101,11 @@ internal fun ServiceListScreen(
     val syncManager = remember { SyncManager() }
     val settingsPrefs = remember {
         context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE)
+    }
+
+    LaunchedEffect(isDemoMode) {
+        services = if (isDemoMode) DemoData.getServices() else serviceManager.getServices()
+        deletionReview = if (isDemoMode) emptyList() else serviceManager.getDeletionReview()
     }
 
     // Auto-sync refresh when syncGeneration increments
@@ -473,12 +412,25 @@ internal fun ServiceListScreen(
                 color = MaterialTheme.colorScheme.tertiaryContainer,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    "Demo Mode — nothing is saved",
+                Row(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                    style = MaterialTheme.typography.bodySmall
-                )
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "Demo Mode — nothing is stored",
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
         // Sync v3 deletion-review banner (Frozen Req 7). Non-blocking: shown only when

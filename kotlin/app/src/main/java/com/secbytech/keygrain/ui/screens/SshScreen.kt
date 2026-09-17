@@ -40,6 +40,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.secbytech.keygrain.data.DemoData
 import com.secbytech.keygrain.data.ServiceEntry
 import com.secbytech.keygrain.data.ServiceManager
 import com.secbytech.keygrain.data.SshEngine
@@ -77,6 +78,7 @@ fun SshScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settingsPrefs = remember { context.getSharedPreferences("keygrain_settings", Context.MODE_PRIVATE) }
+    val snackbarHostState = remember { SnackbarHostState() }
     var sshKeys by remember { mutableStateOf(emptyList<SshKeyEntry>()) }
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -85,12 +87,18 @@ fun SshScreen(
     var deletingItem by remember { mutableStateOf<SshKeyEntry?>(null) }
 
     fun refreshList() {
-        sshKeys = SyncStore.getSshKeys(context)
+        sshKeys = if (isDemoMode) DemoData.getSshKeys() else SyncStore.getSshKeys(context)
         onSshKeysChanged?.invoke(sshKeys)
     }
 
     LaunchedEffect(Unit) {
-        SyncStore.migrateLegacySshKeys(context, serviceManager)
+        if (!isDemoMode) {
+            SyncStore.migrateLegacySshKeys(context, serviceManager)
+        }
+        refreshList()
+    }
+
+    LaunchedEffect(isDemoMode) {
         refreshList()
     }
 
@@ -115,9 +123,37 @@ fun SshScreen(
         BackHandler { onBack() }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            if (isDemoMode) {
+                Surface(
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Demo Mode — nothing is stored",
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
@@ -183,6 +219,12 @@ fun SshScreen(
             }
         }
 
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+    }
+
     val isAdding = showAddDialog || showAddSshDialog
     if (isAdding) {
         SshEditorDialog(
@@ -192,6 +234,14 @@ fun SshScreen(
                 onDismissAddDialog?.invoke()
             },
             onSave = { keyName, comment, counter ->
+                if (isDemoMode) {
+                    showAddDialog = false
+                    onDismissAddDialog?.invoke()
+                    scope.launch {
+                        snackbarHostState.showSnackbar("Demo Mode — nothing is stored")
+                    }
+                    return@SshEditorDialog
+                }
                 val cleanKeyName = keyName.trim()
                 val commentVal = comment.trim().ifEmpty { cleanKeyName }
                 val newKey = SshKeyEntry(
@@ -216,6 +266,13 @@ fun SshScreen(
             initialItem = editingItem,
             onDismiss = { editingItem = null },
             onSave = { keyName, comment, counter ->
+                if (isDemoMode) {
+                    editingItem = null
+                    scope.launch {
+                        snackbarHostState.showSnackbar("Demo Mode — nothing is stored")
+                    }
+                    return@SshEditorDialog
+                }
                 val current = editingItem!!
                 val cleanKeyName = keyName.trim()
                 val commentVal = comment.trim().ifEmpty { cleanKeyName }
@@ -250,10 +307,17 @@ fun SshScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        SyncStore.removeSshKey(context, deletingItem!!)
-                        refreshList()
-                        onDataChanged?.invoke()
+                        val itemToDelete = deletingItem!!
                         deletingItem = null
+                        if (isDemoMode) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Demo Mode — nothing is stored")
+                            }
+                        } else {
+                            SyncStore.removeSshKey(context, itemToDelete)
+                            refreshList()
+                            onDataChanged?.invoke()
+                        }
                     }
                 ) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)

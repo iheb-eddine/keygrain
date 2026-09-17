@@ -34,6 +34,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.secbytech.keygrain.data.DemoData
 import com.secbytech.keygrain.data.SyncManager
 import com.secbytech.keygrain.data.SyncStore
 import com.secbytech.keygrain.data.WalletEngine
@@ -76,12 +77,16 @@ fun WalletScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     fun refreshWallets() {
-        wallets = syncMgr.getWallets(context)
+        wallets = if (isDemoMode) DemoData.getWallets() else syncMgr.getWallets(context)
         onWalletsChanged?.invoke(wallets)
     }
 
     LaunchedEffect(Unit) {
         WalletEngine.loadWordlist(context)
+        refreshWallets()
+    }
+
+    LaunchedEffect(isDemoMode) {
         refreshWallets()
     }
 
@@ -104,9 +109,37 @@ fun WalletScreen(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            if (isDemoMode) {
+                Surface(
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Demo Mode — nothing is stored",
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
             // Search Bar
             OutlinedTextField(
                 value = searchQuery,
@@ -190,6 +223,12 @@ fun WalletScreen(
             }
         }
 
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+    }
+
     // Add / Edit Dialog
     val isAdding = showAddDialog || showAddWalletDialog
     if (isAdding || editingWallet != null) {
@@ -203,6 +242,16 @@ fun WalletScreen(
                 onDismissAddDialog?.invoke()
             },
             onSave = { updated ->
+                if (isDemoMode) {
+                    showAddDialog = false
+                    editingWallet = null
+                    onDismissAddDialog?.invoke()
+                    scope.launch {
+                        snackbarHostState.showSnackbar("Demo Mode — nothing is stored")
+                    }
+                    return@WalletEditorDialog
+                }
+                val wasEditing = editingWallet != null
                 syncMgr.putWallet(context, updated)
                 refreshWallets()
                 onDataChanged?.invoke()
@@ -210,7 +259,7 @@ fun WalletScreen(
                 editingWallet = null
                 onDismissAddDialog?.invoke()
                 scope.launch {
-                    snackbarHostState.showSnackbar(if (editingWallet != null) "Wallet updated" else "Wallet created")
+                    snackbarHostState.showSnackbar(if (wasEditing) "Wallet updated" else "Wallet created")
                 }
             }
         )
@@ -240,11 +289,18 @@ fun WalletScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        syncMgr.removeWallet(context, wallet)
-                        refreshWallets()
-                        onDataChanged?.invoke()
+                        val walletToDelete = wallet
                         deletingWallet = null
-                        scope.launch { snackbarHostState.showSnackbar("Wallet deleted") }
+                        if (isDemoMode) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Demo Mode — nothing is stored")
+                            }
+                        } else {
+                            syncMgr.removeWallet(context, walletToDelete)
+                            refreshWallets()
+                            onDataChanged?.invoke()
+                            scope.launch { snackbarHostState.showSnackbar("Wallet deleted") }
+                        }
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) {

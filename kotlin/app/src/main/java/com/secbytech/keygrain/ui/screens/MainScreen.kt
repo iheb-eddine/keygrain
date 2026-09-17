@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.secbytech.keygrain.data.DemoData
 import com.secbytech.keygrain.data.Keygrain
 import com.secbytech.keygrain.data.LocalDataWiper
 import com.secbytech.keygrain.data.PublicSuffixList
@@ -111,7 +112,8 @@ fun MainScreen() {
     }
 
     fun getEffectiveEmail(): String =
-        configuredEmail?.ifBlank { null }
+        if (isDemoMode) DemoData.DEMO_EMAIL
+        else configuredEmail?.ifBlank { null }
             ?: syncManager.getSyncEmail(context)?.ifBlank { null }
             ?: serviceManager.getServices().groupingBy { it.email }.eachCount().maxByOrNull { it.value }?.key ?: ""
 
@@ -217,8 +219,10 @@ fun MainScreen() {
                     },
                     onDemo = {
                         isDemoMode = true
-                        masterSecret = "demo-secret-keygrain"
+                        masterSecret = DemoData.DEMO_SECRET
+                        configuredEmail = DemoData.DEMO_EMAIL
                         unlocked = true
+                        Keygrain.clearStrengthenCache()
                     }
                 )
             } else {
@@ -233,8 +237,10 @@ fun MainScreen() {
                     onSwitchAccount = wipeLocalAndRestart,
                     onDemo = {
                         isDemoMode = true
-                        masterSecret = "demo-secret-keygrain"
+                        masterSecret = DemoData.DEMO_SECRET
+                        configuredEmail = DemoData.DEMO_EMAIL
                         unlocked = true
+                        Keygrain.clearStrengthenCache()
                     }
                 )
             }
@@ -250,6 +256,7 @@ fun MainScreen() {
                 unlocked = false
                 masterSecret = ""
                 isDemoMode = false
+                configuredEmail = SyncStore.getSyncEmail(context)
                 Keygrain.clearStrengthenCache()
                 if (android.os.Build.VERSION.SDK_INT >= 28) {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -536,7 +543,7 @@ fun MainScreen() {
                                 masterSecret = masterSecret,
                                 serviceManager = serviceManager,
                                 isDemoMode = isDemoMode,
-                                defaultEmail = configuredEmail ?: "",
+                                defaultEmail = getEffectiveEmail(),
                                 onLock = onLockAction,
                                 onBack = null,
                                 onSwitchAccount = wipeLocalAndRestart,
@@ -551,7 +558,7 @@ fun MainScreen() {
                             WalletScreen(
                                 masterSecret = masterSecret,
                                 isDemoMode = isDemoMode,
-                                defaultEmail = configuredEmail ?: "",
+                                defaultEmail = getEffectiveEmail(),
                                 onLock = onLockAction,
                                 onBack = null,
                                 onSwitchAccount = wipeLocalAndRestart,
