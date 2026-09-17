@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Components are 
 
 ## Chrome extension
 
+### [1.4.0] - 2026-09-17
+
+- Multi-asset tabbed UI: manage web services, standalone SSH keys, and HD wallets in dedicated tabs directly within the extension popup.
+- Spec v5 cryptographic compliance: SSH key and HD wallet derivations use dedicated Argon2id domain salts, completely decoupled from account email.
+- PIN removal: eliminated persistent PIN storage in favor of secure in-memory session auto-lock with configurable lease durations and on-demand elevation.
+- Sync v4: Zero-Knowledge synchronization protocol featuring serialized mutual exclusion to prevent race conditions and network fetch timeouts for increased resilience.
+- Unified entity reconciliation: implemented Option B unified synchronization and a single consolidated tombstones store across all credential types.
+- Streamlined HD wallet derivation: eliminated legacy blockchain network parameters and local wallet audit logs in accordance with standard BIP-39 mnemonic generation.
+
 ### [1.3.0] - 2026-08-11
 
 - You can now stop a password migration part-way through. Services you have not rotated are removed from the migration batch and that decision syncs to your other devices; their old site passwords remain unchanged, so change them if needed.
@@ -73,6 +82,15 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 (SPEC v4).
 
 ## Firefox extension
+
+### [1.4.0] - 2026-09-17
+
+- Multi-asset tabbed UI: manage web services, standalone SSH keys, and HD wallets in dedicated tabs directly within the extension popup.
+- Spec v5 cryptographic compliance: SSH key and HD wallet derivations use dedicated Argon2id domain salts, completely decoupled from account email.
+- PIN removal: eliminated persistent PIN storage in favor of secure in-memory session auto-lock with configurable lease durations and on-demand elevation.
+- Sync v4: Zero-Knowledge synchronization protocol featuring serialized mutual exclusion to prevent race conditions and network fetch timeouts for increased resilience.
+- Unified entity reconciliation: implemented Option B unified synchronization and a single consolidated tombstones store across all credential types.
+- Streamlined HD wallet derivation: eliminated legacy blockchain network parameters and local wallet audit logs in accordance with standard BIP-39 mnemonic generation.
 
 ### [1.3.0] - 2026-08-11
 
@@ -142,6 +160,15 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ## Android app
 
+### [1.4.0] - 2026-09-17
+
+- Multi-asset keychain: manage logins, standalone SSH keys, and HD wallets in one place.
+- Spec v5 cryptography: SSH keys and HD wallets are securely decoupled from email.
+- Sync v4: Zero-Knowledge protocol with transactional versioning and client dirty-checking.
+- Unified entity reconciliation with a single tombstone store across all item types.
+- Full Demo Mode with complete state isolation and rich multi-asset dataset.
+- Streamlined HD wallets without chain parameters or audit logs.
+
 ### [1.3.0] - 2026-08-11
 
 - Autofill now chooses the most-specific saved service for a site, reducing ambiguous matches on subdomains.
@@ -189,6 +216,11 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ## Python CLI
 
+### [1.1.0] - 2026-09-17
+
+- Spec v5 cryptographic compliance: SSH key and HD wallet derivations now use isolated Argon2id domain salts (`keygrain-ssh:<key_name>` and `keygrain-wallet:<wallet_id>`), completely decoupled from account email.
+- Streamlined HD wallet derivation: eliminated legacy `--chain` and `--path` flags in favor of clean BIP-39 mnemonic seed phrase generation.
+
 ### [1.0.1] - 2026-08-11
 
 - Unsafe sync endpoints are now rejected; HTTPS is required except for loopback development endpoints.
@@ -210,6 +242,13 @@ Keygrain is now on PyPI: `pip install keygrain`.
 No algorithm changes — output is byte-identical across all Keygrain platforms (SPEC v4).
 
 ## Sync server
+
+### [1.2.0] - 2026-09-17
+
+- Sync v4 Zero-Knowledge protocol: implemented server-side blind depository with transactional version incrementing, ETag matching, and atomic temporary-file writes.
+- Structured JSON error responses: added standard JSON error payloads, including `VERSION_CONFLICT` with current version reporting, enabling clean client-side merge and retry workflows.
+- CORS optimizations: exposed and allowed `X-Keygrain-Version` header in CORS middleware and configured `Access-Control-Max-Age: 86400` to cache preflight requests.
+- Security hardening: equalized response timing on `handlePut` for non-existent accounts to protect against account enumeration via timing side channels.
 
 ### [1.1.1] - 2026-08-11
 
