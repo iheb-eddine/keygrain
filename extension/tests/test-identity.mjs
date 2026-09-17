@@ -16,7 +16,7 @@ const firefoxBackground = readFileSync(resolve(extensionRoot, 'firefox', 'backgr
 const diagnosticsSource = readFileSync(resolve(extensionRoot, 'shared', 'diagnostics.js'), 'utf8');
 
 const expectedName = 'Keygrain';
-const expectedVersion = '1.4.0';
+const expectedVersion = '1.4.1';
 const expectedFirefoxId = 'extension@keygrain.com';
 
 assert.equal(chromeManifest.name, expectedName);

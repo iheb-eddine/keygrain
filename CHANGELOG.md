@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/). Components are 
 
 ## Chrome extension
 
-### [1.4.0] - 2026-09-17
+### [1.4.1] - 2026-09-17
 
 - Enhanced security & PIN removal: eliminated persistent PIN storage in favor of volatile in-memory auto-lock with configurable timeouts.
 - Two-tier auto-lock UX: keep service names visible for fast search while credentials require quick re-authentication.
@@ -85,7 +85,7 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ## Firefox extension
 
-### [1.4.0] - 2026-09-17
+### [1.4.1] - 2026-09-17
 
 - Enhanced security & PIN removal: eliminated persistent PIN storage in favor of volatile in-memory auto-lock with configurable timeouts.
 - Two-tier auto-lock UX: keep service names visible for fast search while credentials require quick re-authentication.
@@ -164,7 +164,7 @@ No algorithm changes — every password, code, key, and seed is byte-identical t
 
 ## Android app
 
-### [1.4.0] - 2026-09-17
+### [1.4.1] - 2026-09-17
 
 - Multi-asset keychain: manage logins, standalone SSH keys, and HD wallets in one place.
 - Email-decoupled keys: SSH keys and crypto wallets derive independently from your account email.
