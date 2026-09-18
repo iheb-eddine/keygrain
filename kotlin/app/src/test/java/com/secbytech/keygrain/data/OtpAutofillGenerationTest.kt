@@ -70,10 +70,19 @@ class OtpAutofillGenerationTest {
     fun derivedExecutorHasOnePermitNoQueueAndRecoversAfterUnwind() {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
-        val first = TotpAutofillDerivedExecutor.submit {
+        var first = TotpAutofillDerivedExecutor.submit {
             started.countDown()
             release.await(5, TimeUnit.SECONDS)
             "first"
+        }
+        repeat(50) {
+            if (first != null) return@repeat
+            Thread.sleep(10L)
+            first = TotpAutofillDerivedExecutor.submit {
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                "first"
+            }
         }
         assertNotNull(first)
         assertTrue(started.await(5, TimeUnit.SECONDS))
@@ -92,7 +101,12 @@ class OtpAutofillGenerationTest {
 
     @Test
     fun canceledFutureDoesNotPermanentlyConsumeDerivedPermit() {
-        val future = TotpAutofillDerivedExecutor.submit { "canceled" }
+        var future = TotpAutofillDerivedExecutor.submit { "canceled" }
+        repeat(50) {
+            if (future != null) return@repeat
+            Thread.sleep(10L)
+            future = TotpAutofillDerivedExecutor.submit { "canceled" }
+        }
         assertNotNull(future)
         future!!.cancel(false)
         var recovered = TotpAutofillDerivedExecutor.submit { "recovered" }
@@ -108,7 +122,7 @@ class OtpAutofillGenerationTest {
     @Test
     fun cancelRunningWorkerReleasesPermitAfterUnwind() {
         val started = CountDownLatch(1)
-        val future = TotpAutofillDerivedExecutor.submit {
+        var future = TotpAutofillDerivedExecutor.submit {
             started.countDown()
             try {
                 Thread.sleep(10_000L)
@@ -116,6 +130,19 @@ class OtpAutofillGenerationTest {
                 // The worker finally must still release the permit.
             }
             "stopped"
+        }
+        repeat(50) {
+            if (future != null) return@repeat
+            Thread.sleep(10L)
+            future = TotpAutofillDerivedExecutor.submit {
+                started.countDown()
+                try {
+                    Thread.sleep(10_000L)
+                } catch (_: InterruptedException) {
+                    // The worker finally must still release the permit.
+                }
+                "stopped"
+            }
         }
         assertNotNull(future)
         assertTrue(started.await(5, TimeUnit.SECONDS))
